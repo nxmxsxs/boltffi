@@ -1,7 +1,9 @@
 #![allow(unused)]
 
+pub mod status;
 pub mod types;
 
+pub use status::FfiStatus;
 pub use types::{FfiBuf, FfiSlice, FfiString};
 
 pub const VERSION_MAJOR: u32 = 0;
