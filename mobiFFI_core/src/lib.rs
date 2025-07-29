@@ -60,3 +60,46 @@ pub unsafe extern "C" fn mffi_copy_bytes(
 
     FfiStatus::OK
 }
+
+struct Counter {
+    value: u64,
+}
+
+#[unsafe(no_mangle)]
+pub extern "C" fn mffi_counter_new(initial: u64) -> *mut Counter {
+    HandleBox::new(Counter { value: initial }).into_raw()
+}
+
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn mffi_counter_increment(handle: *mut Counter) -> FfiStatus {
+    match HandleBox::from_raw(handle) {
+        Some(mut counter) => {
+            counter.as_mut().value += 1;
+            core::mem::forget(counter);
+            FfiStatus::OK
+        }
+        None => FfiStatus::NULL_POINTER,
+    }
+}
+
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn mffi_counter_get(handle: *mut Counter, out: *mut u64) -> FfiStatus {
+    if out.is_null() {
+        return FfiStatus::NULL_POINTER;
+    }
+    match HandleBox::from_raw(handle) {
+        Some(counter) => {
+            *out = counter.as_ref().value;
+            core::mem::forget(counter);
+            FfiStatus::OK
+        }
+        None => FfiStatus::NULL_POINTER,
+    }
+}
+
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn mffi_counter_free(handle: *mut Counter) {
+    if let Some(counter) = HandleBox::from_raw(handle) {
+        drop(counter);
+    }
+}
