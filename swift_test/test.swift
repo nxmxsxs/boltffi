@@ -216,4 +216,87 @@ if testErrorMessage() {
     exit(1)
 }
 
+print("\n--- Testing callbacks ---")
+
+class CallbackContext {
+    var points: [DataPoint] = []
+    var sumResult: Double = 0
+}
+
+func testForEachCallback() -> Bool {
+    let store = mffi_datastore_new()
+    
+    _ = mffi_datastore_add(store, DataPoint(x: 1.0, y: 2.0, timestamp: 100))
+    _ = mffi_datastore_add(store, DataPoint(x: 3.0, y: 4.0, timestamp: 200))
+    _ = mffi_datastore_add(store, DataPoint(x: 5.0, y: 6.0, timestamp: 300))
+    
+    let context = CallbackContext()
+    let contextPtr = Unmanaged.passUnretained(context).toOpaque()
+    
+    let callback: @convention(c) (UnsafeMutableRawPointer?, DataPoint) -> Void = { userData, point in
+        guard let ptr = userData else { return }
+        let ctx = Unmanaged<CallbackContext>.fromOpaque(ptr).takeUnretainedValue()
+        ctx.points.append(point)
+    }
+    
+    let status = mffi_datastore_foreach(store, callback, contextPtr)
+    mffi_datastore_free(store)
+    
+    guard status.code == 0 else {
+        print("FAILED: foreach returned status \(status.code)")
+        return false
+    }
+    
+    print("forEach collected \(context.points.count) points:")
+    for (i, p) in context.points.enumerated() {
+        print("  [\(i)] x=\(p.x), y=\(p.y)")
+    }
+    
+    return context.points.count == 3 && 
+           context.points[0].x == 1.0 && 
+           context.points[2].x == 5.0
+}
+
+func testSumCallback() -> Bool {
+    let store = mffi_datastore_new()
+    
+    _ = mffi_datastore_add(store, DataPoint(x: 1.0, y: 2.0, timestamp: 100))
+    _ = mffi_datastore_add(store, DataPoint(x: 3.0, y: 4.0, timestamp: 200))
+    
+    let context = CallbackContext()
+    let contextPtr = Unmanaged.passUnretained(context).toOpaque()
+    
+    let callback: @convention(c) (UnsafeMutableRawPointer?, Double) -> Void = { userData, sum in
+        guard let ptr = userData else { return }
+        let ctx = Unmanaged<CallbackContext>.fromOpaque(ptr).takeUnretainedValue()
+        ctx.sumResult = sum
+    }
+    
+    let status = mffi_datastore_sum_async(store, callback, contextPtr)
+    mffi_datastore_free(store)
+    
+    guard status.code == 0 else {
+        print("FAILED: sum_async returned status \(status.code)")
+        return false
+    }
+    
+    print("Sum result: \(context.sumResult)")
+    
+    return context.sumResult == 10.0
+}
+
+if testForEachCallback() {
+    print("SUCCESS: forEach callback works!")
+} else {
+    print("FAILED: forEach callback test failed")
+    exit(1)
+}
+
+if testSumCallback() {
+    print("SUCCESS: Sum callback works!")
+} else {
+    print("FAILED: Sum callback test failed")
+    exit(1)
+}
+
 print("\n=== ALL TESTS PASSED ===")

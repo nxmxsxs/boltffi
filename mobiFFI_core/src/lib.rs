@@ -269,3 +269,42 @@ pub unsafe extern "C" fn mffi_datastore_free(handle: *mut DataStore) {
         drop(store);
     }
 }
+
+pub type DataPointCallback = extern "C" fn(user_data: *mut core::ffi::c_void, point: DataPoint);
+
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn mffi_datastore_foreach(
+    handle: *mut DataStore,
+    callback: DataPointCallback,
+    user_data: *mut core::ffi::c_void,
+) -> FfiStatus {
+    match HandleBox::from_raw(handle) {
+        Some(store) => {
+            store.as_ref().items.iter().for_each(|point| {
+                callback(user_data, *point);
+            });
+            core::mem::forget(store);
+            FfiStatus::OK
+        }
+        None => fail_with_error(FfiStatus::NULL_POINTER, "datastore handle is null"),
+    }
+}
+
+pub type SumCallback = extern "C" fn(user_data: *mut core::ffi::c_void, sum: f64);
+
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn mffi_datastore_sum_async(
+    handle: *mut DataStore,
+    callback: SumCallback,
+    user_data: *mut core::ffi::c_void,
+) -> FfiStatus {
+    match HandleBox::from_raw(handle) {
+        Some(store) => {
+            let sum: f64 = store.as_ref().items.iter().map(|p| p.x + p.y).sum();
+            core::mem::forget(store);
+            callback(user_data, sum);
+            FfiStatus::OK
+        }
+        None => fail_with_error(FfiStatus::NULL_POINTER, "datastore handle is null"),
+    }
+}

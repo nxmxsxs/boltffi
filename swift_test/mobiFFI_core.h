@@ -44,6 +44,10 @@ typedef struct DataPoint {
   int64_t timestamp;
 } DataPoint;
 
+typedef void (*DataPointCallback)(void *user_data, struct DataPoint point);
+
+typedef void (*SumCallback)(void *user_data, double sum);
+
 #define PANIC_STATUS (FfiStatus){ .code = 10 }
 
 uint32_t mffi_version_major(void);
@@ -94,5 +98,13 @@ struct FfiStatus mffi_datastore_copy_into(struct DataStore *handle,
                                           uintptr_t *written);
 
 void mffi_datastore_free(struct DataStore *handle);
+
+struct FfiStatus mffi_datastore_foreach(struct DataStore *handle,
+                                        DataPointCallback callback,
+                                        void *user_data);
+
+struct FfiStatus mffi_datastore_sum_async(struct DataStore *handle,
+                                          SumCallback callback,
+                                          void *user_data);
 
 #endif  /* MOBIFFI_CORE_H */
