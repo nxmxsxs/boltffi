@@ -6,6 +6,7 @@ pub mod status;
 pub mod types;
 
 pub use handle::HandleBox;
+pub use mobiFFI_macros::{ffi_export, FfiType};
 pub use safety::catch_ffi_panic;
 pub use status::{clear_last_error, set_last_error, take_last_error, FfiStatus};
 pub use types::{FfiBuf, FfiOption, FfiSlice, FfiString};

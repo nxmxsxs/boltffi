@@ -8,6 +8,7 @@ authors = ["Ali A. Hilal <me@alihilal.com>"]
 crate-type = ["cdylib", "staticlib", "rlib"]
 
 [dependencies]
+mobiFFI_macros = { path = "../mobiFFI_macros" }
 
 [build-dependencies]
 cbindgen = "0.28"
