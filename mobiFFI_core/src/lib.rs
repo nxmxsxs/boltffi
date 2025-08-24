@@ -319,3 +319,16 @@ pub fn add_numbers(first: i32, second: i32) -> i32 {
 pub fn multiply_floats(first: f64, second: f64) -> f64 {
     first * second
 }
+
+#[ffi_export]
+pub fn make_greeting(name_ptr: *const u8, name_len: usize) -> String {
+    let name = unsafe { 
+        if name_ptr.is_null() {
+            "World"
+        } else {
+            let bytes = core::slice::from_raw_parts(name_ptr, name_len);
+            core::str::from_utf8(bytes).unwrap_or("World")
+        }
+    };
+    format!("Hello, {}!", name)
+}

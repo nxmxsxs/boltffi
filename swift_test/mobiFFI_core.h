@@ -111,5 +111,6 @@ struct FfiStatus mffi_datastore_sum_async(struct DataStore *handle,
 /* Macro-generated exports */
 int32_t mffi_add_numbers(int32_t first, int32_t second);
 double mffi_multiply_floats(double first, double second);
+struct FfiStatus mffi_make_greeting(const uint8_t* name_ptr, uintptr_t name_len, struct FfiString *out);
 
 #endif  /* MOBIFFI_CORE_H */

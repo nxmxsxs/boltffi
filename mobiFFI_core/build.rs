@@ -36,6 +36,7 @@ struct FfiExport {
     name: String,
     params: Vec<(String, String)>,
     return_type: Option<String>,
+    returns_string: bool,
 }
 
 fn collect_ffi_exports(src_dir: &PathBuf) -> Vec<FfiExport> {
@@ -76,6 +77,11 @@ fn has_ffi_export_attr(func: &ItemFn) -> bool {
         .any(|attr| attr.path().is_ident("ffi_export"))
 }
 
+fn is_string_type(ty: &Type) -> bool {
+    let type_str = quote::quote!(#ty).to_string().replace(" ", "");
+    type_str == "String" || type_str == "std::string::String"
+}
+
 fn parse_ffi_function(func: &ItemFn) -> Option<FfiExport> {
     let name = func.sig.ident.to_string();
 
@@ -97,14 +103,21 @@ fn parse_ffi_function(func: &ItemFn) -> Option<FfiExport> {
         })
         .collect();
 
-    let return_type = match &func.sig.output {
-        ReturnType::Default => None,
-        ReturnType::Type(_, ty) => rust_type_to_c(ty),
+    let (return_type, returns_string) = match &func.sig.output {
+        ReturnType::Default => (None, false),
+        ReturnType::Type(_, ty) => {
+            if is_string_type(ty) {
+                (Some("struct FfiStatus".to_string()), true)
+            } else {
+                (rust_type_to_c(ty), false)
+            }
+        }
     };
 
     Some(FfiExport {
         name,
         params,
+        returns_string,
         return_type,
     })
 }
@@ -162,17 +175,24 @@ fn append_macro_exports(header_path: &PathBuf, exports: &[FfiExport]) {
         let declarations: String = exports
             .iter()
             .map(|e| {
-                let params = if e.params.is_empty() {
+                let mut params: Vec<String> = e
+                    .params
+                    .iter()
+                    .map(|(name, ty)| format!("{} {}", ty, name))
+                    .collect();
+
+                if e.returns_string {
+                    params.push("struct FfiString *out".to_string());
+                }
+
+                let params_str = if params.is_empty() {
                     "void".to_string()
                 } else {
-                    e.params
-                        .iter()
-                        .map(|(name, ty)| format!("{} {}", ty, name))
-                        .collect::<Vec<_>>()
-                        .join(", ")
+                    params.join(", ")
                 };
+
                 let ret = e.return_type.as_deref().unwrap_or("void");
-                format!("{} mffi_{}({});\n", ret, e.name, params)
+                format!("{} mffi_{}({});\n", ret, e.name, params_str)
             })
             .collect();
 

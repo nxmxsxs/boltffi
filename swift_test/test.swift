@@ -308,9 +308,33 @@ let mulResult = mffi_multiply_floats(3.5, 2.0)
 print("mffi_multiply_floats(3.5, 2.0) = \(mulResult)")
 
 if addResult == 15 && mulResult == 7.0 {
-    print("SUCCESS: Macro-generated exports work!")
+    print("SUCCESS: Basic macro exports work!")
 } else {
     print("FAILED: Macro test failed")
+    exit(1)
+}
+
+print("\n--- Testing macro String return ---")
+
+var greetingOut = FfiString()
+let name = "Rust"
+let greetingStatus = name.withCString { ptr in
+    mffi_make_greeting(ptr, UInt(name.utf8.count), &greetingOut)
+}
+
+if greetingStatus.code == 0 {
+    let greetingStr = String(cString: greetingOut.ptr)
+    print("Greeting: \(greetingStr)")
+    mffi_free_string(greetingOut)
+    
+    if greetingStr == "Hello, Rust!" {
+        print("SUCCESS: Macro String return works!")
+    } else {
+        print("FAILED: Wrong greeting '\(greetingStr)'")
+        exit(1)
+    }
+} else {
+    print("FAILED: make_greeting returned error")
     exit(1)
 }
 

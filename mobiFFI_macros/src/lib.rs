@@ -1,6 +1,6 @@
 use proc_macro::TokenStream;
 use quote::quote;
-use syn::{parse_macro_input, DeriveInput, FnArg, ItemFn, Pat};
+use syn::{parse_macro_input, DeriveInput, FnArg, ItemFn, Pat, ReturnType, Type};
 
 #[proc_macro_derive(FfiType)]
 pub fn derive_ffi_type(input: TokenStream) -> TokenStream {
@@ -39,6 +39,23 @@ fn extract_arg_idents(inputs: &syn::punctuated::Punctuated<FnArg, syn::Token![,]
         .collect()
 }
 
+fn is_string_return(output: &ReturnType) -> bool {
+    match output {
+        ReturnType::Default => false,
+        ReturnType::Type(_, ty) => {
+            let type_str = quote::quote!(#ty).to_string();
+            type_str == "String" || type_str == "std :: string :: String"
+        }
+    }
+}
+
+fn get_return_type(output: &ReturnType) -> Option<&Type> {
+    match output {
+        ReturnType::Default => None,
+        ReturnType::Type(_, ty) => Some(ty.as_ref()),
+    }
+}
+
 #[proc_macro_attribute]
 pub fn ffi_export(_attr: TokenStream, item: TokenStream) -> TokenStream {
     let input = parse_macro_input!(item as ItemFn);
@@ -52,12 +69,31 @@ pub fn ffi_export(_attr: TokenStream, item: TokenStream) -> TokenStream {
     let export_name = format!("mffi_{}", fn_name);
     let export_ident = syn::Ident::new(&export_name, fn_name.span());
 
-    let expanded = quote! {
-        #input
+    let expanded = if is_string_return(fn_output) {
+        quote! {
+            #input
 
-        #[unsafe(no_mangle)]
-        #fn_vis extern "C" fn #export_ident(#fn_inputs) #fn_output {
-            #fn_name(#(#arg_idents),*)
+            #[unsafe(no_mangle)]
+            #fn_vis unsafe extern "C" fn #export_ident(
+                #fn_inputs,
+                out: *mut crate::FfiString
+            ) -> crate::FfiStatus {
+                if out.is_null() {
+                    return crate::FfiStatus::NULL_POINTER;
+                }
+                let result = #fn_name(#(#arg_idents),*);
+                *out = crate::FfiString::from(result);
+                crate::FfiStatus::OK
+            }
+        }
+    } else {
+        quote! {
+            #input
+
+            #[unsafe(no_mangle)]
+            #fn_vis extern "C" fn #export_ident(#fn_inputs) #fn_output {
+                #fn_name(#(#arg_idents),*)
+            }
         }
     };
 
