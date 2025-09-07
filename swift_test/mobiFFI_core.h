@@ -12,8 +12,6 @@
 
 #define VERSION_PATCH 0
 
-typedef struct Counter Counter;
-
 typedef struct DataStore DataStore;
 
 typedef struct FfiBuf_u8 {
@@ -78,14 +76,6 @@ struct FfiStatus mffi_copy_bytes(const uint8_t *src,
                                  uintptr_t dst_cap,
                                  uintptr_t *written);
 
-struct Counter *mffi_counter_new(uint64_t initial);
-
-struct FfiStatus mffi_counter_increment(struct Counter *handle);
-
-struct FfiStatus mffi_counter_get(struct Counter *handle, uint64_t *out);
-
-void mffi_counter_free(struct Counter *handle);
-
 struct DataStore *mffi_datastore_new(void);
 
 struct FfiStatus mffi_datastore_add(struct DataStore *handle, struct DataPoint point);
@@ -109,6 +99,11 @@ struct FfiStatus mffi_datastore_sum_async(struct DataStore *handle,
 
 
 /* Macro-generated exports */
+struct Counter * mffi_counter_new(void);
+struct FfiStatus mffi_counter_free(struct Counter * handle);
+struct FfiStatus mffi_counter_set(struct Counter * handle, uint64_t value);
+struct FfiStatus mffi_counter_increment(struct Counter * handle);
+uint64_t mffi_counter_get(struct Counter * handle);
 int32_t mffi_add_numbers(int32_t first, int32_t second);
 double mffi_multiply_floats(double first, double second);
 struct FfiStatus mffi_make_greeting(const uint8_t* name_ptr, uintptr_t name_len, struct FfiString *out);

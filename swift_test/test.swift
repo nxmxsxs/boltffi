@@ -36,31 +36,31 @@ if status.code == 0 && written == 5 && Array(dst.prefix(5)) == src {
     exit(1)
 }
 
-print("\n--- Testing opaque handles (Counter) ---")
+print("\n--- Testing opaque handles (Counter via ffi_class macro) ---")
 
-let counter = mffi_counter_new(10)
-print("Created counter with initial value 10")
+let counter = mffi_counter_new()!
+mffi_counter_set(counter, 10)
+print("Created counter and set initial value to 10")
 
-var value: UInt64 = 0
-var getStatus = mffi_counter_get(counter, &value)
-print("Initial value: \(value), status: \(getStatus.code)")
+var value = mffi_counter_get(counter)
+print("Initial value: \(value)")
 
-let incStatus = mffi_counter_increment(counter)
-print("Increment status: \(incStatus.code)")
+mffi_counter_increment(counter)
+print("Incremented")
 
-getStatus = mffi_counter_get(counter, &value)
-print("After increment: \(value), status: \(getStatus.code)")
+value = mffi_counter_get(counter)
+print("After increment: \(value)")
 
-let incStatus2 = mffi_counter_increment(counter)
-let incStatus3 = mffi_counter_increment(counter)
-getStatus = mffi_counter_get(counter, &value)
+mffi_counter_increment(counter)
+mffi_counter_increment(counter)
+value = mffi_counter_get(counter)
 print("After 2 more increments: \(value)")
 
 mffi_counter_free(counter)
 print("Counter freed")
 
 if value == 13 {
-    print("SUCCESS: Opaque handles work correctly!")
+    print("SUCCESS: ffi_class Counter works correctly!")
 } else {
     print("FAILED: Expected 13, got \(value)")
     exit(1)

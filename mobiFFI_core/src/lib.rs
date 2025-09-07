@@ -6,9 +6,9 @@ pub mod status;
 pub mod types;
 
 pub use handle::HandleBox;
-pub use mobiFFI_macros::{ffi_class, ffi_export, FfiType};
+pub use mobiFFI_macros::{FfiType, ffi_class, ffi_export};
 pub use safety::catch_ffi_panic;
-pub use status::{clear_last_error, set_last_error, take_last_error, FfiStatus};
+pub use status::{FfiStatus, clear_last_error, set_last_error, take_last_error};
 pub use types::{FfiBuf, FfiOption, FfiSlice, FfiString};
 
 unsafe fn read_input_str<'a>(ptr: *const u8, len: usize) -> Option<&'a str> {
@@ -53,7 +53,7 @@ pub extern "C" fn mffi_last_error_message(out: *mut FfiString) -> FfiStatus {
     if out.is_null() {
         return FfiStatus::NULL_POINTER;
     }
-    
+
     match take_last_error() {
         Some(message) => {
             unsafe { *out = FfiString::from(message) };
@@ -147,46 +147,26 @@ pub unsafe extern "C" fn mffi_copy_bytes(
     FfiStatus::OK
 }
 
-struct Counter {
+pub struct Counter {
     value: u64,
 }
 
-#[unsafe(no_mangle)]
-pub extern "C" fn mffi_counter_new(initial: u64) -> *mut Counter {
-    HandleBox::new(Counter { value: initial }).into_raw()
-}
-
-#[unsafe(no_mangle)]
-pub unsafe extern "C" fn mffi_counter_increment(handle: *mut Counter) -> FfiStatus {
-    match HandleBox::from_raw(handle) {
-        Some(mut counter) => {
-            counter.as_mut().value += 1;
-            core::mem::forget(counter);
-            FfiStatus::OK
-        }
-        None => FfiStatus::NULL_POINTER,
+#[ffi_class]
+impl Counter {
+    pub fn new() -> Self {
+        Self { value: 0 }
     }
-}
 
-#[unsafe(no_mangle)]
-pub unsafe extern "C" fn mffi_counter_get(handle: *mut Counter, out: *mut u64) -> FfiStatus {
-    if out.is_null() {
-        return FfiStatus::NULL_POINTER;
+    pub fn set(&mut self, value: u64) {
+        self.value = value;
     }
-    match HandleBox::from_raw(handle) {
-        Some(counter) => {
-            *out = counter.as_ref().value;
-            core::mem::forget(counter);
-            FfiStatus::OK
-        }
-        None => FfiStatus::NULL_POINTER,
-    }
-}
 
-#[unsafe(no_mangle)]
-pub unsafe extern "C" fn mffi_counter_free(handle: *mut Counter) {
-    if let Some(counter) = HandleBox::from_raw(handle) {
-        drop(counter);
+    pub fn increment(&mut self) {
+        self.value += 1;
+    }
+
+    pub fn get(&self) -> u64 {
+        self.value
     }
 }
 
@@ -322,7 +302,7 @@ pub fn multiply_floats(first: f64, second: f64) -> f64 {
 
 #[ffi_export]
 pub fn make_greeting(name_ptr: *const u8, name_len: usize) -> String {
-    let name = unsafe { 
+    let name = unsafe {
         if name_ptr.is_null() {
             "World"
         } else {
