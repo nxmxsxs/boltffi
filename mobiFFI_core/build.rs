@@ -487,6 +487,7 @@ fn extract_slice_type(ty: &Type) -> Option<(String, bool)> {
 
 fn parse_ffi_function(func: &ItemFn) -> Option<FfiExport> {
     let name = func.sig.ident.to_string();
+    let is_async = func.sig.asyncness.is_some();
 
     let mut params: Vec<(String, String)> = Vec::new();
 
@@ -516,6 +517,59 @@ fn parse_ffi_function(func: &ItemFn) -> Option<FfiExport> {
                 params.push((param_name, c_type));
             }
         }
+    }
+
+    if is_async {
+        let result_type = match &func.sig.output {
+            ReturnType::Default => "void".to_string(),
+            ReturnType::Type(_, ty) => {
+                let type_str = quote::quote!(#ty).to_string().replace(" ", "");
+                
+                if type_str == "String" || type_str == "std::string::String" {
+                    "struct FfiString".to_string()
+                } else if let Type::Path(path) = ty.as_ref() {
+                    if let Some(segment) = path.path.segments.last() {
+                        if segment.ident == "Result" {
+                            if let syn::PathArguments::AngleBracketed(args) = &segment.arguments {
+                                if let Some(syn::GenericArgument::Type(inner_ty)) = args.args.first() {
+                                    let inner_str = quote::quote!(#inner_ty).to_string().replace(" ", "");
+                                    if inner_str == "String" || inner_str == "std::string::String" {
+                                        "struct FfiString".to_string()
+                                    } else if inner_str == "()" {
+                                        "void".to_string()
+                                    } else {
+                                        rust_type_to_c(inner_ty).unwrap_or_else(|| "void".to_string())
+                                    }
+                                } else {
+                                    "void".to_string()
+                                }
+                            } else {
+                                "void".to_string()
+                            }
+                        } else {
+                            rust_type_to_c(ty).unwrap_or_else(|| "void".to_string())
+                        }
+                    } else {
+                        "void".to_string()
+                    }
+                } else {
+                    rust_type_to_c(ty).unwrap_or_else(|| "void".to_string())
+                }
+            }
+        };
+
+        let callback_sig = format!(
+            "void (*)(void*, struct FfiStatus, {})",
+            result_type
+        );
+        params.push(("user_data".to_string(), "void*".to_string()));
+        params.push(("callback".to_string(), callback_sig));
+
+        return Some(FfiExport {
+            name: format!("{}_async", name),
+            params,
+            return_kind: FfiReturnKind::Primitive("struct PendingHandle *".to_string()),
+        });
     }
 
     let return_kind = match &func.sig.output {

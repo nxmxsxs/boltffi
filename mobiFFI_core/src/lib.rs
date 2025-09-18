@@ -124,7 +124,7 @@ impl Counter {
 }
 
 #[repr(C)]
-#[derive(Clone, Copy, Debug)]
+#[derive(Clone, Copy, Debug, Default)]
 pub struct DataPoint {
     pub x: f64,
     pub y: f64,
@@ -283,42 +283,30 @@ pub fn api_result_is_success(result: ApiResult) -> bool {
     matches!(result, ApiResult::Success)
 }
 
-pub fn compute_heavy(input: i32) -> i32 {
+#[ffi_export]
+pub async fn compute_heavy(input: i32) -> i32 {
     std::thread::sleep(std::time::Duration::from_millis(100));
     input * 2
 }
 
-type ComputeCallback = extern "C" fn(user_data: *mut core::ffi::c_void, status: FfiStatus, result: i32);
+#[ffi_export]
+pub async fn fetch_data(id: i32) -> Result<i32, &'static str> {
+    std::thread::sleep(std::time::Duration::from_millis(50));
+    if id > 0 {
+        Ok(id * 10)
+    } else {
+        Err("invalid id")
+    }
+}
 
-#[unsafe(no_mangle)]
-pub extern "C" fn mffi_compute_heavy_async(
-    input: i32,
-    user_data: *mut core::ffi::c_void,
-    callback: ComputeCallback,
-) -> *mut PendingHandle {
-    let pending = Box::new(PendingHandle::new());
-    let token = pending.cancellation_token();
-    let pending_ptr = Box::into_raw(pending);
+#[ffi_export]
+pub async fn async_make_string(value: i32) -> String {
+    std::thread::sleep(std::time::Duration::from_millis(30));
+    format!("Value is: {}", value)
+}
 
-    let user_data = user_data as usize;
-    std::thread::spawn(move || {
-        if token.is_cancelled() {
-            let cb_user_data = user_data as *mut core::ffi::c_void;
-            callback(cb_user_data, FfiStatus::CANCELLED, 0);
-            return;
-        }
-
-        let result = compute_heavy(input);
-
-        if token.is_cancelled() {
-            let cb_user_data = user_data as *mut core::ffi::c_void;
-            callback(cb_user_data, FfiStatus::CANCELLED, 0);
-            return;
-        }
-
-        let cb_user_data = user_data as *mut core::ffi::c_void;
-        callback(cb_user_data, FfiStatus::OK, result);
-    });
-
-    pending_ptr
+#[ffi_export]
+pub async fn async_fetch_point(x: f64, y: f64) -> DataPoint {
+    std::thread::sleep(std::time::Duration::from_millis(20));
+    DataPoint { x, y, timestamp: 12345 }
 }

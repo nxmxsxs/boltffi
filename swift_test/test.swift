@@ -572,7 +572,7 @@ class AsyncContext {
 let asyncCtx = AsyncContext()
 let asyncCtxPtr = Unmanaged.passUnretained(asyncCtx).toOpaque()
 
-let asyncCallback: ComputeCallback = { userData, status, result in
+let asyncCallback: @convention(c) (UnsafeMutableRawPointer?, FfiStatus, Int32) -> Void = { userData, status, result in
     guard let ptr = userData else { return }
     let ctx = Unmanaged<AsyncContext>.fromOpaque(ptr).takeUnretainedValue()
     ctx.status = status.code
@@ -597,12 +597,110 @@ print("Async result: status=\(asyncCtx.status), result=\(asyncCtx.result)")
 if asyncCtx.status == 0 && asyncCtx.result == 42 {
     print("SUCCESS: Async computation works! (21 * 2 = 42)")
 } else {
-    print("FAILED: Expected status=0, result=42")
+    print("FAILED: Expected status=0, result=42, got status=\(asyncCtx.status), result=\(asyncCtx.result)")
     mffi_pending_free(pending)
     exit(1)
 }
 
 mffi_pending_free(pending)
 print("Freed pending handle")
+
+print("\n--- Testing async with Result return ---")
+
+let fetchCtx = AsyncContext()
+let fetchCtxPtr = Unmanaged.passUnretained(fetchCtx).toOpaque()
+
+let fetchCallback: @convention(c) (UnsafeMutableRawPointer?, FfiStatus, Int32) -> Void = { userData, status, result in
+    guard let ptr = userData else { return }
+    let ctx = Unmanaged<AsyncContext>.fromOpaque(ptr).takeUnretainedValue()
+    ctx.status = status.code
+    ctx.result = result
+    ctx.semaphore.signal()
+}
+
+let fetchPending = mffi_fetch_data_async(5, fetchCtxPtr, fetchCallback)
+_ = fetchCtx.semaphore.wait(timeout: .now() + 5.0)
+
+print("Fetch result: status=\(fetchCtx.status), result=\(fetchCtx.result)")
+
+if fetchCtx.status == 0 && fetchCtx.result == 50 {
+    print("SUCCESS: Async Result Ok works! (5 * 10 = 50)")
+} else {
+    print("FAILED: Expected status=0, result=50")
+    mffi_pending_free(fetchPending)
+    exit(1)
+}
+
+mffi_pending_free(fetchPending)
+
+print("\n--- Testing async String return ---")
+
+class StringAsyncContext {
+    var status: Int32 = -1
+    var result: FfiString = FfiString(ptr: nil, len: 0, cap: 0)
+    let semaphore = DispatchSemaphore(value: 0)
+}
+
+let strCtx = StringAsyncContext()
+let strCtxPtr = Unmanaged.passUnretained(strCtx).toOpaque()
+
+let strCallback: @convention(c) (UnsafeMutableRawPointer?, FfiStatus, FfiString) -> Void = { userData, status, result in
+    guard let ptr = userData else { return }
+    let ctx = Unmanaged<StringAsyncContext>.fromOpaque(ptr).takeUnretainedValue()
+    ctx.status = status.code
+    ctx.result = result
+    ctx.semaphore.signal()
+}
+
+let strPending = mffi_async_make_string_async(42, strCtxPtr, strCallback)
+_ = strCtx.semaphore.wait(timeout: .now() + 5.0)
+
+let strResult = strCtx.result.ptr != nil ? String(cString: strCtx.result.ptr!) : ""
+print("async_make_string result: status=\(strCtx.status), value=\"\(strResult)\"")
+
+if strCtx.status == 0 && strResult == "Value is: 42" {
+    print("SUCCESS: Async String return works!")
+} else {
+    print("FAILED: Expected 'Value is: 42', got '\(strResult)'")
+    mffi_pending_free(strPending)
+    exit(1)
+}
+
+mffi_free_string(strCtx.result)
+mffi_pending_free(strPending)
+
+print("\n--- Testing async struct return ---")
+
+class PointAsyncContext {
+    var status: Int32 = -1
+    var result: DataPoint = DataPoint(x: 0, y: 0, timestamp: 0)
+    let semaphore = DispatchSemaphore(value: 0)
+}
+
+let pointCtx = PointAsyncContext()
+let pointCtxPtr = Unmanaged.passUnretained(pointCtx).toOpaque()
+
+let pointCallback: @convention(c) (UnsafeMutableRawPointer?, FfiStatus, DataPoint) -> Void = { userData, status, result in
+    guard let ptr = userData else { return }
+    let ctx = Unmanaged<PointAsyncContext>.fromOpaque(ptr).takeUnretainedValue()
+    ctx.status = status.code
+    ctx.result = result
+    ctx.semaphore.signal()
+}
+
+let pointPending = mffi_async_fetch_point_async(3.14, 2.71, pointCtxPtr, pointCallback)
+_ = pointCtx.semaphore.wait(timeout: .now() + 5.0)
+
+print("async_fetch_point result: status=\(pointCtx.status), x=\(pointCtx.result.x), y=\(pointCtx.result.y)")
+
+if pointCtx.status == 0 && pointCtx.result.x == 3.14 && pointCtx.result.y == 2.71 {
+    print("SUCCESS: Async struct return works!")
+} else {
+    print("FAILED: Expected x=3.14, y=2.71")
+    mffi_pending_free(pointPending)
+    exit(1)
+}
+
+mffi_pending_free(pointPending)
 
 print("\n=== ALL TESTS PASSED ===")

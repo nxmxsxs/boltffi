@@ -36,8 +36,6 @@ typedef struct FfiStatus {
 #define FfiStatus_CANCELLED (FfiStatus){ .code = 4 }
 #define FfiStatus_INTERNAL_ERROR (FfiStatus){ .code = 100 }
 
-typedef void (*ComputeCallback)(void *user_data, struct FfiStatus status, int32_t result);
-
 #define PANIC_STATUS (FfiStatus){ .code = 10 }
 
 uint32_t mffi_version_major(void);
@@ -53,10 +51,6 @@ void mffi_free_string(struct FfiString string);
 struct FfiStatus mffi_last_error_message(struct FfiString *out);
 
 void mffi_clear_last_error(void);
-
-struct PendingHandle *mffi_compute_heavy_async(int32_t input,
-                                               void *user_data,
-                                               ComputeCallback callback);
 
 void mffi_pending_cancel(struct PendingHandle *handle);
 
@@ -120,5 +114,9 @@ int32_t mffi_direction_to_degrees(Direction dir);
 int32_t mffi_find_even(int32_t value, int32_t *out);
 ApiResult mffi_process_value(int32_t value);
 bool mffi_api_result_is_success(ApiResult result);
+struct PendingHandle * mffi_compute_heavy_async(int32_t input, void* user_data, void (*callback)(void*, struct FfiStatus, int32_t));
+struct PendingHandle * mffi_fetch_data_async(int32_t id, void* user_data, void (*callback)(void*, struct FfiStatus, int32_t));
+struct PendingHandle * mffi_async_make_string_async(int32_t value, void* user_data, void (*callback)(void*, struct FfiStatus, struct FfiString));
+struct PendingHandle * mffi_async_fetch_point_async(double x, double y, void* user_data, void (*callback)(void*, struct FfiStatus, DataPoint));
 
 #endif  /* MOBIFFI_CORE_H */

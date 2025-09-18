@@ -325,6 +325,193 @@ fn classify_return(output: &ReturnType) -> ReturnKind {
     }
 }
 
+enum AsyncReturnKind {
+    Unit,
+    Primitive(proc_macro2::TokenStream),
+    String,
+    Struct(proc_macro2::TokenStream),
+    ResultPrimitive(proc_macro2::TokenStream),
+    ResultString,
+    ResultStruct(proc_macro2::TokenStream),
+}
+
+fn classify_async_return(output: &ReturnType) -> AsyncReturnKind {
+    match output {
+        ReturnType::Default => AsyncReturnKind::Unit,
+        ReturnType::Type(_, ty) => {
+            let type_str = quote::quote!(#ty).to_string().replace(" ", "");
+            
+            if type_str == "String" || type_str == "std::string::String" {
+                return AsyncReturnKind::String;
+            }
+
+            if let Type::Path(path) = ty.as_ref() {
+                if let Some(segment) = path.path.segments.last() {
+                    if segment.ident == "Result" {
+                        if let syn::PathArguments::AngleBracketed(args) = &segment.arguments {
+                            if let Some(syn::GenericArgument::Type(inner_ty)) = args.args.first() {
+                                let inner_str = quote::quote!(#inner_ty).to_string().replace(" ", "");
+                                if inner_str == "String" || inner_str == "std::string::String" {
+                                    return AsyncReturnKind::ResultString;
+                                } else if inner_str == "()" {
+                                    return AsyncReturnKind::Unit;
+                                } else if is_primitive_type(&inner_str) {
+                                    return AsyncReturnKind::ResultPrimitive(quote! { #inner_ty });
+                                } else {
+                                    return AsyncReturnKind::ResultStruct(quote! { #inner_ty });
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+
+            if is_primitive_type(&type_str) {
+                AsyncReturnKind::Primitive(quote! { #ty })
+            } else {
+                AsyncReturnKind::Struct(quote! { #ty })
+            }
+        }
+    }
+}
+
+fn is_primitive_type(s: &str) -> bool {
+    matches!(s, "i8" | "i16" | "i32" | "i64" | "u8" | "u16" | "u32" | "u64" | 
+             "f32" | "f64" | "bool" | "usize" | "isize" | "()")
+}
+
+fn generate_async_export(input: &ItemFn) -> TokenStream {
+    let fn_name = &input.sig.ident;
+    let fn_inputs = &input.sig.inputs;
+    let fn_output = &input.sig.output;
+    let fn_vis = &input.vis;
+    let fn_block = &input.block;
+
+    let export_name = format!("mffi_{}_async", fn_name);
+    let export_ident = syn::Ident::new(&export_name, fn_name.span());
+
+    let callback_type_name = format!("{}Callback", to_pascal_case(&fn_name.to_string()));
+    let callback_type_ident = syn::Ident::new(&callback_type_name, fn_name.span());
+
+    let FfiParams { ffi_params, conversions, call_args } = transform_params(fn_inputs);
+
+    let return_kind = classify_async_return(fn_output);
+
+    let (callback_result_type, call_and_callback) = match &return_kind {
+        AsyncReturnKind::Unit => (
+            quote! { () },
+            quote! { callback(user_data, crate::FfiStatus::OK, ()); }
+        ),
+        AsyncReturnKind::Primitive(ty) => (
+            quote! { #ty },
+            quote! { callback(user_data, crate::FfiStatus::OK, result); }
+        ),
+        AsyncReturnKind::String => (
+            quote! { crate::FfiString },
+            quote! { callback(user_data, crate::FfiStatus::OK, crate::FfiString::from(result)); }
+        ),
+        AsyncReturnKind::Struct(ty) => (
+            quote! { #ty },
+            quote! { callback(user_data, crate::FfiStatus::OK, result); }
+        ),
+        AsyncReturnKind::ResultPrimitive(ty) => (
+            quote! { #ty },
+            quote! {
+                match result {
+                    Ok(value) => callback(user_data, crate::FfiStatus::OK, value),
+                    Err(e) => {
+                        crate::set_last_error(&e.to_string());
+                        callback(user_data, crate::FfiStatus::INTERNAL_ERROR, Default::default());
+                    }
+                }
+            }
+        ),
+        AsyncReturnKind::ResultString => (
+            quote! { crate::FfiString },
+            quote! {
+                match result {
+                    Ok(value) => callback(user_data, crate::FfiStatus::OK, crate::FfiString::from(value)),
+                    Err(e) => {
+                        crate::set_last_error(&e.to_string());
+                        callback(user_data, crate::FfiStatus::INTERNAL_ERROR, crate::FfiString::default());
+                    }
+                }
+            }
+        ),
+        AsyncReturnKind::ResultStruct(ty) => (
+            quote! { #ty },
+            quote! {
+                match result {
+                    Ok(value) => callback(user_data, crate::FfiStatus::OK, value),
+                    Err(e) => {
+                        crate::set_last_error(&e.to_string());
+                        callback(user_data, crate::FfiStatus::INTERNAL_ERROR, unsafe { core::mem::zeroed() });
+                    }
+                }
+            }
+        ),
+    };
+
+    let expanded = quote! {
+        #fn_vis fn #fn_name(#fn_inputs) #fn_output #fn_block
+
+        type #callback_type_ident = extern "C" fn(
+            user_data: *mut core::ffi::c_void,
+            status: crate::FfiStatus,
+            result: #callback_result_type
+        );
+
+        #[unsafe(no_mangle)]
+        #fn_vis extern "C" fn #export_ident(
+            #(#ffi_params,)*
+            user_data: *mut core::ffi::c_void,
+            callback: #callback_type_ident,
+        ) -> *mut crate::PendingHandle {
+            let pending = Box::new(crate::PendingHandle::new());
+            let token = pending.cancellation_token();
+            let pending_ptr = Box::into_raw(pending);
+
+            let user_data_val = user_data as usize;
+
+            std::thread::spawn(move || {
+                let user_data = user_data_val as *mut core::ffi::c_void;
+
+                if token.is_cancelled() {
+                    callback(user_data, crate::FfiStatus::CANCELLED, Default::default());
+                    return;
+                }
+
+                #(#conversions)*
+
+                let result = #fn_name(#(#call_args),*);
+
+                if token.is_cancelled() {
+                    callback(user_data, crate::FfiStatus::CANCELLED, Default::default());
+                    return;
+                }
+
+                #call_and_callback
+            });
+
+            pending_ptr
+        }
+    };
+
+    TokenStream::from(expanded)
+}
+
+fn to_pascal_case(s: &str) -> String {
+    s.split('_')
+        .map(|word| {
+            let mut chars = word.chars();
+            match chars.next() {
+                Some(first) => first.to_uppercase().chain(chars).collect(),
+                None => String::new(),
+            }
+        })
+        .collect()
+}
+
 #[proc_macro_attribute]
 pub fn ffi_export(_attr: TokenStream, item: TokenStream) -> TokenStream {
     let input = parse_macro_input!(item as ItemFn);
@@ -332,6 +519,11 @@ pub fn ffi_export(_attr: TokenStream, item: TokenStream) -> TokenStream {
     let fn_inputs = &input.sig.inputs;
     let fn_output = &input.sig.output;
     let fn_vis = &input.vis;
+    let is_async = input.sig.asyncness.is_some();
+
+    if is_async {
+        return generate_async_export(&input);
+    }
 
     let export_name = format!("mffi_{}", fn_name);
     let export_ident = syn::Ident::new(&export_name, fn_name.span());

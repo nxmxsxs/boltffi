@@ -8,6 +8,16 @@ pub struct FfiString {
     cap: usize,
 }
 
+impl Default for FfiString {
+    fn default() -> Self {
+        Self {
+            ptr: core::ptr::null_mut(),
+            len: 0,
+            cap: 0,
+        }
+    }
+}
+
 impl FfiString {
     pub fn from_string(string: String) -> Self {
         let bytes = string.into_bytes();
