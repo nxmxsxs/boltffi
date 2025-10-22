@@ -1,3 +1,4 @@
+mod callback_trait;
 mod class;
 mod enumeration;
 mod function;
@@ -7,6 +8,7 @@ mod record;
 mod stream;
 mod types;
 
+pub use callback_trait::{CallbackTrait, TraitMethod, TraitMethodParam};
 pub use class::{Class, Constructor, ConstructorParam};
 pub use enumeration::{Enumeration, Variant};
 pub use function::Function;

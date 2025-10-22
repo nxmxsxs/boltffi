@@ -1,5 +1,6 @@
 use serde::{Deserialize, Serialize};
 
+use super::callback_trait::CallbackTrait;
 use super::class::Class;
 use super::enumeration::Enumeration;
 use super::function::Function;
@@ -12,6 +13,7 @@ pub struct Module {
     pub records: Vec<Record>,
     pub enums: Vec<Enumeration>,
     pub functions: Vec<Function>,
+    pub callback_traits: Vec<CallbackTrait>,
 }
 
 impl Module {
@@ -22,6 +24,7 @@ impl Module {
             records: Vec::new(),
             enums: Vec::new(),
             functions: Vec::new(),
+            callback_traits: Vec::new(),
         }
     }
 
@@ -59,5 +62,16 @@ impl Module {
 
     pub fn find_enum(&self, name: &str) -> Option<&Enumeration> {
         self.enums.iter().find(|enumeration| enumeration.name == name)
+    }
+
+    pub fn with_callback_trait(mut self, callback_trait: CallbackTrait) -> Self {
+        self.callback_traits.push(callback_trait);
+        self
+    }
+
+    pub fn find_callback_trait(&self, name: &str) -> Option<&CallbackTrait> {
+        self.callback_traits
+            .iter()
+            .find(|callback_trait| callback_trait.name == name)
     }
 }
