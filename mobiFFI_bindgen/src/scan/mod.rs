@@ -1,17 +1,18 @@
 use std::fs;
 use std::path::Path;
-use syn::{Attribute, Fields, ImplItem, Item, ItemImpl, ItemStruct, Type};
+use syn::{Attribute, Fields, FnArg, ImplItem, Item, ItemImpl, ItemStruct, ItemTrait, Type};
 use walkdir::WalkDir;
 
 use crate::model::{
-    Class, Constructor, Method, Module, Parameter, Primitive, Receiver, Record, RecordField,
-    StreamMethod, StreamMode, Type as MType,
+    CallbackTrait, Class, Constructor, Method, Module, Parameter, Primitive, Receiver, Record,
+    RecordField, StreamMethod, StreamMode, TraitMethod, TraitMethodParam, Type as MType,
 };
 
 pub struct SourceScanner {
     module_name: String,
     classes: Vec<ScannedClass>,
     records: Vec<ScannedRecord>,
+    callback_traits: Vec<ScannedCallbackTrait>,
 }
 
 struct ScannedClass {
@@ -40,12 +41,25 @@ struct ScannedRecord {
     fields: Vec<(String, MType)>,
 }
 
+struct ScannedCallbackTrait {
+    name: String,
+    methods: Vec<ScannedTraitMethod>,
+}
+
+struct ScannedTraitMethod {
+    name: String,
+    params: Vec<(String, MType)>,
+    output: Option<MType>,
+    is_async: bool,
+}
+
 impl SourceScanner {
     pub fn new(module_name: impl Into<String>) -> Self {
         Self {
             module_name: module_name.into(),
             classes: Vec::new(),
             records: Vec::new(),
+            callback_traits: Vec::new(),
         }
     }
 
@@ -90,6 +104,11 @@ impl SourceScanner {
                     self.process_class(item_impl);
                 }
             }
+            Item::Trait(item_trait) => {
+                if has_attribute(&item_trait.attrs, "ffi_trait") {
+                    self.process_callback_trait(item_trait);
+                }
+            }
             _ => {}
         }
     }
@@ -110,6 +129,56 @@ impl SourceScanner {
         };
 
         self.records.push(ScannedRecord { name, fields });
+    }
+
+    fn process_callback_trait(&mut self, item_trait: &ItemTrait) {
+        let name = item_trait.ident.to_string();
+        let mut methods = Vec::new();
+
+        for item in &item_trait.items {
+            if let syn::TraitItem::Fn(method) = item {
+                if let Some(scanned_method) = self.process_trait_method(method) {
+                    methods.push(scanned_method);
+                }
+            }
+        }
+
+        self.callback_traits.push(ScannedCallbackTrait { name, methods });
+    }
+
+    fn process_trait_method(&self, method: &syn::TraitItemFn) -> Option<ScannedTraitMethod> {
+        let name = method.sig.ident.to_string();
+        let is_async = method.sig.asyncness.is_some();
+
+        let params: Vec<(String, MType)> = method
+            .sig
+            .inputs
+            .iter()
+            .filter_map(|arg| {
+                if let FnArg::Typed(pat_type) = arg {
+                    let param_name = match &*pat_type.pat {
+                        syn::Pat::Ident(pat_ident) => pat_ident.ident.to_string(),
+                        _ => return None,
+                    };
+                    let param_type = rust_type_to_ffi_type(&pat_type.ty)?;
+                    Some((param_name, param_type))
+                } else {
+                    None
+                }
+            })
+            .collect();
+
+        let output = match &method.sig.output {
+            syn::ReturnType::Default => None,
+            syn::ReturnType::Type(_, ty) => rust_type_to_ffi_type(ty),
+        };
+
+        Some(ScannedTraitMethod {
+            name,
+            params,
+            output,
+            is_async,
+        })
     }
 
     fn process_class(&mut self, item_impl: &ItemImpl) {
@@ -253,6 +322,26 @@ impl SourceScanner {
             }
 
             module = module.with_class(c);
+        }
+
+        for callback_trait in self.callback_traits {
+            let mut ct = CallbackTrait::new(&callback_trait.name);
+
+            for method in callback_trait.methods {
+                let mut tm = TraitMethod::new(&method.name);
+                for (name, ty) in method.params {
+                    tm = tm.with_param(TraitMethodParam::new(&name, ty));
+                }
+                if let Some(output) = method.output {
+                    tm = tm.with_output(output);
+                }
+                if method.is_async {
+                    tm = tm.make_async();
+                }
+                ct = ct.with_method(tm);
+            }
+
+            module = module.with_callback_trait(ct);
         }
 
         module

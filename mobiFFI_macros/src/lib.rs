@@ -1571,3 +1571,8 @@ fn generate_stream_exports(
         }
     }
 }
+
+#[proc_macro_attribute]
+pub fn ffi_trait(_attr: TokenStream, item: TokenStream) -> TokenStream {
+    item
+}

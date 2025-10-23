@@ -91,4 +91,13 @@ fn main() {
     for record in &module.records {
         println!("  {} ({} fields)", record.name, record.fields.len());
     }
+
+    println!("\n--- Callback Traits ---");
+    for callback_trait in &module.callback_traits {
+        println!(
+            "  {} ({} methods)",
+            callback_trait.name,
+            callback_trait.methods.len()
+        );
+    }
 }

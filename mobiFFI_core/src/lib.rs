@@ -10,7 +10,7 @@ pub mod subscription;
 pub mod types;
 
 pub use handle::HandleBox;
-pub use mobiFFI_macros::{FfiType, ffi_class, ffi_export, ffi_stream};
+pub use mobiFFI_macros::{FfiType, ffi_class, ffi_export, ffi_stream, ffi_trait};
 pub use pending::{CancellationToken, PendingHandle};
 pub use ringbuffer::SpscRingBuffer;
 pub use rustfuture::{RustFuture, RustFutureContinuationCallback, RustFutureHandle, RustFuturePoll};
@@ -443,4 +443,17 @@ impl SensorMonitor {
     pub fn subscriber_count(&self) -> usize {
         self.readings_producer.subscriber_count()
     }
+}
+
+#[ffi_trait]
+pub trait DataProvider {
+    fn get_count(&self) -> u32;
+    fn get_item(&self, index: u32) -> DataPoint;
+}
+
+#[ffi_trait]
+pub trait NavigationObserver {
+    fn on_location_updated(&self, lat: f64, lon: f64);
+    fn on_route_changed(&self, route_id: u32);
+    fn on_error(&self, code: i32, message: &str);
 }
