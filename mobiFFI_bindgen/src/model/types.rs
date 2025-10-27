@@ -61,6 +61,7 @@ pub enum Type {
     Object(String),
     Record(String),
     Enum(String),
+    BoxedTrait(String),
     Void,
 }
 

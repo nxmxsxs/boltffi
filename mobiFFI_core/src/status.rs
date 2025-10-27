@@ -27,6 +27,12 @@ impl FfiStatus {
     }
 }
 
+impl Default for FfiStatus {
+    fn default() -> Self {
+        Self::OK
+    }
+}
+
 impl From<i32> for FfiStatus {
     fn from(code: i32) -> Self {
         Self { code }

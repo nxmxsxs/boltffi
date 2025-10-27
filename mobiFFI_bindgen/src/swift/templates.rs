@@ -330,6 +330,20 @@ pub struct SyncMethodBodyTemplate {
     pub has_return: bool,
 }
 
+fn param_to_ffi_arg(param: &crate::model::Parameter) -> String {
+    let name = NamingConvention::param_name(&param.name);
+    match &param.param_type {
+        crate::model::Type::BoxedTrait(trait_name) => {
+            let class_name = NamingConvention::class_name(trait_name);
+            format!(
+                "UnsafeMutablePointer<Foreign{}>({}Bridge.create({}))",
+                class_name, class_name, name
+            )
+        }
+        _ => name,
+    }
+}
+
 impl SyncMethodBodyTemplate {
     pub fn from_method(method: &Method, class: &Class, module: &Module) -> Self {
         let class_prefix = class.ffi_prefix(&module.ffi_prefix());
@@ -337,7 +351,7 @@ impl SyncMethodBodyTemplate {
             ffi_name: method.ffi_name(&class_prefix),
             args: method
                 .non_callback_params()
-                .map(|p| NamingConvention::param_name(&p.name))
+                .map(param_to_ffi_arg)
                 .collect(),
             has_return: method.output.as_ref().map_or(false, |t| !t.is_void()),
         }
@@ -610,7 +624,7 @@ impl CallbackTraitTemplate {
                                     label: swift_name.clone(),
                                     ffi_name: param.name.clone(),
                                     swift_type: TypeMapper::map_type(&param.param_type),
-                                    conversion: swift_name,
+                                    conversion: param.name.clone(),
                                 }
                             })
                             .collect(),

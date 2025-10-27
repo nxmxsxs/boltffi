@@ -426,6 +426,21 @@ fn extract_stream_mode(tokens: &str) -> StreamMode {
 fn rust_type_to_ffi_type(ty: &Type) -> Option<MType> {
     match ty {
         Type::Path(type_path) => {
+            let last_segment = type_path.path.segments.last()?;
+            let ident = last_segment.ident.to_string();
+            
+            if ident == "Box" {
+                if let syn::PathArguments::AngleBracketed(args) = &last_segment.arguments {
+                    if let Some(syn::GenericArgument::Type(Type::TraitObject(trait_obj))) = args.args.first() {
+                        if let Some(syn::TypeParamBound::Trait(trait_bound)) = trait_obj.bounds.first() {
+                            if let Some(seg) = trait_bound.path.segments.last() {
+                                return Some(MType::BoxedTrait(seg.ident.to_string()));
+                            }
+                        }
+                    }
+                }
+            }
+            
             let path_str = type_path
                 .path
                 .segments
@@ -464,6 +479,14 @@ fn rust_type_to_ffi_type(ty: &Type) -> Option<MType> {
                             )));
                         }
                     }
+                }
+            }
+            None
+        }
+        Type::TraitObject(trait_obj) => {
+            if let Some(syn::TypeParamBound::Trait(trait_bound)) = trait_obj.bounds.first() {
+                if let Some(seg) = trait_bound.path.segments.last() {
+                    return Some(MType::BoxedTrait(seg.ident.to_string()));
                 }
             }
             None

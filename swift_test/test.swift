@@ -1,5 +1,4 @@
 import Foundation
-import MobiFFI
 
 print("Testing MobiFFI Swift binding...")
 
@@ -971,5 +970,49 @@ mffi_sensormonitor_free(sensorMonitor)
 print("Cleaned up SensorMonitor and subscription")
 
 print("SUCCESS: #[ffi_stream] macro generates working streaming API!")
+
+print("\n--- Testing #[ffi_trait] callback traits ---")
+
+class SwiftDataProvider: DataProviderProtocol {
+    let data: [DataPoint]
+    
+    init(data: [DataPoint]) {
+        self.data = data
+    }
+    
+    func getCount() -> UInt32 {
+        return UInt32(data.count)
+    }
+    
+    func getItem(index: UInt32) -> DataPoint {
+        return data[Int(index)]
+    }
+}
+
+let testData = [
+    DataPoint(x: 10, y: 20, timestamp: 0),
+    DataPoint(x: 30, y: 40, timestamp: 0),
+    DataPoint(x: 50, y: 60, timestamp: 0)
+]
+
+let provider = SwiftDataProvider(data: testData)
+print("Created SwiftDataProvider with \(testData.count) points")
+
+let dataConsumer = DataConsumer()
+print("Created DataConsumer")
+
+dataConsumer.setProvider(provider: provider)
+print("Set provider on consumer")
+
+let sum = dataConsumer.computeSum()
+print("computeSum() returned: \(sum)")
+
+let expectedSum: UInt64 = UInt64((10 + 20) + (30 + 40) + (50 + 60))
+if sum == expectedSum {
+    print("SUCCESS: Callback trait works! Swift -> Rust -> Swift callback -> Rust result")
+} else {
+    print("FAILED: Expected sum \(expectedSum), got \(sum)")
+    exit(1)
+}
 
 print("\n=== ALL TESTS PASSED ===")

@@ -814,6 +814,17 @@ fn rust_type_to_c(ty: &Type) -> Option<String> {
             if type_str.starts_with("&'") && type_str.contains("str") {
                 return Some("const char *".to_string());
             }
+            if type_str.starts_with("Box<dyn") {
+                let inner = type_str
+                    .trim_start_matches("Box<dyn")
+                    .trim_end_matches(">")
+                    .trim();
+                return Some(format!("struct Foreign{}*", inner));
+            }
+            if type_str.starts_with("Box<") && type_str.ends_with(">") {
+                let inner = &type_str[4..type_str.len()-1];
+                return Some(format!("struct {}*", inner));
+            }
             if is_callback_typedef(&type_str) {
                 Some(type_str)
             } else if type_str.starts_with("*const") {

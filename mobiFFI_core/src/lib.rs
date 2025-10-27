@@ -455,5 +455,32 @@ pub trait DataProvider {
 pub trait NavigationObserver {
     fn on_location_updated(&self, lat: f64, lon: f64);
     fn on_route_changed(&self, route_id: u32);
-    fn on_error(&self, code: i32, message: &str);
+}
+
+pub struct DataConsumer {
+    provider: Option<Box<dyn DataProvider>>,
+}
+
+#[ffi_class]
+impl DataConsumer {
+    pub fn new() -> Self {
+        Self { provider: None }
+    }
+
+    pub fn set_provider(&mut self, provider: Box<dyn DataProvider>) {
+        self.provider = Some(provider);
+    }
+
+    pub fn compute_sum(&self) -> u64 {
+        let Some(ref provider) = self.provider else {
+            return 0;
+        };
+        let count = provider.get_count();
+        (0..count)
+            .map(|i| {
+                let point = provider.get_item(i);
+                (point.x + point.y) as u64
+            })
+            .sum()
+    }
 }

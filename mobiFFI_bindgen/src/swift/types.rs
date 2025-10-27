@@ -17,6 +17,7 @@ impl TypeMapper {
             Type::Object(name) => NamingConvention::class_name(name),
             Type::Record(name) => NamingConvention::class_name(name),
             Type::Enum(name) => NamingConvention::class_name(name),
+            Type::BoxedTrait(name) => format!("{}Protocol", NamingConvention::class_name(name)),
             Type::Void => "Void".into(),
         }
     }
@@ -57,6 +58,7 @@ impl TypeMapper {
             Type::Object(_) => "OpaquePointer".into(),
             Type::Record(name) => NamingConvention::class_name(name),
             Type::Enum(_) => "Int32".into(),
+            Type::BoxedTrait(_) => "OpaquePointer".into(),
             Type::Void => "Void".into(),
         }
     }
@@ -104,7 +106,7 @@ impl TypeMapper {
     pub fn needs_conversion(ty: &Type) -> bool {
         matches!(
             ty,
-            Type::String | Type::Bytes | Type::Vec(_) | Type::Option(_) | Type::Object(_)
+            Type::String | Type::Bytes | Type::Vec(_) | Type::Option(_) | Type::Object(_) | Type::BoxedTrait(_)
         )
     }
 }

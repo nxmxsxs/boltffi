@@ -173,7 +173,6 @@ typedef struct NavigationObserverVTable {
   uint64_t (*clone)(uint64_t handle);
   void (*on_location_updated)(uint64_t handle, double lat, double lon, struct FfiStatus *status);
   void (*on_route_changed)(uint64_t handle, uint32_t route_id, struct FfiStatus *status);
-  void (*on_error)(uint64_t handle, int32_t code, const char * message, struct FfiStatus *status);
 } NavigationObserverVTable;
 
 typedef struct ForeignNavigationObserver {
@@ -261,6 +260,10 @@ struct SensorMonitor * mffi_sensormonitor_new(void);
 struct FfiStatus mffi_sensormonitor_free(struct SensorMonitor * handle);
 struct FfiStatus mffi_sensormonitor_emit_reading(struct SensorMonitor * handle, int32_t sensor_id, int64_t timestamp_ms, double value);
 uintptr_t mffi_sensormonitor_subscriber_count(struct SensorMonitor * handle);
+struct DataConsumer * mffi_dataconsumer_new(void);
+struct FfiStatus mffi_dataconsumer_free(struct DataConsumer * handle);
+struct FfiStatus mffi_dataconsumer_set_provider(struct DataConsumer * handle, struct ForeignDataProvider* provider);
+uint64_t mffi_dataconsumer_compute_sum(struct DataConsumer * handle);
 SubscriptionHandle mffi_sensormonitor_readings(const struct Sensormonitor *handle);
 uintptr_t mffi_sensormonitor_readings_pop_batch(SubscriptionHandle subscription_handle, struct SensorReading *output_ptr, uintptr_t output_capacity);
 int32_t mffi_sensormonitor_readings_wait(SubscriptionHandle subscription_handle, uint32_t timeout_milliseconds);

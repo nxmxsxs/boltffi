@@ -49,6 +49,7 @@ enum ParamTransform {
     Callback(Vec<syn::Type>),
     SliceRef(syn::Type),
     SliceMut(syn::Type),
+    BoxedTrait(syn::Ident),
 }
 
 fn extract_fn_arg_types(ty: &Type) -> Option<Vec<syn::Type>> {
@@ -91,6 +92,25 @@ fn extract_slice_inner(ty: &Type) -> Option<(syn::Type, bool)> {
     None
 }
 
+fn extract_boxed_dyn_trait(ty: &Type) -> Option<syn::Ident> {
+    if let Type::Path(type_path) = ty {
+        if let Some(segment) = type_path.path.segments.last() {
+            if segment.ident == "Box" {
+                if let syn::PathArguments::AngleBracketed(args) = &segment.arguments {
+                    if let Some(syn::GenericArgument::Type(Type::TraitObject(trait_obj))) = args.args.first() {
+                        if let Some(syn::TypeParamBound::Trait(trait_bound)) = trait_obj.bounds.first() {
+                            if let Some(seg) = trait_bound.path.segments.last() {
+                                return Some(seg.ident.clone());
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    }
+    None
+}
+
 fn classify_param_transform(ty: &Type) -> ParamTransform {
     let type_str = quote::quote!(#ty).to_string().replace(" ", "");
     
@@ -104,6 +124,10 @@ fn classify_param_transform(ty: &Type) -> ParamTransform {
         } else {
             ParamTransform::SliceRef(inner_ty)
         };
+    }
+    
+    if let Some(trait_name) = extract_boxed_dyn_trait(ty) {
+        return ParamTransform::BoxedTrait(trait_name);
     }
     
     if type_str.starts_with("*const") || type_str.starts_with("*mut") {
@@ -243,6 +267,27 @@ fn transform_params(inputs: &syn::punctuated::Punctuated<FnArg, syn::Token![,]>)
 
                     call_args.push(quote! { #name });
                 }
+                ParamTransform::BoxedTrait(trait_name) => {
+                    let foreign_type = syn::Ident::new(
+                        &format!("Foreign{}", trait_name),
+                        trait_name.span(),
+                    );
+                    
+                    ffi_params.push(quote! { #name: *mut #foreign_type });
+                    
+                    conversions.push(quote! {
+                        let #name: Box<dyn #trait_name> = if #name.is_null() {
+                            return crate::fail_with_error(
+                                crate::FfiStatus::NULL_POINTER,
+                                concat!(stringify!(#name), " is null")
+                            );
+                        } else {
+                            Box::from_raw(#name)
+                        };
+                    });
+                    
+                    call_args.push(quote! { #name });
+                }
                 ParamTransform::PassThrough => {
                     let ty = &pat_type.ty;
                     ffi_params.push(quote! { #name: #ty });
@@ -357,6 +402,9 @@ fn transform_params_async(inputs: &syn::punctuated::Punctuated<FnArg, syn::Token
                 }
                 ParamTransform::SliceMut(_inner_ty) => {
                     panic!("Mutable slices are not supported in async functions");
+                }
+                ParamTransform::BoxedTrait(_trait_name) => {
+                    panic!("Box<dyn Trait> parameters are not yet supported in async functions");
                 }
                 ParamTransform::PassThrough => {
                     let ty = &pat_type.ty;
@@ -1205,7 +1253,7 @@ pub fn ffi_class(_attr: TokenStream, item: TokenStream) -> TokenStream {
         .iter()
         .filter_map(|item| {
             if let syn::ImplItem::Fn(method) = item {
-                if method.vis == syn::Visibility::Public(syn::token::Pub::default()) {
+                if matches!(method.vis, syn::Visibility::Public(_)) {
                     if let Some(item_type) = extract_ffi_stream_item(&method.attrs) {
                         return Some(generate_stream_exports(&type_name, &snake_name, method, &item_type));
                     }
@@ -1351,6 +1399,27 @@ fn transform_method_params(
                         };
                     });
 
+                    call_args.push(quote! { #name });
+                }
+                ParamTransform::BoxedTrait(trait_name) => {
+                    let foreign_type = syn::Ident::new(
+                        &format!("Foreign{}", trait_name),
+                        trait_name.span(),
+                    );
+                    
+                    ffi_params.push(quote! { #name: *mut #foreign_type });
+                    
+                    conversions.push(quote! {
+                        let #name: Box<dyn #trait_name> = if #name.is_null() {
+                            return crate::fail_with_error(
+                                crate::FfiStatus::NULL_POINTER,
+                                concat!(stringify!(#name), " is null")
+                            );
+                        } else {
+                            Box::from_raw(#name)
+                        };
+                    });
+                    
                     call_args.push(quote! { #name });
                 }
                 ParamTransform::PassThrough => {
@@ -1623,7 +1692,7 @@ fn expand_ffi_trait(item_trait: syn::ItemTrait) -> Result<proc_macro2::TokenStre
                         
                         let ffi_type = rust_type_to_ffi_param_type(param_type);
                         param_types.push(quote! { #param_name: #ffi_type });
-                        param_names.push(param_name.clone());
+                        param_names.push(quote! { #param_name: #param_type });
                         call_args.push(quote! { #param_name });
                     }
                 }
@@ -1665,7 +1734,7 @@ fn expand_ffi_trait(item_trait: syn::ItemTrait) -> Result<proc_macro2::TokenStre
 
                 let output_type = return_type.as_ref().map(|t| quote! { -> #t }).unwrap_or_default();
                 foreign_impls.push(quote! {
-                    async fn #method_name(&self, #(#param_names: _,)*) #output_type {
+                    async fn #method_name(&self, #(#param_names,)*) #output_type {
                         #impl_body
                     }
                 });
@@ -1689,7 +1758,7 @@ fn expand_ffi_trait(item_trait: syn::ItemTrait) -> Result<proc_macro2::TokenStre
                 let impl_body = if let Some(ref ret_ty) = return_type {
                     quote! {
                         let mut out: #ret_ty = Default::default();
-                        let mut status = crate::FfiStatus::ok();
+                        let mut status = crate::FfiStatus::default();
                         unsafe {
                             ((*self.vtable).#method_name_snake)(
                                 self.handle,
@@ -1702,7 +1771,7 @@ fn expand_ffi_trait(item_trait: syn::ItemTrait) -> Result<proc_macro2::TokenStre
                     }
                 } else {
                     quote! {
-                        let mut status = crate::FfiStatus::ok();
+                        let mut status = crate::FfiStatus::default();
                         unsafe {
                             ((*self.vtable).#method_name_snake)(
                                 self.handle,
@@ -1715,7 +1784,7 @@ fn expand_ffi_trait(item_trait: syn::ItemTrait) -> Result<proc_macro2::TokenStre
 
                 let output_type = return_type.as_ref().map(|t| quote! { -> #t }).unwrap_or_default();
                 foreign_impls.push(quote! {
-                    fn #method_name(&self, #(#param_names: _,)*) #output_type {
+                    fn #method_name(&self, #(#param_names,)*) #output_type {
                         #impl_body
                     }
                 });
@@ -1753,6 +1822,10 @@ fn expand_ffi_trait(item_trait: syn::ItemTrait) -> Result<proc_macro2::TokenStre
                     handle: new_handle,
                 }
             }
+        }
+
+        impl #trait_name for #foreign_name {
+            #(#foreign_impls)*
         }
 
         static #vtable_static: std::sync::atomic::AtomicPtr<#vtable_name> =

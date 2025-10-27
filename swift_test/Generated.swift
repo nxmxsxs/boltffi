@@ -187,6 +187,32 @@ public final class SensorMonitor {
 }
 
 
+public final class DataConsumer {
+    let handle: OpaquePointer
+
+    private init(handle: OpaquePointer) {
+        self.handle = handle
+    }
+
+    public convenience init() {
+        let ptr = mffi_dataconsumer_new()!
+        self.init(handle: ptr)
+    }
+
+    deinit {
+        _ = mffi_dataconsumer_free(handle)
+    }
+
+    public func setProvider(provider: DataProviderProtocol) {
+        mffi_dataconsumer_set_provider(handle, UnsafeMutablePointer<ForeignDataProvider>(DataProviderBridge.create(provider)))
+    }
+
+    public func computeSum() -> UInt64 {
+        return mffi_dataconsumer_compute_sum(handle)
+    }
+}
+
+
 public protocol DataProviderProtocol: AnyObject {
     func getCount() -> UInt32
     func getItem(index: UInt32) -> DataPoint
@@ -239,7 +265,7 @@ public enum DataProviderBridge {
         register()
         let wrapper = DataProviderWrapper(impl)
         let handle = UInt64(UInt(bitPattern: Unmanaged.passRetained(wrapper).toOpaque()))
-        return mffi_create_data_provider(handle)!
+        return OpaquePointer(mffi_create_data_provider(handle)!)
     }
 }
 
@@ -247,7 +273,6 @@ public enum DataProviderBridge {
 public protocol NavigationObserverProtocol: AnyObject {
     func onLocationUpdated(lat: Double, lon: Double)
     func onRouteChanged(routeId: UInt32)
-    func onError(code: Int32, message: String)
 }
 
 private class NavigationObserverWrapper {
@@ -276,13 +301,7 @@ private var navigationObserverVTableInstance: NavigationObserverVTable = {
         on_route_changed: { handle, route_id, statusPtr in
             guard handle != 0 else { statusPtr?.pointee = FfiStatus(code: 1); return }
             let wrapper = Unmanaged<NavigationObserverWrapper>.fromOpaque(UnsafeRawPointer(bitPattern: UInt(handle))!).takeUnretainedValue()
-            wrapper.impl_.onRouteChanged(routeId: routeId)
-            statusPtr?.pointee = FfiStatus(code: 0)
-        },
-        on_error: { handle, code, message, statusPtr in
-            guard handle != 0 else { statusPtr?.pointee = FfiStatus(code: 1); return }
-            let wrapper = Unmanaged<NavigationObserverWrapper>.fromOpaque(UnsafeRawPointer(bitPattern: UInt(handle))!).takeUnretainedValue()
-            wrapper.impl_.onError(code: code, message: message)
+            wrapper.impl_.onRouteChanged(routeId: route_id)
             statusPtr?.pointee = FfiStatus(code: 0)
         }
     )
@@ -301,7 +320,7 @@ public enum NavigationObserverBridge {
         register()
         let wrapper = NavigationObserverWrapper(impl)
         let handle = UInt64(UInt(bitPattern: Unmanaged.passRetained(wrapper).toOpaque()))
-        return mffi_create_navigation_observer(handle)!
+        return OpaquePointer(mffi_create_navigation_observer(handle)!)
     }
 }
 
