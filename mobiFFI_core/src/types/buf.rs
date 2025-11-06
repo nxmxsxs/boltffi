@@ -1,6 +1,6 @@
 use core::mem::ManuallyDrop;
-use std::alloc::{alloc, dealloc, Layout};
 use core::ptr;
+use std::alloc::{Layout, alloc, dealloc};
 
 #[repr(C)]
 pub struct FfiBuf<T> {

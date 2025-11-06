@@ -61,7 +61,9 @@ impl Module {
     }
 
     pub fn find_enum(&self, name: &str) -> Option<&Enumeration> {
-        self.enums.iter().find(|enumeration| enumeration.name == name)
+        self.enums
+            .iter()
+            .find(|enumeration| enumeration.name == name)
     }
 
     pub fn with_callback_trait(mut self, callback_trait: CallbackTrait) -> Self {

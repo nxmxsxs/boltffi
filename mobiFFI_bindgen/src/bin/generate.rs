@@ -8,7 +8,7 @@ use mobiFFI_bindgen::{scan_crate, Swift};
 fn read_crate_name(crate_path: &PathBuf) -> String {
     let cargo_toml_path = crate_path.join("Cargo.toml");
     let content = fs::read_to_string(&cargo_toml_path).expect("Failed to read Cargo.toml");
-    
+
     content
         .lines()
         .find(|line| line.starts_with("name"))
@@ -21,6 +21,11 @@ fn generate_swift(module: &Module) -> String {
     let mut output = String::new();
 
     output.push_str("import Foundation\n\n");
+
+    output.push_str("public struct FfiError: Error {\n");
+    output.push_str("    public let status: FfiStatus\n");
+    output.push_str("    public init(status: FfiStatus) { self.status = status }\n");
+    output.push_str("}\n\n");
 
     for function in &module.functions {
         output.push_str(&Swift::render_function(function, module));
@@ -105,11 +110,7 @@ fn main() {
 
     println!("\n--- Functions ---");
     for function in &module.functions {
-        println!(
-            "  {} ({} params)",
-            function.name,
-            function.inputs.len()
-        );
+        println!("  {} ({} params)", function.name, function.inputs.len());
     }
 
     println!("\n--- Callback Traits ---");

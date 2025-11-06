@@ -184,7 +184,8 @@ mod tests {
             ring_buffer.push(index).unwrap();
         });
 
-        let mut batch_buffer: [MaybeUninit<i32>; 4] = unsafe { MaybeUninit::uninit().assume_init() };
+        let mut batch_buffer: [MaybeUninit<i32>; 4] =
+            unsafe { MaybeUninit::uninit().assume_init() };
         let popped_count = ring_buffer.pop_batch_into(&mut batch_buffer);
         assert_eq!(popped_count, 4);
 

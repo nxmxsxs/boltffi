@@ -51,6 +51,9 @@ pub struct FunctionTemplate {
     pub returns_string: bool,
     pub returns_vec: bool,
     pub returns_option: bool,
+    pub returns_result: bool,
+    pub result_ok_type: Option<String>,
+    pub result_ok_is_vec: bool,
     pub vec_inner_type: Option<String>,
     pub option_inner_type: Option<String>,
     pub is_async: bool,
@@ -64,6 +67,8 @@ pub struct FunctionTemplate {
     pub ffi_free: String,
     pub ffi_cancel: String,
     pub ffi_free_vec: String,
+    pub ffi_vec_len: String,
+    pub ffi_vec_copy_into: String,
 }
 
 impl FunctionTemplate {
@@ -88,11 +93,39 @@ impl FunctionTemplate {
             .map(|ty| matches!(ty, Type::Option(_)))
             .unwrap_or(false);
 
-        let vec_inner_type = function.output.as_ref().and_then(|ty| {
-            if let Type::Vec(inner) = ty {
-                Some(TypeMapper::map_type(inner))
+        let returns_result = function
+            .output
+            .as_ref()
+            .map(|ty| matches!(ty, Type::Result { .. }))
+            .unwrap_or(false);
+
+        let result_ok_type = function.output.as_ref().and_then(|ty| {
+            if let Type::Result { ok, .. } = ty {
+                Some(TypeMapper::map_type(ok))
             } else {
                 None
+            }
+        });
+
+        let result_ok_is_vec = function.output.as_ref().map(|ty| {
+            if let Type::Result { ok, .. } = ty {
+                matches!(ok.as_ref(), Type::Vec(_))
+            } else {
+                false
+            }
+        }).unwrap_or(false);
+
+        let vec_inner_type = function.output.as_ref().and_then(|ty| {
+            match ty {
+                Type::Vec(inner) => Some(TypeMapper::map_type(inner)),
+                Type::Result { ok, .. } => {
+                    if let Type::Vec(inner) = ok.as_ref() {
+                        Some(TypeMapper::map_type(inner))
+                    } else {
+                        None
+                    }
+                }
+                _ => None,
             }
         });
 
@@ -135,7 +168,11 @@ impl FunctionTemplate {
                     Type::Callback(inner) => TypeMapper::ffi_type(inner),
                     _ => "Void".into(),
                 };
-                let suffix = if idx > 0 { format!("{}", idx + 1) } else { String::new() };
+                let suffix = if idx > 0 {
+                    format!("{}", idx + 1)
+                } else {
+                    String::new()
+                };
 
                 FunctionCallbackView {
                     param_name: param_name.clone(),
@@ -170,18 +207,25 @@ impl FunctionTemplate {
                     is_callback: false,
                 })
                 .collect(),
-            return_type: function
-                .output
-                .as_ref()
-                .filter(|ty| !ty.is_void())
-                .map(TypeMapper::map_type),
+            return_type: function.output.as_ref().and_then(|ty| {
+                if ty.is_void() {
+                    None
+                } else if let Type::Result { ok, .. } = ty {
+                    Some(TypeMapper::map_type(ok))
+                } else {
+                    Some(TypeMapper::map_type(ty))
+                }
+            }),
             returns_string,
             returns_vec,
             returns_option,
+            returns_result,
+            result_ok_type,
+            result_ok_is_vec,
             vec_inner_type,
             option_inner_type,
             is_async: function.is_async,
-            throws: function.throws(),
+            throws: function.throws() || returns_result,
             has_string_params,
             has_slice_params,
             has_callbacks,
@@ -190,14 +234,20 @@ impl FunctionTemplate {
             ffi_complete: format!("{}_{}_complete", ffi_prefix, func_snake),
             ffi_free: format!("{}_{}_free", ffi_prefix, func_snake),
             ffi_cancel: format!("{}_{}_cancel", ffi_prefix, func_snake),
-            ffi_free_vec: function.output.as_ref().map(|ty| {
-                if let Type::Vec(inner) = ty {
-                    let inner_ffi = TypeMapper::ffi_type_name(inner);
-                    format!("{}_free_buf_{}", ffi_prefix, inner_ffi)
-                } else {
-                    String::new()
-                }
-            }).unwrap_or_default(),
+            ffi_free_vec: function
+                .output
+                .as_ref()
+                .map(|ty| {
+                    if let Type::Vec(inner) = ty {
+                        let inner_ffi = TypeMapper::ffi_type_name(inner);
+                        format!("{}_free_buf_{}", ffi_prefix, inner_ffi)
+                    } else {
+                        String::new()
+                    }
+                })
+                .unwrap_or_default(),
+            ffi_vec_len: format!("{}_{}_len", ffi_prefix, func_snake),
+            ffi_vec_copy_into: format!("{}_{}_copy_into", ffi_prefix, func_snake),
         }
     }
 }
@@ -319,7 +369,10 @@ impl ClassTemplate {
                         .map(|param| ParamView {
                             swift_name: NamingConvention::param_name(&param.name),
                             swift_type: TypeMapper::map_type(&param.param_type),
-                            is_escaping: matches!(param.param_type, crate::model::Type::Callback(_)),
+                            is_escaping: matches!(
+                                param.param_type,
+                                crate::model::Type::Callback(_)
+                            ),
                         })
                         .collect(),
                 })
@@ -346,7 +399,10 @@ impl ClassTemplate {
                         .map(|param| ParamView {
                             swift_name: NamingConvention::param_name(&param.name),
                             swift_type: TypeMapper::map_type(&param.param_type),
-                            is_escaping: matches!(param.param_type, crate::model::Type::Callback(_)),
+                            is_escaping: matches!(
+                                param.param_type,
+                                crate::model::Type::Callback(_)
+                            ),
                         })
                         .collect(),
                     body: BodyRenderer::method(method, class, module),
@@ -531,10 +587,7 @@ impl SyncMethodBodyTemplate {
         let class_prefix = class.ffi_prefix(&module.ffi_prefix());
         Self {
             ffi_name: method.ffi_name(&class_prefix),
-            args: method
-                .non_callback_params()
-                .map(param_to_ffi_arg)
-                .collect(),
+            args: method.non_callback_params().map(param_to_ffi_arg).collect(),
             has_return: method.output.as_ref().map_or(false, |t| !t.is_void()),
         }
     }
@@ -585,7 +638,11 @@ impl CallbackMethodBodyTemplate {
                         crate::model::Type::Callback(inner) => TypeMapper::ffi_type(inner),
                         _ => "Void".into(),
                     };
-                    let suffix = if idx > 0 { format!("{}", idx + 1) } else { String::new() };
+                    let suffix = if idx > 0 {
+                        format!("{}", idx + 1)
+                    } else {
+                        String::new()
+                    };
 
                     CallbackView {
                         param_name: param_name.clone(),
@@ -850,5 +907,3 @@ fn to_camel_case(name: &str) -> String {
     }
     result
 }
-
-

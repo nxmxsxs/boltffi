@@ -1,6 +1,6 @@
 use proc_macro::TokenStream;
 use quote::quote;
-use syn::{parse_macro_input, DeriveInput, FnArg, ItemFn, Pat, ReturnType, Type};
+use syn::{DeriveInput, FnArg, ItemFn, Pat, ReturnType, Type, parse_macro_input};
 
 #[proc_macro_derive(FfiType)]
 pub fn derive_ffi_type(input: TokenStream) -> TokenStream {
@@ -54,14 +54,10 @@ enum ParamTransform {
 
 fn extract_fn_arg_types(ty: &Type) -> Option<Vec<syn::Type>> {
     if let Type::BareFn(bare_fn) = ty {
-        let args: Vec<syn::Type> = bare_fn
-            .inputs
-            .iter()
-            .map(|arg| arg.ty.clone())
-            .collect();
+        let args: Vec<syn::Type> = bare_fn.inputs.iter().map(|arg| arg.ty.clone()).collect();
         return Some(args);
     }
-    
+
     if let Type::ImplTrait(impl_trait) = ty {
         for bound in &impl_trait.bounds {
             if let syn::TypeParamBound::Trait(trait_bound) = bound {
@@ -78,7 +74,7 @@ fn extract_fn_arg_types(ty: &Type) -> Option<Vec<syn::Type>> {
             }
         }
     }
-    
+
     None
 }
 
@@ -97,8 +93,12 @@ fn extract_boxed_dyn_trait(ty: &Type) -> Option<syn::Ident> {
         if let Some(segment) = type_path.path.segments.last() {
             if segment.ident == "Box" {
                 if let syn::PathArguments::AngleBracketed(args) = &segment.arguments {
-                    if let Some(syn::GenericArgument::Type(Type::TraitObject(trait_obj))) = args.args.first() {
-                        if let Some(syn::TypeParamBound::Trait(trait_bound)) = trait_obj.bounds.first() {
+                    if let Some(syn::GenericArgument::Type(Type::TraitObject(trait_obj))) =
+                        args.args.first()
+                    {
+                        if let Some(syn::TypeParamBound::Trait(trait_bound)) =
+                            trait_obj.bounds.first()
+                        {
                             if let Some(seg) = trait_bound.path.segments.last() {
                                 return Some(seg.ident.clone());
                             }
@@ -113,11 +113,11 @@ fn extract_boxed_dyn_trait(ty: &Type) -> Option<syn::Ident> {
 
 fn classify_param_transform(ty: &Type) -> ParamTransform {
     let type_str = quote::quote!(#ty).to_string().replace(" ", "");
-    
+
     if let Some(arg_types) = extract_fn_arg_types(ty) {
         return ParamTransform::Callback(arg_types);
     }
-    
+
     if let Some((inner_ty, is_mut)) = extract_slice_inner(ty) {
         return if is_mut {
             ParamTransform::SliceMut(inner_ty)
@@ -125,19 +125,19 @@ fn classify_param_transform(ty: &Type) -> ParamTransform {
             ParamTransform::SliceRef(inner_ty)
         };
     }
-    
+
     if let Some(trait_name) = extract_boxed_dyn_trait(ty) {
         return ParamTransform::BoxedTrait(trait_name);
     }
-    
+
     if type_str.starts_with("*const") || type_str.starts_with("*mut") {
         return ParamTransform::PassThrough;
     }
-    
+
     if type_str.contains("extern") && type_str.contains("fn(") {
         return ParamTransform::PassThrough;
     }
-    
+
     if type_str == "&str" || (type_str.starts_with("&'") && type_str.ends_with("str")) {
         ParamTransform::StrRef
     } else if type_str == "String" || type_str == "std::string::String" {
@@ -215,22 +215,24 @@ fn transform_params(inputs: &syn::punctuated::Punctuated<FnArg, syn::Token![,]>)
                 ParamTransform::Callback(arg_types) => {
                     let cb_name = syn::Ident::new(&format!("{}_cb", name), name.span());
                     let ud_name = syn::Ident::new(&format!("{}_ud", name), name.span());
-                    
-                    ffi_params.push(quote! { #cb_name: extern "C" fn(*mut core::ffi::c_void, #(#arg_types),*) });
+
+                    ffi_params.push(
+                        quote! { #cb_name: extern "C" fn(*mut core::ffi::c_void, #(#arg_types),*) },
+                    );
                     ffi_params.push(quote! { #ud_name: *mut core::ffi::c_void });
-                    
+
                     let arg_names: Vec<syn::Ident> = arg_types
                         .iter()
                         .enumerate()
                         .map(|(i, _)| syn::Ident::new(&format!("__arg{}", i), name.span()))
                         .collect();
-                    
+
                     conversions.push(quote! {
                         let #name = |#(#arg_names: #arg_types),*| {
                             #cb_name(#ud_name, #(#arg_names),*)
                         };
                     });
-                    
+
                     call_args.push(quote! { #name });
                 }
                 ParamTransform::SliceRef(inner_ty) => {
@@ -268,13 +270,11 @@ fn transform_params(inputs: &syn::punctuated::Punctuated<FnArg, syn::Token![,]>)
                     call_args.push(quote! { #name });
                 }
                 ParamTransform::BoxedTrait(trait_name) => {
-                    let foreign_type = syn::Ident::new(
-                        &format!("Foreign{}", trait_name),
-                        trait_name.span(),
-                    );
-                    
+                    let foreign_type =
+                        syn::Ident::new(&format!("Foreign{}", trait_name), trait_name.span());
+
                     ffi_params.push(quote! { #name: *mut #foreign_type });
-                    
+
                     conversions.push(quote! {
                         let #name: Box<dyn #trait_name> = if #name.is_null() {
                             return crate::fail_with_error(
@@ -285,7 +285,7 @@ fn transform_params(inputs: &syn::punctuated::Punctuated<FnArg, syn::Token![,]>)
                             Box::from_raw(#name)
                         };
                     });
-                    
+
                     call_args.push(quote! { #name });
                 }
                 ParamTransform::PassThrough => {
@@ -297,7 +297,11 @@ fn transform_params(inputs: &syn::punctuated::Punctuated<FnArg, syn::Token![,]>)
         }
     }
 
-    FfiParams { ffi_params, conversions, call_args }
+    FfiParams {
+        ffi_params,
+        conversions,
+        call_args,
+    }
 }
 
 struct AsyncFfiParams {
@@ -308,7 +312,9 @@ struct AsyncFfiParams {
     move_vars: Vec<syn::Ident>,
 }
 
-fn transform_params_async(inputs: &syn::punctuated::Punctuated<FnArg, syn::Token![,]>) -> AsyncFfiParams {
+fn transform_params_async(
+    inputs: &syn::punctuated::Punctuated<FnArg, syn::Token![,]>,
+) -> AsyncFfiParams {
     let mut ffi_params = Vec::new();
     let mut pre_spawn = Vec::new();
     let mut thread_setup = Vec::new();
@@ -416,7 +422,13 @@ fn transform_params_async(inputs: &syn::punctuated::Punctuated<FnArg, syn::Token
         }
     }
 
-    AsyncFfiParams { ffi_params, pre_spawn, thread_setup, call_args, move_vars }
+    AsyncFfiParams {
+        ffi_params,
+        pre_spawn,
+        thread_setup,
+        call_args,
+        move_vars,
+    }
 }
 
 enum ReturnKind {
@@ -463,7 +475,8 @@ fn classify_return(output: &ReturnType) -> ReturnKind {
                     if segment.ident == "Result" {
                         if let syn::PathArguments::AngleBracketed(args) = &segment.arguments {
                             if let Some(syn::GenericArgument::Type(inner_ty)) = args.args.first() {
-                                let inner_str = quote::quote!(#inner_ty).to_string().replace(" ", "");
+                                let inner_str =
+                                    quote::quote!(#inner_ty).to_string().replace(" ", "");
                                 if inner_str == "String" || inner_str == "std::string::String" {
                                     return ReturnKind::ResultString;
                                 } else if inner_str == "()" {
@@ -522,7 +535,7 @@ fn classify_async_return(output: &ReturnType) -> AsyncReturnKind {
         ReturnType::Default => AsyncReturnKind::Unit,
         ReturnType::Type(_, ty) => {
             let type_str = quote::quote!(#ty).to_string().replace(" ", "");
-            
+
             if type_str == "String" || type_str == "std::string::String" {
                 return AsyncReturnKind::String;
             }
@@ -540,13 +553,16 @@ fn classify_async_return(output: &ReturnType) -> AsyncReturnKind {
                     if segment.ident == "Result" {
                         if let syn::PathArguments::AngleBracketed(args) = &segment.arguments {
                             if let Some(syn::GenericArgument::Type(inner_ty)) = args.args.first() {
-                                let inner_str = quote::quote!(#inner_ty).to_string().replace(" ", "");
-                                
+                                let inner_str =
+                                    quote::quote!(#inner_ty).to_string().replace(" ", "");
+
                                 if inner_str == "String" || inner_str == "std::string::String" {
                                     return AsyncReturnKind::ResultString;
                                 } else if inner_str == "()" {
                                     return AsyncReturnKind::Unit;
-                                } else if let Some(vec_inner) = extract_generic_inner(inner_ty, "Vec") {
+                                } else if let Some(vec_inner) =
+                                    extract_generic_inner(inner_ty, "Vec")
+                                {
                                     return AsyncReturnKind::ResultVec(quote! { #vec_inner });
                                 } else if is_primitive_type(&inner_str) {
                                     return AsyncReturnKind::ResultPrimitive(quote! { #inner_ty });
@@ -569,8 +585,22 @@ fn classify_async_return(output: &ReturnType) -> AsyncReturnKind {
 }
 
 fn is_primitive_type(s: &str) -> bool {
-    matches!(s, "i8" | "i16" | "i32" | "i64" | "u8" | "u16" | "u32" | "u64" | 
-             "f32" | "f64" | "bool" | "usize" | "isize" | "()")
+    matches!(
+        s,
+        "i8" | "i16"
+            | "i32"
+            | "i64"
+            | "u8"
+            | "u16"
+            | "u32"
+            | "u64"
+            | "f32"
+            | "f64"
+            | "bool"
+            | "usize"
+            | "isize"
+            | "()"
+    )
 }
 
 fn get_ffi_return_type(return_kind: &AsyncReturnKind) -> proc_macro2::TokenStream {
@@ -596,10 +626,18 @@ fn get_rust_return_type(return_kind: &AsyncReturnKind) -> proc_macro2::TokenStre
         AsyncReturnKind::Struct(ty) => quote! { #ty },
         AsyncReturnKind::Vec(inner_ty) => quote! { Vec<#inner_ty> },
         AsyncReturnKind::Option(inner_ty) => quote! { Option<#inner_ty> },
-        AsyncReturnKind::ResultPrimitive(ty) => quote! { Result<#ty, Box<dyn std::error::Error + Send + Sync>> },
-        AsyncReturnKind::ResultString => quote! { Result<String, Box<dyn std::error::Error + Send + Sync>> },
-        AsyncReturnKind::ResultStruct(ty) => quote! { Result<#ty, Box<dyn std::error::Error + Send + Sync>> },
-        AsyncReturnKind::ResultVec(inner_ty) => quote! { Result<Vec<#inner_ty>, Box<dyn std::error::Error + Send + Sync>> },
+        AsyncReturnKind::ResultPrimitive(ty) => {
+            quote! { Result<#ty, Box<dyn std::error::Error + Send + Sync>> }
+        }
+        AsyncReturnKind::ResultString => {
+            quote! { Result<String, Box<dyn std::error::Error + Send + Sync>> }
+        }
+        AsyncReturnKind::ResultStruct(ty) => {
+            quote! { Result<#ty, Box<dyn std::error::Error + Send + Sync>> }
+        }
+        AsyncReturnKind::ResultVec(inner_ty) => {
+            quote! { Result<Vec<#inner_ty>, Box<dyn std::error::Error + Send + Sync>> }
+        }
     }
 }
 
@@ -713,9 +751,15 @@ fn generate_async_export(input: &ItemFn) -> TokenStream {
     let cancel_ident = syn::Ident::new(&format!("{}_cancel", base_name), fn_name.span());
     let free_ident = syn::Ident::new(&format!("{}_free", base_name), fn_name.span());
 
-    let AsyncFfiParams { ffi_params, pre_spawn, thread_setup, call_args, move_vars } = transform_params_async(fn_inputs);
+    let AsyncFfiParams {
+        ffi_params,
+        pre_spawn,
+        thread_setup,
+        call_args,
+        move_vars,
+    } = transform_params_async(fn_inputs);
     let return_kind = classify_async_return(fn_output);
-    
+
     let ffi_return_type = get_ffi_return_type(&return_kind);
     let rust_return_type = get_rust_return_type(&return_kind);
     let complete_conversion = get_complete_conversion(&return_kind);
@@ -818,7 +862,11 @@ pub fn ffi_export(_attr: TokenStream, item: TokenStream) -> TokenStream {
     let export_name = format!("mffi_{}", fn_name);
     let export_ident = syn::Ident::new(&export_name, fn_name.span());
 
-    let FfiParams { ffi_params, conversions, call_args } = transform_params(fn_inputs);
+    let FfiParams {
+        ffi_params,
+        conversions,
+        call_args,
+    } = transform_params(fn_inputs);
 
     let has_params = !ffi_params.is_empty();
     let has_conversions = !conversions.is_empty();
@@ -1060,7 +1108,8 @@ pub fn ffi_export(_attr: TokenStream, item: TokenStream) -> TokenStream {
         }
         ReturnKind::Vec(inner_ty) => {
             let len_ident = syn::Ident::new(&format!("mffi_{}_len", fn_name), fn_name.span());
-            let copy_into_ident = syn::Ident::new(&format!("mffi_{}_copy_into", fn_name), fn_name.span());
+            let copy_into_ident =
+                syn::Ident::new(&format!("mffi_{}_copy_into", fn_name), fn_name.span());
 
             let len_body = if has_conversions {
                 quote! {
@@ -1255,7 +1304,12 @@ pub fn ffi_class(_attr: TokenStream, item: TokenStream) -> TokenStream {
             if let syn::ImplItem::Fn(method) = item {
                 if matches!(method.vis, syn::Visibility::Public(_)) {
                     if let Some(item_type) = extract_ffi_stream_item(&method.attrs) {
-                        return Some(generate_stream_exports(&type_name, &snake_name, method, &item_type));
+                        return Some(generate_stream_exports(
+                            &type_name,
+                            &snake_name,
+                            method,
+                            &item_type,
+                        ));
                     }
                     return generate_method_export(&type_name, &snake_name, method);
                 }
@@ -1285,9 +1339,7 @@ pub fn ffi_class(_attr: TokenStream, item: TokenStream) -> TokenStream {
     TokenStream::from(expanded)
 }
 
-fn transform_method_params(
-    inputs: impl Iterator<Item = syn::FnArg>,
-) -> FfiParams {
+fn transform_method_params(inputs: impl Iterator<Item = syn::FnArg>) -> FfiParams {
     let mut ffi_params = Vec::new();
     let mut conversions = Vec::new();
     let mut call_args = Vec::new();
@@ -1349,22 +1401,24 @@ fn transform_method_params(
                 ParamTransform::Callback(arg_types) => {
                     let cb_name = syn::Ident::new(&format!("{}_cb", name), name.span());
                     let ud_name = syn::Ident::new(&format!("{}_ud", name), name.span());
-                    
-                    ffi_params.push(quote! { #cb_name: extern "C" fn(*mut core::ffi::c_void, #(#arg_types),*) });
+
+                    ffi_params.push(
+                        quote! { #cb_name: extern "C" fn(*mut core::ffi::c_void, #(#arg_types),*) },
+                    );
                     ffi_params.push(quote! { #ud_name: *mut core::ffi::c_void });
-                    
+
                     let arg_names: Vec<syn::Ident> = arg_types
                         .iter()
                         .enumerate()
                         .map(|(i, _)| syn::Ident::new(&format!("__arg{}", i), name.span()))
                         .collect();
-                    
+
                     conversions.push(quote! {
                         let #name = |#(#arg_names: #arg_types),*| {
                             #cb_name(#ud_name, #(#arg_names),*)
                         };
                     });
-                    
+
                     call_args.push(quote! { #name });
                 }
                 ParamTransform::SliceRef(inner_ty) => {
@@ -1402,13 +1456,11 @@ fn transform_method_params(
                     call_args.push(quote! { #name });
                 }
                 ParamTransform::BoxedTrait(trait_name) => {
-                    let foreign_type = syn::Ident::new(
-                        &format!("Foreign{}", trait_name),
-                        trait_name.span(),
-                    );
-                    
+                    let foreign_type =
+                        syn::Ident::new(&format!("Foreign{}", trait_name), trait_name.span());
+
                     ffi_params.push(quote! { #name: *mut #foreign_type });
-                    
+
                     conversions.push(quote! {
                         let #name: Box<dyn #trait_name> = if #name.is_null() {
                             return crate::fail_with_error(
@@ -1419,7 +1471,7 @@ fn transform_method_params(
                             Box::from_raw(#name)
                         };
                     });
-                    
+
                     call_args.push(quote! { #name });
                 }
                 ParamTransform::PassThrough => {
@@ -1431,7 +1483,11 @@ fn transform_method_params(
         }
     }
 
-    FfiParams { ffi_params, conversions, call_args }
+    FfiParams {
+        ffi_params,
+        conversions,
+        call_args,
+    }
 }
 
 fn generate_method_export(
@@ -1457,7 +1513,11 @@ fn generate_method_export(
     }
 
     let other_inputs = method.sig.inputs.iter().skip(1).cloned();
-    let FfiParams { ffi_params, conversions, call_args } = transform_method_params(other_inputs);
+    let FfiParams {
+        ffi_params,
+        conversions,
+        call_args,
+    } = transform_method_params(other_inputs);
 
     let fn_output = &method.sig.output;
     let has_conversions = !conversions.is_empty();
@@ -1518,7 +1578,7 @@ fn extract_ffi_stream_item(attrs: &[syn::Attribute]) -> Option<syn::Type> {
         if !attr.path().is_ident("ffi_stream") {
             return None;
         }
-        
+
         let mut item_type: Option<syn::Type> = None;
         let _ = attr.parse_nested_meta(|meta| {
             if meta.path.is_ident("item") {
@@ -1527,7 +1587,7 @@ fn extract_ffi_stream_item(attrs: &[syn::Attribute]) -> Option<syn::Type> {
             }
             Ok(())
         });
-        
+
         item_type
     })
 }
@@ -1540,12 +1600,13 @@ fn generate_stream_exports(
 ) -> proc_macro2::TokenStream {
     let method_name = &method.sig.ident;
     let base_name = format!("mffi_{}_{}", snake_name, method_name);
-    
+
     let subscribe_ident = syn::Ident::new(&base_name, method_name.span());
     let pop_batch_ident = syn::Ident::new(&format!("{}_pop_batch", base_name), method_name.span());
     let wait_ident = syn::Ident::new(&format!("{}_wait", base_name), method_name.span());
     let poll_ident = syn::Ident::new(&format!("{}_poll", base_name), method_name.span());
-    let unsubscribe_ident = syn::Ident::new(&format!("{}_unsubscribe", base_name), method_name.span());
+    let unsubscribe_ident =
+        syn::Ident::new(&format!("{}_unsubscribe", base_name), method_name.span());
     let free_ident = syn::Ident::new(&format!("{}_free", base_name), method_name.span());
 
     quote! {
@@ -1689,7 +1750,7 @@ fn expand_ffi_trait(item_trait: syn::ItemTrait) -> Result<proc_macro2::TokenStre
                     if let Pat::Ident(pat_ident) = &*pat_type.pat {
                         let param_name = &pat_ident.ident;
                         let param_type = &pat_type.ty;
-                        
+
                         let ffi_type = rust_type_to_ffi_param_type(param_type);
                         param_types.push(quote! { #param_name: #ffi_type });
                         param_names.push(quote! { #param_name: #param_type });
@@ -1726,7 +1787,7 @@ fn expand_ffi_trait(item_trait: syn::ItemTrait) -> Result<proc_macro2::TokenStre
                     quote! {
                         use std::sync::Arc;
                         use std::sync::atomic::{AtomicBool, Ordering};
-                        
+
                         struct AsyncContext<T> {
                             result: std::cell::UnsafeCell<Option<T>>,
                             completed: AtomicBool,
@@ -1734,13 +1795,13 @@ fn expand_ffi_trait(item_trait: syn::ItemTrait) -> Result<proc_macro2::TokenStre
                         }
                         unsafe impl<T> Send for AsyncContext<T> {}
                         unsafe impl<T> Sync for AsyncContext<T> {}
-                        
+
                         let ctx = Arc::new(AsyncContext::<#ret_ty> {
                             result: std::cell::UnsafeCell::new(None),
                             completed: AtomicBool::new(false),
                             waker: std::cell::UnsafeCell::new(None),
                         });
-                        
+
                         extern "C" fn callback<T: Copy>(data: u64, result: T, _status: crate::FfiStatus) {
                             let ctx = unsafe { Arc::from_raw(data as *const AsyncContext<T>) };
                             unsafe { *ctx.result.get() = Some(result) };
@@ -1749,7 +1810,7 @@ fn expand_ffi_trait(item_trait: syn::ItemTrait) -> Result<proc_macro2::TokenStre
                                 waker.wake();
                             }
                         }
-                        
+
                         let ctx_ptr = Arc::into_raw(ctx.clone()) as u64;
                         unsafe {
                             ((*self.vtable).#method_name_snake)(
@@ -1759,7 +1820,7 @@ fn expand_ffi_trait(item_trait: syn::ItemTrait) -> Result<proc_macro2::TokenStre
                                 ctx_ptr
                             );
                         }
-                        
+
                         std::future::poll_fn(move |cx| {
                             if ctx.completed.load(Ordering::Acquire) {
                                 let result = unsafe { (*ctx.result.get()).take().unwrap() };
@@ -1774,19 +1835,19 @@ fn expand_ffi_trait(item_trait: syn::ItemTrait) -> Result<proc_macro2::TokenStre
                     quote! {
                         use std::sync::Arc;
                         use std::sync::atomic::{AtomicBool, Ordering};
-                        
+
                         struct AsyncContext {
                             completed: AtomicBool,
                             waker: std::cell::UnsafeCell<Option<std::task::Waker>>,
                         }
                         unsafe impl Send for AsyncContext {}
                         unsafe impl Sync for AsyncContext {}
-                        
+
                         let ctx = Arc::new(AsyncContext {
                             completed: AtomicBool::new(false),
                             waker: std::cell::UnsafeCell::new(None),
                         });
-                        
+
                         extern "C" fn callback(data: u64, _status: crate::FfiStatus) {
                             let ctx = unsafe { Arc::from_raw(data as *const AsyncContext) };
                             ctx.completed.store(true, Ordering::Release);
@@ -1794,7 +1855,7 @@ fn expand_ffi_trait(item_trait: syn::ItemTrait) -> Result<proc_macro2::TokenStre
                                 waker.wake();
                             }
                         }
-                        
+
                         let ctx_ptr = Arc::into_raw(ctx.clone()) as u64;
                         unsafe {
                             ((*self.vtable).#method_name_snake)(
@@ -1804,7 +1865,7 @@ fn expand_ffi_trait(item_trait: syn::ItemTrait) -> Result<proc_macro2::TokenStre
                                 ctx_ptr
                             );
                         }
-                        
+
                         std::future::poll_fn(move |cx| {
                             if ctx.completed.load(Ordering::Acquire) {
                                 std::task::Poll::Ready(())
@@ -1816,7 +1877,10 @@ fn expand_ffi_trait(item_trait: syn::ItemTrait) -> Result<proc_macro2::TokenStre
                     }
                 };
 
-                let output_type = return_type.as_ref().map(|t| quote! { -> #t }).unwrap_or_default();
+                let output_type = return_type
+                    .as_ref()
+                    .map(|t| quote! { -> #t })
+                    .unwrap_or_default();
                 foreign_impls.push(quote! {
                     async fn #method_name(&self, #(#param_names,)*) #output_type {
                         #impl_body
@@ -1866,7 +1930,10 @@ fn expand_ffi_trait(item_trait: syn::ItemTrait) -> Result<proc_macro2::TokenStre
                     }
                 };
 
-                let output_type = return_type.as_ref().map(|t| quote! { -> #t }).unwrap_or_default();
+                let output_type = return_type
+                    .as_ref()
+                    .map(|t| quote! { -> #t })
+                    .unwrap_or_default();
                 foreign_impls.push(quote! {
                     fn #method_name(&self, #(#param_names,)*) #output_type {
                         #impl_body
@@ -1950,10 +2017,10 @@ fn to_snake_case_ident(name: &str) -> syn::Ident {
 
 fn rust_type_to_ffi_param_type(ty: &syn::Type) -> proc_macro2::TokenStream {
     let type_str = quote!(#ty).to_string().replace(" ", "");
-    
+
     match type_str.as_str() {
-        "i8" | "i16" | "i32" | "i64" | "u8" | "u16" | "u32" | "u64" 
-        | "f32" | "f64" | "bool" | "usize" | "isize" => quote!(#ty),
+        "i8" | "i16" | "i32" | "i64" | "u8" | "u16" | "u32" | "u64" | "f32" | "f64" | "bool"
+        | "usize" | "isize" => quote!(#ty),
         "&str" => quote!(*const std::os::raw::c_char),
         "String" => quote!(*const std::os::raw::c_char),
         _ => quote!(#ty),

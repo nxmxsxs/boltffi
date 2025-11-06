@@ -10,7 +10,7 @@ use crate::model::{CallbackTrait, Class, Enumeration, Function, Module, Record, 
 pub use body::BodyRenderer;
 pub use names::NamingConvention;
 pub use templates::{
-    CallbackTraitTemplate, ClassTemplate, CStyleEnumTemplate, DataEnumTemplate, FunctionTemplate,
+    CStyleEnumTemplate, CallbackTraitTemplate, ClassTemplate, DataEnumTemplate, FunctionTemplate,
     RecordTemplate, StreamCancellableTemplate, StreamSubscriptionTemplate,
 };
 pub use types::TypeMapper;

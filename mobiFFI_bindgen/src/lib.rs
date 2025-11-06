@@ -1,5 +1,5 @@
-pub mod model;
 pub mod kotlin;
+pub mod model;
 pub mod scan;
 pub mod swift;
 
@@ -36,7 +36,10 @@ mod tests {
             ));
 
         let reading_record = Record::new("SensorReading")
-            .with_field(RecordField::new("timestamp", Type::Primitive(Primitive::U64)))
+            .with_field(RecordField::new(
+                "timestamp",
+                Type::Primitive(Primitive::U64),
+            ))
             .with_field(RecordField::new("value", Type::Primitive(Primitive::F64)))
             .with_field(RecordField::new("unit", Type::String));
 
@@ -72,28 +75,50 @@ mod tests {
         let module = create_test_module();
         let class = module.find_class("Sensor").unwrap();
         let class_prefix = class.ffi_prefix(&module.ffi_prefix());
-        let method = class.methods.iter().find(|m| m.name == "predict_next").unwrap();
+        let method = class
+            .methods
+            .iter()
+            .find(|m| m.name == "predict_next")
+            .unwrap();
 
         assert_eq!(method.ffi_name(&class_prefix), "mffi_sensor_predict_next");
-        assert_eq!(method.ffi_poll(&class_prefix), "mffi_sensor_predict_next_poll");
+        assert_eq!(
+            method.ffi_poll(&class_prefix),
+            "mffi_sensor_predict_next_poll"
+        );
     }
 
     #[test]
     fn test_swift_type_mapping() {
         use swift::TypeMapper;
-        assert_eq!(TypeMapper::map_type(&Type::Primitive(Primitive::I32)), "Int32");
-        assert_eq!(TypeMapper::map_type(&Type::Primitive(Primitive::Bool)), "Bool");
+        assert_eq!(
+            TypeMapper::map_type(&Type::Primitive(Primitive::I32)),
+            "Int32"
+        );
+        assert_eq!(
+            TypeMapper::map_type(&Type::Primitive(Primitive::Bool)),
+            "Bool"
+        );
         assert_eq!(TypeMapper::map_type(&Type::String), "String");
         assert_eq!(TypeMapper::map_type(&Type::Bytes), "Data");
-        assert_eq!(TypeMapper::map_type(&Type::vec(Type::Primitive(Primitive::F64))), "[Double]");
+        assert_eq!(
+            TypeMapper::map_type(&Type::vec(Type::Primitive(Primitive::F64))),
+            "[Double]"
+        );
         assert_eq!(TypeMapper::map_type(&Type::option(Type::String)), "String?");
     }
 
     #[test]
     fn test_swift_naming_convention() {
         use swift::NamingConvention;
-        assert_eq!(NamingConvention::class_name("sensor_manager"), "SensorManager");
-        assert_eq!(NamingConvention::method_name("get_current_reading"), "getCurrentReading");
+        assert_eq!(
+            NamingConvention::class_name("sensor_manager"),
+            "SensorManager"
+        );
+        assert_eq!(
+            NamingConvention::method_name("get_current_reading"),
+            "getCurrentReading"
+        );
         assert_eq!(NamingConvention::param_name("sample_count"), "sampleCount");
         assert_eq!(NamingConvention::enum_case_name("NOT_FOUND"), "notFound");
     }
@@ -104,11 +129,20 @@ mod tests {
             .with_field(RecordField::new("x", Type::Primitive(Primitive::F64)))
             .with_field(RecordField::new("y", Type::Primitive(Primitive::F64)));
         let output = Swift::render_record(&no_alias_record);
-        assert!(output.trim().is_empty(), "No extension needed when field names match");
+        assert!(
+            output.trim().is_empty(),
+            "No extension needed when field names match"
+        );
 
         let aliased_record = Record::new("SensorData")
-            .with_field(RecordField::new("sensor_id", Type::Primitive(Primitive::I32)))
-            .with_field(RecordField::new("timestamp_ms", Type::Primitive(Primitive::U64)));
+            .with_field(RecordField::new(
+                "sensor_id",
+                Type::Primitive(Primitive::I32),
+            ))
+            .with_field(RecordField::new(
+                "timestamp_ms",
+                Type::Primitive(Primitive::U64),
+            ));
         let output = Swift::render_record(&aliased_record);
         assert!(output.contains("extension SensorData"));
         assert!(output.contains("public var sensorId: Int32"));
@@ -136,7 +170,10 @@ mod tests {
             .with_variant(Variant::new("error"));
 
         let data_enum = Enumeration::new("Result")
-            .with_variant(Variant::new("success").with_field(RecordField::new("value", Type::Primitive(Primitive::I32))))
+            .with_variant(
+                Variant::new("success")
+                    .with_field(RecordField::new("value", Type::Primitive(Primitive::I32))),
+            )
             .with_variant(Variant::new("failure"));
 
         assert!(c_style.is_c_style());

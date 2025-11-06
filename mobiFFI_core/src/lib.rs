@@ -13,7 +13,9 @@ pub use handle::HandleBox;
 pub use mobiFFI_macros::{FfiType, ffi_class, ffi_export, ffi_stream, ffi_trait};
 pub use pending::{CancellationToken, PendingHandle};
 pub use ringbuffer::SpscRingBuffer;
-pub use rustfuture::{RustFuture, RustFutureContinuationCallback, RustFutureHandle, RustFuturePoll};
+pub use rustfuture::{
+    RustFuture, RustFutureContinuationCallback, RustFutureHandle, RustFuturePoll,
+};
 pub use safety::catch_ffi_panic;
 pub use status::{FfiStatus, clear_last_error, set_last_error, take_last_error};
 pub use subscription::{
@@ -271,11 +273,7 @@ pub fn direction_to_degrees(dir: Direction) -> i32 {
 
 #[ffi_export]
 pub fn find_even(value: i32) -> Option<i32> {
-    if value % 2 == 0 {
-        Some(value)
-    } else {
-        None
-    }
+    if value % 2 == 0 { Some(value) } else { None }
 }
 
 #[repr(C, i32)]
@@ -293,7 +291,10 @@ pub fn process_value(value: i32) -> ApiResult {
     } else if value == 0 {
         ApiResult::ErrorCode(-1)
     } else {
-        ApiResult::ErrorWithData { code: value, detail: value * 2 }
+        ApiResult::ErrorWithData {
+            code: value,
+            detail: value * 2,
+        }
     }
 }
 
@@ -327,7 +328,11 @@ pub async fn async_make_string(value: i32) -> String {
 #[ffi_export]
 pub async fn async_fetch_point(x: f64, y: f64) -> DataPoint {
     std::thread::sleep(std::time::Duration::from_millis(20));
-    DataPoint { x, y, timestamp: 12345 }
+    DataPoint {
+        x,
+        y,
+        timestamp: 12345,
+    }
 }
 
 #[ffi_export]

@@ -27,8 +27,20 @@ fn main() {
     let repr_c_structs = collect_repr_c_structs(&crate_dir.join("src"));
     let ffi_enums = collect_ffi_enums(&crate_dir.join("src"));
     let ffi_traits = collect_ffi_traits(&crate_dir.join("src"));
-    if !macro_exports.is_empty() || !repr_c_structs.is_empty() || !ffi_enums.is_empty() || !stream_exports.is_empty() || !ffi_traits.is_empty() {
-        append_macro_exports(&header_path, &macro_exports, &repr_c_structs, &ffi_enums, &stream_exports, &ffi_traits);
+    if !macro_exports.is_empty()
+        || !repr_c_structs.is_empty()
+        || !ffi_enums.is_empty()
+        || !stream_exports.is_empty()
+        || !ffi_traits.is_empty()
+    {
+        append_macro_exports(
+            &header_path,
+            &macro_exports,
+            &repr_c_structs,
+            &ffi_enums,
+            &stream_exports,
+            &ffi_traits,
+        );
     }
 
     println!("cargo:rerun-if-changed=src/");
@@ -192,10 +204,17 @@ fn parse_repr_attr(attrs: &[syn::Attribute]) -> Option<(String, bool)> {
             let mut has_c = false;
 
             let _ = attr.parse_nested_meta(|meta| {
-                let ident = meta.path.get_ident().map(|i| i.to_string()).unwrap_or_default();
+                let ident = meta
+                    .path
+                    .get_ident()
+                    .map(|i| i.to_string())
+                    .unwrap_or_default();
                 if ident == "C" {
                     has_c = true;
-                } else if matches!(ident.as_str(), "i8" | "i16" | "i32" | "i64" | "u8" | "u16" | "u32" | "u64") {
+                } else if matches!(
+                    ident.as_str(),
+                    "i8" | "i16" | "i32" | "i64" | "u8" | "u16" | "u32" | "u64"
+                ) {
                     repr_type = Some(ident);
                 }
                 Ok(())
@@ -420,7 +439,7 @@ fn extract_ffi_stream_info(attrs: &[syn::Attribute]) -> Option<(String, StreamMo
 
         let mut item_type: Option<String> = None;
         let mut mode = StreamMode::default();
-        
+
         let _ = attr.parse_nested_meta(|meta| {
             if meta.path.is_ident("item") {
                 let ty: syn::Type = meta.value()?.parse()?;
@@ -504,7 +523,7 @@ fn parse_ffi_class(impl_block: &syn::ItemImpl) -> (Vec<FfiExport>, Vec<FfiStream
                         Pat::Ident(ident) => ident.ident.to_string(),
                         _ => continue,
                     };
-                    
+
                     if is_string_param(&pat_type.ty) {
                         params.push((format!("{}_ptr", param_name), "const uint8_t*".to_string()));
                         params.push((format!("{}_len", param_name), "uintptr_t".to_string()));
@@ -603,7 +622,7 @@ fn classify_return_type(ty: &Type) -> FfiReturnKind {
 
 fn is_string_param(ty: &Type) -> bool {
     let type_str = quote::quote!(#ty).to_string().replace(" ", "");
-    type_str == "&str" 
+    type_str == "&str"
         || (type_str.starts_with("&'") && type_str.ends_with("str"))
         || type_str == "String"
         || type_str == "std::string::String"
@@ -674,12 +693,13 @@ fn rust_to_cbindgen_name(rust_type: &str) -> String {
         "double" => "f64",
         "bool" => "bool",
         other => other,
-    }.to_string()
+    }
+    .to_string()
 }
 
 fn classify_async_callback_type(ty: &Type) -> String {
     let type_str = quote::quote!(#ty).to_string().replace(" ", "");
-    
+
     if type_str == "String" || type_str == "std::string::String" {
         return "struct FfiString".to_string();
     }
@@ -702,17 +722,18 @@ fn classify_async_callback_type(ty: &Type) -> String {
                 if let syn::PathArguments::AngleBracketed(args) = &segment.arguments {
                     if let Some(syn::GenericArgument::Type(inner_ty)) = args.args.first() {
                         let inner_str = quote::quote!(#inner_ty).to_string().replace(" ", "");
-                        
+
                         if inner_str == "String" || inner_str == "std::string::String" {
                             return "struct FfiString".to_string();
                         }
-                        
+
                         if inner_str == "()" {
                             return "void".to_string();
                         }
 
                         if let Some(vec_inner) = extract_generic_inner_type(inner_ty, "Vec") {
-                            let inner_c = rust_type_to_c(&vec_inner).unwrap_or_else(|| "void".to_string());
+                            let inner_c =
+                                rust_type_to_c(&vec_inner).unwrap_or_else(|| "void".to_string());
                             let cbindgen_name = rust_to_cbindgen_name(&inner_c);
                             return format!("struct FfiBuf_{}", cbindgen_name);
                         }
@@ -822,7 +843,7 @@ fn rust_type_to_c(ty: &Type) -> Option<String> {
                 return Some(format!("struct Foreign{}*", inner));
             }
             if type_str.starts_with("Box<") && type_str.ends_with(">") {
-                let inner = &type_str[4..type_str.len()-1];
+                let inner = &type_str[4..type_str.len() - 1];
                 return Some(format!("struct {}*", inner));
             }
             if is_callback_typedef(&type_str) {
@@ -845,7 +866,13 @@ fn rust_type_to_c_ptr(inner: &str, qualifier: &str) -> Option<String> {
         "u8" => "uint8_t",
         "i8" => "int8_t",
         "c_void" | "core::ffi::c_void" => "void",
-        _ => return Some(format!("{} struct {}*", qualifier, inner).trim().to_string()),
+        _ => {
+            return Some(
+                format!("{} struct {}*", qualifier, inner)
+                    .trim()
+                    .to_string(),
+            );
+        }
     };
     if qualifier.is_empty() {
         Some(format!("{}*", c_inner))
@@ -996,13 +1023,19 @@ fn generate_enum_typedef(e: &FfiEnum) -> String {
     if !e.is_data_enum {
         let mut out = format!("typedef {} {};\n", c_type, e.name);
         for variant in &e.variants {
-            out.push_str(&format!("#define {}_{} {}\n", e.name, variant.name, variant.discriminant));
+            out.push_str(&format!(
+                "#define {}_{} {}\n",
+                e.name, variant.name, variant.discriminant
+            ));
         }
         out.push('\n');
         return out;
     }
 
-    let mut out = format!("typedef struct {} {{\n  {} tag;\n  union {{\n", e.name, c_type);
+    let mut out = format!(
+        "typedef struct {} {{\n  {} tag;\n  union {{\n",
+        e.name, c_type
+    );
 
     for variant in &e.variants {
         match &variant.data {
@@ -1032,7 +1065,10 @@ fn generate_enum_typedef(e: &FfiEnum) -> String {
     out.push_str(&format!("}} {};\n", e.name));
 
     for variant in &e.variants {
-        out.push_str(&format!("#define {}_TAG_{} {}\n", e.name, variant.name, variant.discriminant));
+        out.push_str(&format!(
+            "#define {}_TAG_{} {}\n",
+            e.name, variant.name, variant.discriminant
+        ));
     }
     out.push('\n');
     out
@@ -1042,7 +1078,7 @@ fn collect_generic_type_instantiations(exports: &[FfiExport]) -> Vec<(String, St
     use std::collections::HashSet;
     let mut seen = HashSet::new();
     let mut types = Vec::new();
-    
+
     for export in exports {
         if export.name.ends_with("_async") {
             for (_, param_type) in &export.params {
@@ -1053,22 +1089,32 @@ fn collect_generic_type_instantiations(exports: &[FfiExport]) -> Vec<(String, St
                     let key = format!("FfiBuf_{}", inner);
                     if !seen.contains(&key) {
                         seen.insert(key);
-                        types.push(("FfiBuf".to_string(), inner.to_string(), c_type_for_generic(inner)));
+                        types.push((
+                            "FfiBuf".to_string(),
+                            inner.to_string(),
+                            c_type_for_generic(inner),
+                        ));
                     }
-                } else if param_type.starts_with("void (*)(void*, struct FfiStatus, struct FfiOption_") {
+                } else if param_type
+                    .starts_with("void (*)(void*, struct FfiStatus, struct FfiOption_")
+                {
                     let inner = param_type
                         .trim_start_matches("void (*)(void*, struct FfiStatus, struct FfiOption_")
                         .trim_end_matches(")");
                     let key = format!("FfiOption_{}", inner);
                     if !seen.contains(&key) {
                         seen.insert(key);
-                        types.push(("FfiOption".to_string(), inner.to_string(), c_type_for_generic(inner)));
+                        types.push((
+                            "FfiOption".to_string(),
+                            inner.to_string(),
+                            c_type_for_generic(inner),
+                        ));
                     }
                 }
             }
         }
     }
-    
+
     types
 }
 
@@ -1086,7 +1132,8 @@ fn c_type_for_generic(rust_name: &str) -> String {
         "f64" => "double",
         "bool" => "bool",
         other => other,
-    }.to_string()
+    }
+    .to_string()
 }
 
 fn to_pascal_case(snake: &str) -> String {
@@ -1107,7 +1154,7 @@ fn generate_stream_declarations(stream: &FfiStreamExport) -> String {
     let base_name = format!("mffi_{}_{}", stream.class_name, stream.method_name);
     let item_type = &stream.item_type;
     let pascal_class_name = to_pascal_case(&stream.class_name);
-    
+
     format!(
         "SubscriptionHandle {}(const struct {} *handle);\n\
          uintptr_t {}_pop_batch(SubscriptionHandle subscription_handle, struct {} *output_ptr, uintptr_t output_capacity);\n\
@@ -1115,8 +1162,10 @@ fn generate_stream_declarations(stream: &FfiStreamExport) -> String {
          void {}_poll(SubscriptionHandle subscription_handle, uint64_t callback_data, StreamContinuationCallback callback);\n\
          void {}_unsubscribe(SubscriptionHandle subscription_handle);\n\
          void {}_free(SubscriptionHandle subscription_handle);\n\n",
-        base_name, pascal_class_name,
-        base_name, item_type,
+        base_name,
+        pascal_class_name,
+        base_name,
+        item_type,
         base_name,
         base_name,
         base_name,
@@ -1124,17 +1173,27 @@ fn generate_stream_declarations(stream: &FfiStreamExport) -> String {
     )
 }
 
-fn append_macro_exports(header_path: &PathBuf, exports: &[FfiExport], structs: &[FfiStruct], enums: &[FfiEnum], stream_exports: &[FfiStreamExport], traits: &[FfiTrait]) {
+fn append_macro_exports(
+    header_path: &PathBuf,
+    exports: &[FfiExport],
+    structs: &[FfiStruct],
+    enums: &[FfiEnum],
+    stream_exports: &[FfiStreamExport],
+    traits: &[FfiTrait],
+) {
     let mut header = fs::read_to_string(header_path).unwrap_or_default();
 
     if let Some(pos) = header.rfind("#endif") {
         let generic_types = collect_generic_type_instantiations(exports);
-        
+
         for (wrapper, inner, _) in &generic_types {
-            let empty_pattern = format!("typedef struct {}_{} {{\n}} {}_{};", wrapper, inner, wrapper, inner);
+            let empty_pattern = format!(
+                "typedef struct {}_{} {{\n}} {}_{};",
+                wrapper, inner, wrapper, inner
+            );
             header = header.replace(&empty_pattern, "");
         }
-        
+
         let generic_defs: String = generic_types
             .iter()
             .filter(|(wrapper, inner, _)| !header.contains(&format!("typedef struct {}_{} {{\n  ", wrapper, inner)))
@@ -1155,11 +1214,15 @@ fn append_macro_exports(header_path: &PathBuf, exports: &[FfiExport], structs: &
 
         let enum_defs: String = enums
             .iter()
-            .filter(|e| !header.contains(&format!("typedef {} {};", repr_to_c_type(&e.repr), e.name)))
+            .filter(|e| {
+                !header.contains(&format!("typedef {} {};", repr_to_c_type(&e.repr), e.name))
+            })
             .map(generate_enum_typedef)
             .collect();
 
-        let has_async = exports.iter().any(|e| matches!(e.return_kind, FfiReturnKind::AsyncPoll(_)));
+        let has_async = exports
+            .iter()
+            .any(|e| matches!(e.return_kind, FfiReturnKind::AsyncPoll(_)));
         let rust_future_defs = if has_async && !header.contains("RustFutureHandle") {
             "typedef const void* RustFutureHandle;\ntypedef void (*RustFutureContinuationCallback)(uint64_t callback_data, RustFuturePoll poll_result);\n\n"
         } else {
@@ -1167,7 +1230,9 @@ fn append_macro_exports(header_path: &PathBuf, exports: &[FfiExport], structs: &
         };
 
         let has_streams = !stream_exports.is_empty();
-        let stream_continuation_defs = if has_streams && !header.contains("StreamContinuationCallback") {
+        let stream_continuation_defs = if has_streams
+            && !header.contains("StreamContinuationCallback")
+        {
             "typedef void (*StreamContinuationCallback)(uint64_t callback_data, int8_t poll_result);\n\n"
         } else {
             ""
@@ -1179,10 +1244,7 @@ fn append_macro_exports(header_path: &PathBuf, exports: &[FfiExport], structs: &
             .map(generate_struct_typedef)
             .collect();
 
-        let declarations: String = exports
-            .iter()
-            .map(generate_export_declaration)
-            .collect();
+        let declarations: String = exports.iter().map(generate_export_declaration).collect();
 
         let stream_declarations: String = stream_exports
             .iter()
@@ -1196,7 +1258,21 @@ fn append_macro_exports(header_path: &PathBuf, exports: &[FfiExport], structs: &
             .collect();
 
         let marker = "\n/* Macro-generated types and exports */\n";
-        header.insert_str(pos, &format!("{}{}{}{}{}{}{}{}{}\n", marker, generic_defs, enum_defs, rust_future_defs, stream_continuation_defs, struct_defs, trait_defs, declarations, stream_declarations));
+        header.insert_str(
+            pos,
+            &format!(
+                "{}{}{}{}{}{}{}{}{}\n",
+                marker,
+                generic_defs,
+                enum_defs,
+                rust_future_defs,
+                stream_continuation_defs,
+                struct_defs,
+                trait_defs,
+                declarations,
+                stream_declarations
+            ),
+        );
         fs::write(header_path, header).expect("Failed to write header");
     }
 }
@@ -1215,24 +1291,37 @@ fn generate_trait_typedef(t: &FfiTrait) -> String {
     for method in &t.methods {
         let method_snake = trait_name_to_snake(&method.name);
         let mut params = vec!["uint64_t handle".to_string()];
-        
+
         for (param_name, param_type) in &method.params {
             params.push(format!("{} {}", param_type, param_name));
         }
 
         if method.is_async {
-            let callback_return = method.return_type.as_ref()
+            let callback_return = method
+                .return_type
+                .as_ref()
                 .map(|t| format!(", {}", t))
                 .unwrap_or_default();
-            params.push(format!("void (*callback)(uint64_t{}, struct FfiStatus)", callback_return));
+            params.push(format!(
+                "void (*callback)(uint64_t{}, struct FfiStatus)",
+                callback_return
+            ));
             params.push("uint64_t callback_data".to_string());
-            vtable_fields.push(format!("  void (*{})({});", method_snake, params.join(", ")));
+            vtable_fields.push(format!(
+                "  void (*{})({});",
+                method_snake,
+                params.join(", ")
+            ));
         } else {
             if let Some(ref ret_ty) = method.return_type {
                 params.push(format!("{} *out", ret_ty));
             }
             params.push("struct FfiStatus *status".to_string());
-            vtable_fields.push(format!("  void (*{})({});", method_snake, params.join(", ")));
+            vtable_fields.push(format!(
+                "  void (*{})({});",
+                method_snake,
+                params.join(", ")
+            ));
         }
     }
 

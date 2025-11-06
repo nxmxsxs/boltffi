@@ -72,7 +72,12 @@ impl TypeMapper {
     pub fn needs_conversion(ty: &Type) -> bool {
         matches!(
             ty,
-            Type::String | Type::Bytes | Type::Vec(_) | Type::Option(_) | Type::Object(_) | Type::BoxedTrait(_)
+            Type::String
+                | Type::Bytes
+                | Type::Vec(_)
+                | Type::Option(_)
+                | Type::Object(_)
+                | Type::BoxedTrait(_)
         )
     }
 

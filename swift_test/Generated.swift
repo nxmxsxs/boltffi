@@ -1,5 +1,10 @@
 import Foundation
 
+public struct FfiError: Error {
+    public let status: FfiStatus
+    public init(status: FfiStatus) { self.status = status }
+}
+
 public func greeting(name: String) -> String {
     var result = FfiString(ptr: nil, len: 0, cap: 0)
     return name.withCString { namePtr in 
@@ -45,6 +50,21 @@ public func makeGreeting(name: String) -> String {
     }
 }
 
+public func safeDivide(numerator: Int32, denominator: Int32) throws -> Int32 {
+    var outValue: Int32 = 0
+    let status = mffi_safe_divide(numerator, denominator, &outValue)
+    if status.code != 0 { throw FfiError(status: status) }
+    return outValue
+}
+
+public func generateSequence(count: Int32) -> [Int32] {
+    let len = mffi_generate_sequence_len(count)
+    var arr = [Int32](repeating: 0, count: Int(len))
+    var written: UInt = 0
+    _ = mffi_generate_sequence_copy_into(count, &arr, UInt(len), &written)
+    return arr
+}
+
 public func foreachRange(start: Int32, end: Int32, callback: @escaping (Int32) -> Void) {
     typealias ForeachRangeCallbackFn = (Int32) -> Void
     class ForeachRangeCallbackBox { let fn_: ForeachRangeCallbackFn; init(_ fn_: @escaping ForeachRangeCallbackFn) { self.fn_ = fn_ } }
@@ -63,6 +83,12 @@ public func oppositeDirection(dir: Direction) -> Direction {
 
 public func directionToDegrees(dir: Direction) -> Int32 {
     return mffi_direction_to_degrees(dir)
+}
+
+public func findEven(value: Int32) -> Int32? {
+    var outValue: Int32 = 0
+    let isSome = mffi_find_even(value, &outValue)
+    return isSome != 0 ? outValue : nil
 }
 
 public func processValue(value: Int32) -> ApiResult {
@@ -108,6 +134,48 @@ public func computeHeavy(input: Int32) async throws -> Int32 {
     } onCancel: {
         mffi_compute_heavy_cancel(futureHandle)
         mffi_compute_heavy_free(futureHandle)
+    }
+}
+
+public func fetchData(id: Int32) async throws -> Int32 {
+    let futureHandle = mffi_fetch_data(id)
+    
+    class FutureContext {
+        let handle: RustFutureHandle?
+        let continuation: CheckedContinuation<Int32, Error>
+        
+        init(handle: RustFutureHandle?, continuation: CheckedContinuation<Int32, Error>) {
+            self.handle = handle
+            self.continuation = continuation
+        }
+    }
+    
+    return try await withTaskCancellationHandler {
+        try await withCheckedThrowingContinuation { continuation in
+            let context = FutureContext(handle: futureHandle, continuation: continuation)
+            
+            func poll(ctx: FutureContext) {
+                mffi_fetch_data_poll(ctx.handle, UInt64(UInt(bitPattern: Unmanaged.passRetained(ctx).toOpaque()))) { callbackData, pollResult in
+                    let ctx = Unmanaged<FutureContext>.fromOpaque(UnsafeRawPointer(bitPattern: UInt(callbackData))!).takeRetainedValue()
+                    if pollResult == 0 {
+                        var status = FfiStatus()
+                        let result = mffi_fetch_data_complete(ctx.handle, &status)
+                        mffi_fetch_data_free(ctx.handle)
+                        if status.code != 0 {
+                            ctx.continuation.resume(throwing: FfiError(status: status))
+                        } else {
+                            ctx.continuation.resume(returning: result)
+                        }
+                    } else {
+                        poll(ctx: ctx)
+                    }
+                }
+            }
+            poll(ctx: context)
+        }
+    } onCancel: {
+        mffi_fetch_data_cancel(futureHandle)
+        mffi_fetch_data_free(futureHandle)
     }
 }
 
@@ -189,6 +257,84 @@ public func asyncFetchPoint(x: Double, y: Double) async throws -> DataPoint {
     }
 }
 
+public func asyncGetNumbers(count: Int32) async throws -> [Int32] {
+    let futureHandle = mffi_async_get_numbers(count)
+    
+    class FutureContext {
+        let handle: RustFutureHandle?
+        let continuation: CheckedContinuation<[Int32], Error>
+        
+        init(handle: RustFutureHandle?, continuation: CheckedContinuation<[Int32], Error>) {
+            self.handle = handle
+            self.continuation = continuation
+        }
+    }
+    
+    return try await withTaskCancellationHandler {
+        try await withCheckedThrowingContinuation { continuation in
+            let context = FutureContext(handle: futureHandle, continuation: continuation)
+            
+            func poll(ctx: FutureContext) {
+                mffi_async_get_numbers_poll(ctx.handle, UInt64(UInt(bitPattern: Unmanaged.passRetained(ctx).toOpaque()))) { callbackData, pollResult in
+                    let ctx = Unmanaged<FutureContext>.fromOpaque(UnsafeRawPointer(bitPattern: UInt(callbackData))!).takeRetainedValue()
+                    if pollResult == 0 {
+                        var status = FfiStatus()
+                        let buf = mffi_async_get_numbers_complete(ctx.handle, &status)
+                        let arr = Array(UnsafeBufferPointer(start: buf.ptr, count: Int(buf.len)))
+                        mffi_free_buf_i32(buf)
+                        mffi_async_get_numbers_free(ctx.handle)
+                        ctx.continuation.resume(returning: arr)
+                    } else {
+                        poll(ctx: ctx)
+                    }
+                }
+            }
+            poll(ctx: context)
+        }
+    } onCancel: {
+        mffi_async_get_numbers_cancel(futureHandle)
+        mffi_async_get_numbers_free(futureHandle)
+    }
+}
+
+public func asyncFindValue(needle: Int32) async throws -> Int32? {
+    let futureHandle = mffi_async_find_value(needle)
+    
+    class FutureContext {
+        let handle: RustFutureHandle?
+        let continuation: CheckedContinuation<Int32?, Error>
+        
+        init(handle: RustFutureHandle?, continuation: CheckedContinuation<Int32?, Error>) {
+            self.handle = handle
+            self.continuation = continuation
+        }
+    }
+    
+    return try await withTaskCancellationHandler {
+        try await withCheckedThrowingContinuation { continuation in
+            let context = FutureContext(handle: futureHandle, continuation: continuation)
+            
+            func poll(ctx: FutureContext) {
+                mffi_async_find_value_poll(ctx.handle, UInt64(UInt(bitPattern: Unmanaged.passRetained(ctx).toOpaque()))) { callbackData, pollResult in
+                    let ctx = Unmanaged<FutureContext>.fromOpaque(UnsafeRawPointer(bitPattern: UInt(callbackData))!).takeRetainedValue()
+                    if pollResult == 0 {
+                        var status = FfiStatus()
+                        let opt = mffi_async_find_value_complete(ctx.handle, &status)
+                        mffi_async_find_value_free(ctx.handle)
+                        ctx.continuation.resume(returning: opt.isSome ? opt.value : nil)
+                    } else {
+                        poll(ctx: ctx)
+                    }
+                }
+            }
+            poll(ctx: context)
+        }
+    } onCancel: {
+        mffi_async_find_value_cancel(futureHandle)
+        mffi_async_find_value_free(futureHandle)
+    }
+}
+
 public func asyncGreeting(name: String) async throws -> String {
     let futureHandle = mffi_async_greeting(name, UInt(name.utf8.count))
     
@@ -226,6 +372,50 @@ public func asyncGreeting(name: String) async throws -> String {
     } onCancel: {
         mffi_async_greeting_cancel(futureHandle)
         mffi_async_greeting_free(futureHandle)
+    }
+}
+
+public func asyncFetchNumbers(id: Int32) async throws -> [Int32] {
+    let futureHandle = mffi_async_fetch_numbers(id)
+    
+    class FutureContext {
+        let handle: RustFutureHandle?
+        let continuation: CheckedContinuation<[Int32], Error>
+        
+        init(handle: RustFutureHandle?, continuation: CheckedContinuation<[Int32], Error>) {
+            self.handle = handle
+            self.continuation = continuation
+        }
+    }
+    
+    return try await withTaskCancellationHandler {
+        try await withCheckedThrowingContinuation { continuation in
+            let context = FutureContext(handle: futureHandle, continuation: continuation)
+            
+            func poll(ctx: FutureContext) {
+                mffi_async_fetch_numbers_poll(ctx.handle, UInt64(UInt(bitPattern: Unmanaged.passRetained(ctx).toOpaque()))) { callbackData, pollResult in
+                    let ctx = Unmanaged<FutureContext>.fromOpaque(UnsafeRawPointer(bitPattern: UInt(callbackData))!).takeRetainedValue()
+                    if pollResult == 0 {
+                        var status = FfiStatus()
+                        let buf = mffi_async_fetch_numbers_complete(ctx.handle, &status)
+                        mffi_async_fetch_numbers_free(ctx.handle)
+                        if status.code != 0 {
+                            ctx.continuation.resume(throwing: FfiError(status: status))
+                        } else {
+                            let arr = Array(UnsafeBufferPointer(start: buf.ptr, count: Int(buf.len)))
+                            (buf)
+                            ctx.continuation.resume(returning: arr)
+                        }
+                    } else {
+                        poll(ctx: ctx)
+                    }
+                }
+            }
+            poll(ctx: context)
+        }
+    } onCancel: {
+        mffi_async_fetch_numbers_cancel(futureHandle)
+        mffi_async_fetch_numbers_free(futureHandle)
     }
 }
 

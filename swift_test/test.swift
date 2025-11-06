@@ -60,6 +60,29 @@ func testFreeFunctions() {
     print("directionToDegrees(East) = \(degrees)")
     assert(degrees == 90, "Expected 90")
     
+    let divResult = try! safeDivide(numerator: 10, denominator: 2)
+    print("safeDivide(10, 2) = \(divResult)")
+    assert(divResult == 5, "Expected 5")
+    
+    do {
+        _ = try safeDivide(numerator: 10, denominator: 0)
+        assert(false, "Should have thrown")
+    } catch {
+        print("safeDivide(10, 0) threw as expected")
+    }
+    
+    let seq = generateSequence(count: 5)
+    print("generateSequence(5) = \(seq)")
+    assert(seq == [0, 1, 2, 3, 4], "Expected [0,1,2,3,4]")
+    
+    let evenResult = findEven(value: 4)
+    print("findEven(4) = \(String(describing: evenResult))")
+    assert(evenResult == 4, "Expected 4")
+    
+    let oddResult = findEven(value: 3)
+    print("findEven(3) = \(String(describing: oddResult))")
+    assert(oddResult == nil, "Expected nil")
+    
     print("SUCCESS: Free functions work!\n")
 }
 

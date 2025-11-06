@@ -86,6 +86,8 @@ impl Function {
     }
 
     pub fn has_return_value(&self) -> bool {
-        self.output.as_ref().map_or(false, |output| !output.is_void())
+        self.output
+            .as_ref()
+            .map_or(false, |output| !output.is_void())
     }
 }

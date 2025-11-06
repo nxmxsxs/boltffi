@@ -1,7 +1,7 @@
 use std::future::Future;
 use std::pin::Pin;
 use std::ptr;
-use std::sync::atomic::{AtomicPtr, AtomicU64, AtomicU8, Ordering};
+use std::sync::atomic::{AtomicPtr, AtomicU8, AtomicU64, Ordering};
 use std::sync::{Arc, Mutex};
 use std::task::{Context, Poll, RawWaker, RawWakerVTable, Waker};
 
@@ -90,19 +90,30 @@ impl AtomicContinuationScheduler {
 
     fn try_transition(&self, from: SchedulerStateTag, to: SchedulerStateTag) -> bool {
         self.state_tag
-            .compare_exchange(from.into_raw(), to.into_raw(), Ordering::AcqRel, Ordering::Acquire)
+            .compare_exchange(
+                from.into_raw(),
+                to.into_raw(),
+                Ordering::AcqRel,
+                Ordering::Acquire,
+            )
             .is_ok()
     }
 
     fn load_stored_continuation(&self) -> (Option<ContinuationCallback>, ContinuationData) {
         let callback_ptr = self.stored_callback_ptr.load(Ordering::Acquire);
-        let callback_data = ContinuationData::from_raw(self.stored_callback_data.load(Ordering::Acquire));
-        (ContinuationCallback::from_raw_ptr(callback_ptr), callback_data)
+        let callback_data =
+            ContinuationData::from_raw(self.stored_callback_data.load(Ordering::Acquire));
+        (
+            ContinuationCallback::from_raw_ptr(callback_ptr),
+            callback_data,
+        )
     }
 
     fn write_continuation(&self, callback: ContinuationCallback, callback_data: ContinuationData) {
-        self.stored_callback_data.store(callback_data.into_raw(), Ordering::Release);
-        self.stored_callback_ptr.store(callback.into_raw_ptr(), Ordering::Release);
+        self.stored_callback_data
+            .store(callback_data.into_raw(), Ordering::Release);
+        self.stored_callback_ptr
+            .store(callback.into_raw_ptr(), Ordering::Release);
     }
 
     fn invoke_stored_continuation(&self, poll_result: RustFuturePoll) {
@@ -112,12 +123,19 @@ impl AtomicContinuationScheduler {
         }
     }
 
-    fn store_continuation(&self, continuation_callback: ContinuationCallback, callback_data: ContinuationData) {
+    fn store_continuation(
+        &self,
+        continuation_callback: ContinuationCallback,
+        callback_data: ContinuationData,
+    ) {
         loop {
             match self.current_state() {
                 SchedulerStateTag::Empty => {
                     self.write_continuation(continuation_callback, callback_data);
-                    if self.try_transition(SchedulerStateTag::Empty, SchedulerStateTag::ContinuationStored) {
+                    if self.try_transition(
+                        SchedulerStateTag::Empty,
+                        SchedulerStateTag::ContinuationStored,
+                    ) {
                         return;
                     }
                 }
@@ -144,7 +162,10 @@ impl AtomicContinuationScheduler {
         loop {
             match self.current_state() {
                 SchedulerStateTag::ContinuationStored => {
-                    if self.try_transition(SchedulerStateTag::ContinuationStored, SchedulerStateTag::Empty) {
+                    if self.try_transition(
+                        SchedulerStateTag::ContinuationStored,
+                        SchedulerStateTag::Empty,
+                    ) {
                         self.invoke_stored_continuation(RustFuturePoll::MaybeReady);
                         return;
                     }
@@ -164,7 +185,10 @@ impl AtomicContinuationScheduler {
             let current_state = self.current_state();
             match current_state {
                 SchedulerStateTag::ContinuationStored => {
-                    if self.try_transition(SchedulerStateTag::ContinuationStored, SchedulerStateTag::Cancelled) {
+                    if self.try_transition(
+                        SchedulerStateTag::ContinuationStored,
+                        SchedulerStateTag::Cancelled,
+                    ) {
                         self.invoke_stored_continuation(RustFuturePoll::Ready);
                         return;
                     }
@@ -245,7 +269,11 @@ impl<T: Send + 'static> RustFuture<T> {
         }
     }
 
-    pub fn poll(self: &Arc<Self>, continuation_callback: RustFutureContinuationCallback, callback_data: u64) {
+    pub fn poll(
+        self: &Arc<Self>,
+        continuation_callback: RustFutureContinuationCallback,
+        callback_data: u64,
+    ) {
         let is_cancelled = self.continuation_scheduler.is_cancelled();
 
         let is_ready = is_cancelled || {
@@ -300,7 +328,11 @@ fn waker_wake_fn<T: Send + 'static>(waker_data_ptr: *const ()) {
 
 fn waker_wake_by_ref_fn<T: Send + 'static>(waker_data_ptr: *const ()) {
     let rust_future_ptr = waker_data_ptr as *const RustFuture<T>;
-    unsafe { (*rust_future_ptr).continuation_scheduler.wake_continuation() };
+    unsafe {
+        (*rust_future_ptr)
+            .continuation_scheduler
+            .wake_continuation()
+    };
 }
 
 fn waker_drop_fn<T: Send + 'static>(waker_data_ptr: *const ()) {
