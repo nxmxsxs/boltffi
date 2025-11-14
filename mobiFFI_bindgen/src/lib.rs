@@ -1,8 +1,10 @@
+pub mod cheader;
 pub mod kotlin;
 pub mod model;
 pub mod scan;
 pub mod swift;
 
+pub use cheader::CHeaderGenerator;
 pub use model::{
     Class, Constructor, ConstructorParam, Deprecation, Enumeration, Function, Method, Module,
     Parameter, Primitive, Receiver, Record, RecordField, StreamMethod, StreamMode, Type, Variant,
