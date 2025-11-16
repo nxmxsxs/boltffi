@@ -78,7 +78,8 @@ impl Swift {
     pub fn render_module(module: &Module) -> String {
         let mut sections = Vec::new();
 
-        sections.push(Self::render_header());
+        let ffi_module_name = format!("{}FFI", NamingConvention::class_name(&module.name));
+        sections.push(Self::render_header(&ffi_module_name));
 
         module
             .records
@@ -111,18 +112,21 @@ impl Swift {
         sections.join("\n\n")
     }
 
-    fn render_header() -> String {
-        r#"import Foundation
+    fn render_header(ffi_module_name: &str) -> String {
+        format!(
+            r#"import Foundation
+import {}
 
-public struct FfiError: Error {
+public struct FfiError: Error {{
     public let code: Int32
     public let message: String
     
-    init(code: Int32, message: String = "FFI Error") {
+    init(code: Int32, message: String = "FFI Error") {{
         self.code = code
         self.message = message
-    }
-}"#
-        .to_string()
+    }}
+}}"#,
+            ffi_module_name
+        )
     }
 }

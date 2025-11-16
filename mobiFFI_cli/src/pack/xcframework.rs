@@ -40,10 +40,11 @@ impl<'a> XcframeworkBuilder<'a> {
         let simulator_libs = self.filter_simulator_libraries();
         let macos_libs = self.filter_macos_libraries();
 
-        let fat_sim_lib = self.create_fat_simulator_library(&simulator_libs)?;
+        let fat_sim_lib = self.create_fat_library(&simulator_libs, "ios-simulator-fat")?;
+        let fat_macos_lib = self.create_fat_library(&macos_libs, "macos-fat")?;
 
         let xcframework_path =
-            self.create_xcframework(&device_libs, fat_sim_lib.as_ref(), &macos_libs)?;
+            self.create_xcframework(&device_libs, fat_sim_lib.as_ref(), fat_macos_lib.as_ref())?;
 
         Ok(XcframeworkOutput {
             xcframework_path,
@@ -91,19 +92,20 @@ impl<'a> XcframeworkBuilder<'a> {
             .collect()
     }
 
-    fn create_fat_simulator_library(
+    fn create_fat_library(
         &self,
-        simulator_libs: &[&BuiltLibrary],
+        libs: &[&BuiltLibrary],
+        output_dir_name: &str,
     ) -> Result<Option<PathBuf>> {
-        if simulator_libs.is_empty() {
+        if libs.is_empty() {
             return Ok(None);
         }
 
-        if simulator_libs.len() == 1 {
-            return Ok(Some(simulator_libs[0].path.clone()));
+        if libs.len() == 1 {
+            return Ok(Some(libs[0].path.clone()));
         }
 
-        let fat_dir = self.output_dir.join("ios-simulator-fat");
+        let fat_dir = self.output_dir.join(output_dir_name);
         std::fs::create_dir_all(&fat_dir).map_err(|source| CliError::CreateDirectoryFailed {
             path: fat_dir.clone(),
             source,
@@ -115,7 +117,7 @@ impl<'a> XcframeworkBuilder<'a> {
         let mut lipo_cmd = Command::new("lipo");
         lipo_cmd.arg("-create");
 
-        simulator_libs.iter().for_each(|lib| {
+        libs.iter().for_each(|lib| {
             lipo_cmd.arg(&lib.path);
         });
 
@@ -139,7 +141,7 @@ impl<'a> XcframeworkBuilder<'a> {
         &self,
         device_libs: &[&BuiltLibrary],
         fat_sim_lib: Option<&PathBuf>,
-        macos_libs: &[&BuiltLibrary],
+        fat_macos_lib: Option<&PathBuf>,
     ) -> Result<PathBuf> {
         let xcframework_name = self.config.xcframework_name();
         let xcframework_path = self
@@ -176,13 +178,13 @@ impl<'a> XcframeworkBuilder<'a> {
                 .arg(&headers_staging);
         }
 
-        macos_libs.iter().for_each(|lib| {
+        if let Some(macos_lib) = fat_macos_lib {
             xcodebuild_cmd
                 .arg("-library")
-                .arg(&lib.path)
+                .arg(macos_lib)
                 .arg("-headers")
                 .arg(&headers_staging);
-        });
+        }
 
         xcodebuild_cmd.arg("-output").arg(&xcframework_path);
 
@@ -238,10 +240,9 @@ impl<'a> XcframeworkBuilder<'a> {
 
 fn generate_modulemap(module_name: &str, header_name: &str) -> String {
     format!(
-        r#"framework module {} {{
-    umbrella header "{}.h"
+        r#"module {}FFI {{
+    header "{}.h"
     export *
-    module * {{ export * }}
 }}
 "#,
         module_name, header_name
