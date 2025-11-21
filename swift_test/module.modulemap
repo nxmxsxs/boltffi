@@ -1,4 +1,0 @@
-module Riff {
-    header "riff_core.h"
-    export *
-}

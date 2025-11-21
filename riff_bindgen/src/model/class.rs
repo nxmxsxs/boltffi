@@ -26,18 +26,6 @@ impl Class {
         }
     }
 
-    pub fn ffi_prefix(&self, module_prefix: &str) -> String {
-        format!("{}_{}", module_prefix, self.name.to_lowercase())
-    }
-
-    pub fn ffi_new(&self, module_prefix: &str) -> String {
-        format!("{}_new", self.ffi_prefix(module_prefix))
-    }
-
-    pub fn ffi_free(&self, module_prefix: &str) -> String {
-        format!("{}_free", self.ffi_prefix(module_prefix))
-    }
-
     pub fn with_doc(mut self, doc: impl Into<String>) -> Self {
         self.doc = Some(doc.into());
         self
@@ -88,10 +76,6 @@ impl Constructor {
             inputs: Vec::new(),
             doc: None,
         }
-    }
-
-    pub fn ffi_name(&self, class_prefix: &str) -> String {
-        format!("{}_new", class_prefix)
     }
 
     pub fn with_param(mut self, param: ConstructorParam) -> Self {

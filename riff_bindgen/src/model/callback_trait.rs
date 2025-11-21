@@ -30,22 +30,6 @@ impl CallbackTrait {
         self
     }
 
-    pub fn ffi_vtable_name(&self) -> String {
-        format!("{}VTable", self.name)
-    }
-
-    pub fn ffi_foreign_name(&self) -> String {
-        format!("Foreign{}", self.name)
-    }
-
-    pub fn ffi_register_fn(&self, prefix: &str) -> String {
-        format!("{}_register_{}_vtable", prefix, to_snake_case(&self.name))
-    }
-
-    pub fn ffi_create_fn(&self, prefix: &str) -> String {
-        format!("{}_create_{}", prefix, to_snake_case(&self.name))
-    }
-
     pub fn sync_methods(&self) -> impl Iterator<Item = &TraitMethod> {
         self.methods.iter().filter(|m| !m.is_async)
     }
@@ -119,19 +103,4 @@ impl TraitMethodParam {
             param_type,
         }
     }
-}
-
-fn to_snake_case(name: &str) -> String {
-    let mut result = String::new();
-    for (i, ch) in name.chars().enumerate() {
-        if ch.is_uppercase() {
-            if i > 0 {
-                result.push('_');
-            }
-            result.push(ch.to_ascii_lowercase());
-        } else {
-            result.push(ch);
-        }
-    }
-    result
 }

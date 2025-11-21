@@ -1,17 +1,49 @@
+use std::collections::HashSet;
 use std::fs;
 use std::path::Path;
-use syn::{Attribute, Fields, FnArg, ImplItem, Item, ItemImpl, ItemStruct, ItemTrait, Type};
+use syn::{Attribute, Fields, FnArg, ImplItem, Item, ItemEnum, ItemImpl, ItemStruct, ItemTrait, Type};
 use walkdir::WalkDir;
 
 use crate::model::{
-    CallbackTrait, Class, Constructor, Function, Method, Module, Parameter, Primitive, Receiver,
-    Record, RecordField, StreamMethod, StreamMode, TraitMethod, TraitMethodParam, Type as MType,
+    CallbackTrait, Class, Constructor, Enumeration, Function, Method, Module, Parameter, Primitive,
+    Receiver, Record, RecordField, StreamMethod, StreamMode, TraitMethod, TraitMethodParam,
+    Type as MType, Variant,
 };
+
+#[derive(Default)]
+pub struct TypeRegistry {
+    enums: HashSet<String>,
+    records: HashSet<String>,
+}
+
+impl TypeRegistry {
+    pub fn is_enum(&self, name: &str) -> bool {
+        self.enums.contains(name)
+    }
+
+    pub fn register_enum(&mut self, name: String) {
+        self.enums.insert(name);
+    }
+
+    pub fn register_record(&mut self, name: String) {
+        self.records.insert(name);
+    }
+
+    pub fn classify_named_type(&self, name: &str) -> MType {
+        if self.enums.contains(name) {
+            MType::Enum(name.to_string())
+        } else {
+            MType::Record(name.to_string())
+        }
+    }
+}
 
 pub struct SourceScanner {
     module_name: String,
+    type_registry: TypeRegistry,
     classes: Vec<ScannedClass>,
     records: Vec<ScannedRecord>,
+    enums: Vec<ScannedEnum>,
     functions: Vec<ScannedFunction>,
     callback_traits: Vec<ScannedCallbackTrait>,
 }
@@ -42,6 +74,17 @@ struct ScannedRecord {
     fields: Vec<(String, MType)>,
 }
 
+struct ScannedEnum {
+    name: String,
+    variants: Vec<ScannedVariant>,
+}
+
+struct ScannedVariant {
+    name: String,
+    discriminant: Option<i64>,
+    fields: Vec<(String, MType)>,
+}
+
 struct ScannedFunction {
     name: String,
     params: Vec<(String, MType)>,
@@ -65,21 +108,63 @@ impl SourceScanner {
     pub fn new(module_name: impl Into<String>) -> Self {
         Self {
             module_name: module_name.into(),
+            type_registry: TypeRegistry::default(),
             classes: Vec::new(),
             records: Vec::new(),
+            enums: Vec::new(),
             functions: Vec::new(),
             callback_traits: Vec::new(),
         }
     }
 
     pub fn scan_directory(&mut self, dir: &Path) -> Result<(), String> {
-        for entry in WalkDir::new(dir)
+        let files: Vec<_> = WalkDir::new(dir)
             .into_iter()
             .filter_map(|e| e.ok())
             .filter(|e| e.path().extension().is_some_and(|ext| ext == "rs"))
-        {
-            self.scan_file(entry.path())?;
+            .map(|e| e.path().to_path_buf())
+            .collect();
+
+        for path in &files {
+            self.collect_type_names(path)?;
         }
+
+        for path in &files {
+            self.scan_file(path)?;
+        }
+        Ok(())
+    }
+
+    fn collect_type_names(&mut self, path: &Path) -> Result<(), String> {
+        let content = fs::read_to_string(path)
+            .map_err(|e| format!("Failed to read {}: {}", path.display(), e))?;
+
+        let syntax = syn::parse_file(&content)
+            .map_err(|e| format!("Failed to parse {}: {}", path.display(), e))?;
+
+        for item in &syntax.items {
+            match item {
+                Item::Struct(item_struct) => {
+                    if has_attribute(&item_struct.attrs, "ffi_record")
+                        || has_attribute(&item_struct.attrs, "data")
+                        || has_repr_c(&item_struct.attrs)
+                        || (has_attribute(&item_struct.attrs, "derive")
+                            && has_ffi_type_derive(&item_struct.attrs))
+                    {
+                        self.type_registry.register_record(item_struct.ident.to_string());
+                    }
+                }
+                Item::Enum(item_enum) => {
+                    if has_repr_int(&item_enum.attrs) {
+                        self.type_registry.register_enum(item_enum.ident.to_string());
+                    } else if has_attribute(&item_enum.attrs, "data") {
+                        self.type_registry.register_enum(item_enum.ident.to_string());
+                    }
+                }
+                _ => {}
+            }
+        }
+
         Ok(())
     }
 
@@ -117,7 +202,9 @@ impl SourceScanner {
                 }
             }
             Item::Trait(item_trait) => {
-                if has_attribute(&item_trait.attrs, "ffi_trait") {
+                if has_attribute(&item_trait.attrs, "ffi_trait")
+                    || has_attribute(&item_trait.attrs, "export")
+                {
                     self.process_callback_trait(item_trait);
                 }
             }
@@ -126,6 +213,11 @@ impl SourceScanner {
                     || has_attribute(&item_fn.attrs, "export")
                 {
                     self.process_function(item_fn);
+                }
+            }
+            Item::Enum(item_enum) => {
+                if has_repr_int(&item_enum.attrs) {
+                    self.process_enum(item_enum);
                 }
             }
             _ => {}
@@ -140,7 +232,7 @@ impl SourceScanner {
                 .iter()
                 .filter_map(|f| {
                     let field_name = f.ident.as_ref()?.to_string();
-                    let field_type = rust_type_to_ffi_type(&f.ty)?;
+                    let field_type = rust_type_to_ffi_type(&f.ty, &self.type_registry)?;
                     Some((field_name, field_type))
                 })
                 .collect(),
@@ -148,6 +240,55 @@ impl SourceScanner {
         };
 
         self.records.push(ScannedRecord { name, fields });
+    }
+
+    fn process_enum(&mut self, item_enum: &ItemEnum) {
+        let name = item_enum.ident.to_string();
+        let mut next_discriminant: i64 = 0;
+
+        let variants: Vec<ScannedVariant> = item_enum
+            .variants
+            .iter()
+            .map(|v| {
+                let variant_name = v.ident.to_string();
+                let discriminant = v
+                    .discriminant
+                    .as_ref()
+                    .and_then(|(_, expr)| parse_discriminant_expr(expr))
+                    .unwrap_or(next_discriminant);
+                next_discriminant = discriminant + 1;
+
+                let fields: Vec<(String, MType)> = match &v.fields {
+                    Fields::Named(named) => named
+                        .named
+                        .iter()
+                        .filter_map(|f| {
+                            let field_name = f.ident.as_ref()?.to_string();
+                            let field_type = rust_type_to_ffi_type(&f.ty, &self.type_registry)?;
+                            Some((field_name, field_type))
+                        })
+                        .collect(),
+                    Fields::Unnamed(unnamed) => unnamed
+                        .unnamed
+                        .iter()
+                        .enumerate()
+                        .filter_map(|(i, f)| {
+                            let field_type = rust_type_to_ffi_type(&f.ty, &self.type_registry)?;
+                            Some((format!("_{}", i), field_type))
+                        })
+                        .collect(),
+                    Fields::Unit => Vec::new(),
+                };
+
+                ScannedVariant {
+                    name: variant_name,
+                    discriminant: Some(discriminant),
+                    fields,
+                }
+            })
+            .collect();
+
+        self.enums.push(ScannedEnum { name, variants });
     }
 
     fn process_function(&mut self, item_fn: &syn::ItemFn) {
@@ -174,7 +315,7 @@ impl SourceScanner {
                     syn::Pat::Ident(pat_ident) => pat_ident.ident.to_string(),
                     _ => return None,
                 };
-                let param_type = rust_type_to_ffi_type(&pat_type.ty)?;
+                let param_type = rust_type_to_ffi_type(&pat_type.ty, &self.type_registry)?;
                 Some((param_name, param_type))
             })
             .collect();
@@ -186,7 +327,7 @@ impl SourceScanner {
         let output = match &item_fn.sig.output {
             syn::ReturnType::Default => None,
             syn::ReturnType::Type(_, ty) => {
-                let converted = rust_type_to_ffi_type(ty);
+                let converted = rust_type_to_ffi_type(ty, &self.type_registry);
                 if converted.is_none() {
                     return;
                 }
@@ -231,7 +372,7 @@ impl SourceScanner {
                         syn::Pat::Ident(pat_ident) => pat_ident.ident.to_string(),
                         _ => return None,
                     };
-                    let param_type = rust_type_to_ffi_type(&pat_type.ty)?;
+                    let param_type = rust_type_to_ffi_type(&pat_type.ty, &self.type_registry)?;
                     Some((param_name, param_type))
                 } else {
                     None
@@ -241,7 +382,7 @@ impl SourceScanner {
 
         let output = match &method.sig.output {
             syn::ReturnType::Default => None,
-            syn::ReturnType::Type(_, ty) => rust_type_to_ffi_type(ty),
+            syn::ReturnType::Type(_, ty) => rust_type_to_ffi_type(ty, &self.type_registry),
         };
 
         Some(ScannedTraitMethod {
@@ -333,7 +474,7 @@ impl SourceScanner {
                     syn::Pat::Ident(ident) => ident.ident.to_string(),
                     _ => return None,
                 };
-                let param_type = rust_type_to_ffi_type(&pat_type.ty)?;
+                let param_type = rust_type_to_ffi_type(&pat_type.ty, &self.type_registry)?;
                 Some((param_name, param_type))
             })
             .collect();
@@ -344,7 +485,7 @@ impl SourceScanner {
 
         let output = match &method.sig.output {
             syn::ReturnType::Default => None,
-            syn::ReturnType::Type(_, ty) => rust_type_to_ffi_type(ty),
+            syn::ReturnType::Type(_, ty) => rust_type_to_ffi_type(ty, &self.type_registry),
         };
 
         Some(ScannedMethod {
@@ -359,7 +500,7 @@ impl SourceScanner {
     fn process_stream_method(&self, method: &syn::ImplItemFn) -> Option<ScannedStream> {
         let name = method.sig.ident.to_string();
 
-        let (item_type, mode) = extract_stream_attr(&method.attrs)?;
+        let (item_type, mode) = extract_stream_attr(&method.attrs, &self.type_registry)?;
 
         Some(ScannedStream {
             name,
@@ -377,6 +518,21 @@ impl SourceScanner {
                 r = r.with_field(RecordField::new(&name, ty));
             }
             module = module.with_record(r);
+        }
+
+        for scanned_enum in self.enums {
+            let mut e = Enumeration::new(&scanned_enum.name);
+            for variant in scanned_enum.variants {
+                let mut v = Variant::new(&variant.name);
+                if let Some(d) = variant.discriminant {
+                    v = v.with_discriminant(d);
+                }
+                for (name, ty) in variant.fields {
+                    v = v.with_field(RecordField::new(&name, ty));
+                }
+                e = e.with_variant(v);
+            }
+            module = module.with_enum(e);
         }
 
         for function in self.functions {
@@ -462,6 +618,41 @@ fn has_repr_c(attrs: &[Attribute]) -> bool {
     })
 }
 
+fn has_repr_int(attrs: &[Attribute]) -> bool {
+    attrs.iter().any(|attr| {
+        if !attr.path().is_ident("repr") {
+            return false;
+        }
+        let Ok(meta) = attr.meta.require_list() else {
+            return false;
+        };
+        let tokens = meta.tokens.to_string();
+        ["i8", "i16", "i32", "i64", "u8", "u16", "u32", "u64"]
+            .iter()
+            .any(|ty| tokens.contains(ty))
+    })
+}
+
+fn parse_discriminant_expr(expr: &syn::Expr) -> Option<i64> {
+    match expr {
+        syn::Expr::Lit(lit) => {
+            if let syn::Lit::Int(int_lit) = &lit.lit {
+                int_lit.base10_parse().ok()
+            } else {
+                None
+            }
+        }
+        syn::Expr::Unary(unary) => {
+            if matches!(unary.op, syn::UnOp::Neg(_)) {
+                parse_discriminant_expr(&unary.expr).map(|v| -v)
+            } else {
+                None
+            }
+        }
+        _ => None,
+    }
+}
+
 fn has_ffi_type_derive(attrs: &[Attribute]) -> bool {
     attrs.iter().any(|attr| {
         if !attr.path().is_ident("derive") {
@@ -474,7 +665,7 @@ fn has_ffi_type_derive(attrs: &[Attribute]) -> bool {
     })
 }
 
-fn extract_stream_attr(attrs: &[Attribute]) -> Option<(MType, StreamMode)> {
+fn extract_stream_attr(attrs: &[Attribute], registry: &TypeRegistry) -> Option<(MType, StreamMode)> {
     for attr in attrs {
         if !attr.path().is_ident("ffi_stream") {
             continue;
@@ -485,7 +676,7 @@ fn extract_stream_attr(attrs: &[Attribute]) -> Option<(MType, StreamMode)> {
         };
 
         let tokens = meta.tokens.to_string();
-        let item_type = extract_item_type(&tokens)?;
+        let item_type = extract_item_type(&tokens, registry)?;
         let mode = extract_stream_mode(&tokens);
 
         return Some((item_type, mode));
@@ -493,7 +684,7 @@ fn extract_stream_attr(attrs: &[Attribute]) -> Option<(MType, StreamMode)> {
     None
 }
 
-fn extract_item_type(tokens: &str) -> Option<MType> {
+fn extract_item_type(tokens: &str, registry: &TypeRegistry) -> Option<MType> {
     let item_start = tokens.find("item")? + 4;
     let rest = &tokens[item_start..];
     let eq_pos = rest.find('=')?;
@@ -504,7 +695,7 @@ fn extract_item_type(tokens: &str) -> Option<MType> {
         .unwrap_or(after_eq.find(')').unwrap_or(after_eq.len()));
     let type_str = after_eq[..type_end].trim();
 
-    string_to_ffi_type(type_str)
+    string_to_ffi_type(type_str, registry)
 }
 
 fn extract_stream_mode(tokens: &str) -> StreamMode {
@@ -521,7 +712,7 @@ fn extract_stream_mode(tokens: &str) -> StreamMode {
     }
 }
 
-fn rust_type_to_ffi_type(ty: &Type) -> Option<MType> {
+fn rust_type_to_ffi_type(ty: &Type, registry: &TypeRegistry) -> Option<MType> {
     match ty {
         Type::Path(type_path) => {
             let last_segment = type_path.path.segments.last()?;
@@ -540,7 +731,7 @@ fn rust_type_to_ffi_type(ty: &Type) -> Option<MType> {
             if ident == "Vec" {
                 if let syn::PathArguments::AngleBracketed(args) = &last_segment.arguments
                     && let Some(syn::GenericArgument::Type(inner_ty)) = args.args.first() {
-                        let inner = rust_type_to_ffi_type(inner_ty)?;
+                        let inner = rust_type_to_ffi_type(inner_ty, registry)?;
                         return Some(MType::Vec(Box::new(inner)));
                     }
                 return None;
@@ -549,7 +740,7 @@ fn rust_type_to_ffi_type(ty: &Type) -> Option<MType> {
             if ident == "Option" {
                 if let syn::PathArguments::AngleBracketed(args) = &last_segment.arguments
                     && let Some(syn::GenericArgument::Type(inner_ty)) = args.args.first() {
-                        let inner = rust_type_to_ffi_type(inner_ty)?;
+                        let inner = rust_type_to_ffi_type(inner_ty, registry)?;
                         return Some(MType::Option(Box::new(inner)));
                     }
                 return None;
@@ -559,12 +750,12 @@ fn rust_type_to_ffi_type(ty: &Type) -> Option<MType> {
                 if let syn::PathArguments::AngleBracketed(args) = &last_segment.arguments {
                     let mut args_iter = args.args.iter();
                     if let Some(syn::GenericArgument::Type(ok_ty)) = args_iter.next() {
-                        let ok = rust_type_to_ffi_type(ok_ty)?;
+                        let ok = rust_type_to_ffi_type(ok_ty, registry)?;
                         let err = args_iter
                             .next()
                             .and_then(|arg| {
                                 if let syn::GenericArgument::Type(err_ty) = arg {
-                                    rust_type_to_ffi_type(err_ty)
+                                    rust_type_to_ffi_type(err_ty, registry)
                                 } else {
                                     None
                                 }
@@ -587,7 +778,7 @@ fn rust_type_to_ffi_type(ty: &Type) -> Option<MType> {
                 .collect::<Vec<_>>()
                 .join("::");
 
-            string_to_ffi_type(&path_str)
+            string_to_ffi_type(&path_str, registry)
         }
         Type::Reference(type_ref) => {
             if let Type::Path(inner) = &*type_ref.elem {
@@ -597,17 +788,17 @@ fn rust_type_to_ffi_type(ty: &Type) -> Option<MType> {
                 }
             }
             if let Type::Slice(slice) = &*type_ref.elem {
-                let inner = rust_type_to_ffi_type(&slice.elem)?;
+                let inner = rust_type_to_ffi_type(&slice.elem, registry)?;
                 return if type_ref.mutability.is_some() {
                     Some(MType::MutSlice(Box::new(inner)))
                 } else {
                     Some(MType::Slice(Box::new(inner)))
                 };
             }
-            rust_type_to_ffi_type(&type_ref.elem)
+            rust_type_to_ffi_type(&type_ref.elem, registry)
         }
         Type::Slice(slice) => {
-            let inner = rust_type_to_ffi_type(&slice.elem)?;
+            let inner = rust_type_to_ffi_type(&slice.elem, registry)?;
             Some(MType::Slice(Box::new(inner)))
         }
         Type::ImplTrait(impl_trait) => {
@@ -623,7 +814,7 @@ fn rust_type_to_ffi_type(ty: &Type) -> Option<MType> {
                         && let syn::PathArguments::Parenthesized(args) =
                             &trait_bound.path.segments.last()?.arguments
                         {
-                            let param_type = args.inputs.first().and_then(rust_type_to_ffi_type);
+                            let param_type = args.inputs.first().and_then(|t| rust_type_to_ffi_type(t, registry));
                             return Some(MType::Callback(Box::new(
                                 param_type.unwrap_or(MType::Void),
                             )));
@@ -643,7 +834,7 @@ fn rust_type_to_ffi_type(ty: &Type) -> Option<MType> {
     }
 }
 
-fn string_to_ffi_type(s: &str) -> Option<MType> {
+fn string_to_ffi_type(s: &str, registry: &TypeRegistry) -> Option<MType> {
     match s.trim() {
         "i8" => Some(MType::Primitive(Primitive::I8)),
         "i16" => Some(MType::Primitive(Primitive::I16)),
@@ -661,26 +852,26 @@ fn string_to_ffi_type(s: &str) -> Option<MType> {
         "String" | "str" => Some(MType::String),
         s if s.starts_with("Vec<") => {
             let inner = &s[4..s.len() - 1];
-            Some(MType::Vec(Box::new(string_to_ffi_type(inner)?)))
+            Some(MType::Vec(Box::new(string_to_ffi_type(inner, registry)?)))
         }
         s if s.starts_with("Option<") => {
             let inner = &s[7..s.len() - 1];
-            Some(MType::Option(Box::new(string_to_ffi_type(inner)?)))
+            Some(MType::Option(Box::new(string_to_ffi_type(inner, registry)?)))
         }
         s if s.starts_with("Result<") => {
             let inner = &s[7..s.len() - 1];
             let parts: Vec<&str> = inner.splitn(2, ',').map(|p| p.trim()).collect();
-            let ok = string_to_ffi_type(parts.first()?)?;
+            let ok = string_to_ffi_type(parts.first()?, registry)?;
             let err = parts
                 .get(1)
-                .and_then(|e| string_to_ffi_type(e))
+                .and_then(|e| string_to_ffi_type(e, registry))
                 .unwrap_or(MType::String);
             Some(MType::Result {
                 ok: Box::new(ok),
                 err: Box::new(err),
             })
         }
-        s => Some(MType::Record(s.to_string())),
+        s => Some(registry.classify_named_type(s)),
     }
 }
 

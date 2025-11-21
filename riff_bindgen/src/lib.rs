@@ -1,3 +1,4 @@
+pub mod build;
 pub mod cheader;
 pub mod kotlin;
 pub mod model;
@@ -57,35 +58,38 @@ mod tests {
     }
 
     #[test]
-    fn test_module_ffi_prefix() {
-        let module = create_test_module();
-        assert_eq!(module.ffi_prefix(), "riff");
+    fn test_ffi_prefix() {
+        use riff_ffi_rules::naming;
+        assert_eq!(naming::ffi_prefix(), "riff");
     }
 
     #[test]
     fn test_class_ffi_names() {
+        use riff_ffi_rules::naming;
         let module = create_test_module();
         let class = module.find_class("Sensor").unwrap();
-        let prefix = module.ffi_prefix();
 
-        assert_eq!(class.ffi_new(&prefix), "riff_sensor_new");
-        assert_eq!(class.ffi_free(&prefix), "riff_sensor_free");
+        assert_eq!(naming::class_ffi_new(&class.name), "riff_sensor_new");
+        assert_eq!(naming::class_ffi_free(&class.name), "riff_sensor_free");
     }
 
     #[test]
     fn test_method_ffi_names() {
+        use riff_ffi_rules::naming;
         let module = create_test_module();
         let class = module.find_class("Sensor").unwrap();
-        let class_prefix = class.ffi_prefix(&module.ffi_prefix());
         let method = class
             .methods
             .iter()
             .find(|m| m.name == "predict_next")
             .unwrap();
 
-        assert_eq!(method.ffi_name(&class_prefix), "riff_sensor_predict_next");
         assert_eq!(
-            method.ffi_poll(&class_prefix),
+            naming::method_ffi_name(&class.name, &method.name),
+            "riff_sensor_predict_next"
+        );
+        assert_eq!(
+            naming::method_ffi_poll(&class.name, &method.name),
             "riff_sensor_predict_next_poll"
         );
     }
@@ -127,15 +131,16 @@ mod tests {
 
     #[test]
     fn test_swift_record_generation() {
+        let module = create_test_module();
         let no_alias_record = Record::new("Point")
             .with_field(RecordField::new("x", Type::Primitive(Primitive::F64)))
             .with_field(RecordField::new("y", Type::Primitive(Primitive::F64)));
-        let output = Swift::render_record(&no_alias_record);
+        let output = Swift::render_record(&no_alias_record, &module);
+        assert!(output.contains("public typealias Point"));
         assert!(
-            output.trim().is_empty(),
+            !output.contains("extension Point"),
             "No extension needed when field names match"
         );
-
         let aliased_record = Record::new("SensorData")
             .with_field(RecordField::new(
                 "sensor_id",
@@ -145,19 +150,19 @@ mod tests {
                 "timestamp_ms",
                 Type::Primitive(Primitive::U64),
             ));
-        let output = Swift::render_record(&aliased_record);
-        assert!(output.contains("extension SensorData"));
-        assert!(output.contains("public var sensorId: Int32"));
-        assert!(output.contains("get { sensor_id }"));
-        assert!(output.contains("public var timestampMs: UInt64"));
-        assert!(output.contains("self.init(sensor_id: sensorId, timestamp_ms: timestampMs)"));
+        let output = Swift::render_record(&aliased_record, &module);
+        assert!(output.contains("public typealias SensorData"));
+        assert!(
+            !output.contains("extension SensorData"),
+            "No extension needed when C header also uses camelCase field names"
+        );
     }
 
     #[test]
     fn test_swift_enum_generation() {
         let module = create_test_module();
         let enumeration = module.find_enum("SensorStatus").unwrap();
-        let output = Swift::render_enum(enumeration);
+        let output = Swift::render_enum(enumeration, &module);
 
         assert!(output.contains("public enum SensorStatus: Int32"));
         assert!(output.contains("case idle = 0"));

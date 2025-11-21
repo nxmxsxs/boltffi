@@ -1,4 +1,5 @@
 use heck::{ToLowerCamelCase, ToUpperCamelCase};
+use riff_ffi_rules::naming;
 
 pub struct NamingConvention;
 
@@ -97,11 +98,19 @@ impl NamingConvention {
         )
     }
 
-    pub fn ffi_prefix(module_name: &str) -> String {
-        format!("riff_{}", module_name.to_lowercase())
+    pub fn ffi_prefix(_module_name: &str) -> String {
+        naming::ffi_prefix().to_string()
     }
 
-    pub fn class_ffi_prefix(module_prefix: &str, class_name: &str) -> String {
-        format!("{}_{}", module_prefix, class_name.to_lowercase())
+    pub fn class_ffi_prefix(_module_prefix: &str, class_name: &str) -> String {
+        naming::class_ffi_prefix(class_name)
+    }
+
+    pub fn module_name(crate_name: &str) -> String {
+        naming::module_name(crate_name)
+    }
+
+    pub fn ffi_module_name(crate_name: &str) -> String {
+        naming::ffi_module_name(crate_name)
     }
 }

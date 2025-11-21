@@ -1,6 +1,21 @@
 use proc_macro::TokenStream;
 use quote::quote;
+use riff_ffi_rules::naming;
 use syn::{DeriveInput, FnArg, ItemFn, Pat, ReturnType, Type, parse_macro_input};
+
+fn ptr_ident(base: &syn::Ident) -> syn::Ident {
+    syn::Ident::new(
+        &format!("{}{}", base, naming::param_ptr_suffix()),
+        base.span(),
+    )
+}
+
+fn len_ident(base: &syn::Ident) -> syn::Ident {
+    syn::Ident::new(
+        &format!("{}{}", base, naming::param_len_suffix()),
+        base.span(),
+    )
+}
 
 #[proc_macro_derive(FfiType)]
 pub fn derive_ffi_type(input: TokenStream) -> TokenStream {
@@ -154,8 +169,8 @@ fn transform_params(inputs: &syn::punctuated::Punctuated<FnArg, syn::Token![,]>)
 
             match classify_param_transform(&pat_type.ty) {
                 ParamTransform::StrRef => {
-                    let ptr_name = syn::Ident::new(&format!("{}_ptr", name), name.span());
-                    let len_name = syn::Ident::new(&format!("{}_len", name), name.span());
+                    let ptr_name = ptr_ident(&name);
+                    let len_name = len_ident(&name);
 
                     ffi_params.push(quote! { #ptr_name: *const u8 });
                     ffi_params.push(quote! { #len_name: usize });
@@ -177,8 +192,8 @@ fn transform_params(inputs: &syn::punctuated::Punctuated<FnArg, syn::Token![,]>)
                     call_args.push(quote! { #name });
                 }
                 ParamTransform::OwnedString => {
-                    let ptr_name = syn::Ident::new(&format!("{}_ptr", name), name.span());
-                    let len_name = syn::Ident::new(&format!("{}_len", name), name.span());
+                    let ptr_name = ptr_ident(&name);
+                    let len_name = len_ident(&name);
 
                     ffi_params.push(quote! { #ptr_name: *const u8 });
                     ffi_params.push(quote! { #len_name: usize });
@@ -223,8 +238,8 @@ fn transform_params(inputs: &syn::punctuated::Punctuated<FnArg, syn::Token![,]>)
                     call_args.push(quote! { #name });
                 }
                 ParamTransform::SliceRef(inner_ty) => {
-                    let ptr_name = syn::Ident::new(&format!("{}_ptr", name), name.span());
-                    let len_name = syn::Ident::new(&format!("{}_len", name), name.span());
+                    let ptr_name = ptr_ident(&name);
+                    let len_name = len_ident(&name);
 
                     ffi_params.push(quote! { #ptr_name: *const #inner_ty });
                     ffi_params.push(quote! { #len_name: usize });
@@ -240,8 +255,8 @@ fn transform_params(inputs: &syn::punctuated::Punctuated<FnArg, syn::Token![,]>)
                     call_args.push(quote! { #name });
                 }
                 ParamTransform::SliceMut(inner_ty) => {
-                    let ptr_name = syn::Ident::new(&format!("{}_ptr", name), name.span());
-                    let len_name = syn::Ident::new(&format!("{}_len", name), name.span());
+                    let ptr_name = ptr_ident(&name);
+                    let len_name = len_ident(&name);
 
                     ffi_params.push(quote! { #ptr_name: *mut #inner_ty });
                     ffi_params.push(quote! { #len_name: usize });
@@ -276,8 +291,8 @@ fn transform_params(inputs: &syn::punctuated::Punctuated<FnArg, syn::Token![,]>)
                     call_args.push(quote! { #name });
                 }
                 ParamTransform::VecParam(inner_ty) => {
-                    let ptr_name = syn::Ident::new(&format!("{}_ptr", name), name.span());
-                    let len_name = syn::Ident::new(&format!("{}_len", name), name.span());
+                    let ptr_name = ptr_ident(&name);
+                    let len_name = len_ident(&name);
 
                     ffi_params.push(quote! { #ptr_name: *const #inner_ty });
                     ffi_params.push(quote! { #len_name: usize });
@@ -334,8 +349,8 @@ fn transform_params_async(
 
             match classify_param_transform(&pat_type.ty) {
                 ParamTransform::StrRef => {
-                    let ptr_name = syn::Ident::new(&format!("{}_ptr", name), name.span());
-                    let len_name = syn::Ident::new(&format!("{}_len", name), name.span());
+                    let ptr_name = ptr_ident(&name);
+                    let len_name = len_ident(&name);
                     let owned_name = syn::Ident::new(&format!("{}_owned", name), name.span());
 
                     ffi_params.push(quote! { #ptr_name: *const u8 });
@@ -362,8 +377,8 @@ fn transform_params_async(
                     call_args.push(quote! { #name });
                 }
                 ParamTransform::OwnedString => {
-                    let ptr_name = syn::Ident::new(&format!("{}_ptr", name), name.span());
-                    let len_name = syn::Ident::new(&format!("{}_len", name), name.span());
+                    let ptr_name = ptr_ident(&name);
+                    let len_name = len_ident(&name);
 
                     ffi_params.push(quote! { #ptr_name: *const u8 });
                     ffi_params.push(quote! { #len_name: usize });
@@ -388,8 +403,8 @@ fn transform_params_async(
                     panic!("Callbacks are not supported in async functions");
                 }
                 ParamTransform::SliceRef(inner_ty) => {
-                    let ptr_name = syn::Ident::new(&format!("{}_ptr", name), name.span());
-                    let len_name = syn::Ident::new(&format!("{}_len", name), name.span());
+                    let ptr_name = ptr_ident(&name);
+                    let len_name = len_ident(&name);
                     let owned_name = syn::Ident::new(&format!("{}_vec", name), name.span());
 
                     ffi_params.push(quote! { #ptr_name: *const #inner_ty });
@@ -417,8 +432,8 @@ fn transform_params_async(
                     panic!("Box<dyn Trait> parameters are not yet supported in async functions");
                 }
                 ParamTransform::VecParam(inner_ty) => {
-                    let ptr_name = syn::Ident::new(&format!("{}_ptr", name), name.span());
-                    let len_name = syn::Ident::new(&format!("{}_len", name), name.span());
+                    let ptr_name = ptr_ident(&name);
+                    let len_name = len_ident(&name);
 
                     ffi_params.push(quote! { #ptr_name: *const #inner_ty });
                     ffi_params.push(quote! { #len_name: usize });
@@ -749,7 +764,7 @@ fn generate_async_export(input: &ItemFn) -> TokenStream {
     let fn_vis = &input.vis;
     let fn_block = &input.block;
 
-    let base_name = format!("riff_{}", fn_name);
+    let base_name = format!("{}_{}", naming::ffi_prefix(), fn_name);
     let entry_ident = syn::Ident::new(&base_name, fn_name.span());
     let poll_ident = syn::Ident::new(&format!("{}_poll", base_name), fn_name.span());
     let complete_ident = syn::Ident::new(&format!("{}_complete", base_name), fn_name.span());
@@ -852,7 +867,7 @@ pub fn ffi_export(_attr: TokenStream, item: TokenStream) -> TokenStream {
         return generate_async_export(&input);
     }
 
-    let export_name = format!("riff_{}", fn_name);
+    let export_name = format!("{}_{}", naming::ffi_prefix(), fn_name);
     let export_ident = syn::Ident::new(&export_name, fn_name.span());
 
     let FfiParams {
@@ -1100,9 +1115,9 @@ pub fn ffi_export(_attr: TokenStream, item: TokenStream) -> TokenStream {
             }
         }
         ReturnKind::Vec(inner_ty) => {
-            let len_ident = syn::Ident::new(&format!("riff_{}_len", fn_name), fn_name.span());
+            let len_ident = syn::Ident::new(&format!("{}_{}_len", naming::ffi_prefix(), fn_name), fn_name.span());
             let copy_into_ident =
-                syn::Ident::new(&format!("riff_{}_copy_into", fn_name), fn_name.span());
+                syn::Ident::new(&format!("{}_{}_copy_into", naming::ffi_prefix(), fn_name), fn_name.span());
 
             let len_body = if has_conversions {
                 quote! {
@@ -1259,9 +1274,7 @@ pub fn ffi_export(_attr: TokenStream, item: TokenStream) -> TokenStream {
     TokenStream::from(expanded)
 }
 
-fn to_snake_case(name: &str) -> String {
-    name.to_ascii_lowercase()
-}
+
 
 #[proc_macro_attribute]
 pub fn ffi_stream(_attr: TokenStream, item: TokenStream) -> TokenStream {
@@ -1286,9 +1299,9 @@ pub fn ffi_class(_attr: TokenStream, item: TokenStream) -> TokenStream {
         }
     };
 
-    let snake_name = to_snake_case(&type_name.to_string());
-    let new_ident = syn::Ident::new(&format!("riff_{}_new", snake_name), type_name.span());
-    let free_ident = syn::Ident::new(&format!("riff_{}_free", snake_name), type_name.span());
+    let type_name_str = type_name.to_string();
+    let new_ident = syn::Ident::new(&naming::class_ffi_new(&type_name_str), type_name.span());
+    let free_ident = syn::Ident::new(&naming::class_ffi_free(&type_name_str), type_name.span());
 
     let method_exports: Vec<_> = input
         .items
@@ -1302,12 +1315,12 @@ pub fn ffi_class(_attr: TokenStream, item: TokenStream) -> TokenStream {
                     if let Some(item_type) = extract_ffi_stream_item(&method.attrs) {
                         return Some(generate_stream_exports(
                             &type_name,
-                            &snake_name,
+                            &type_name_str,
                             method,
                             &item_type,
                         ));
                     }
-                    return generate_method_export(&type_name, &snake_name, method);
+                    return generate_method_export(&type_name, &type_name_str, method);
                 }
             }
             None
@@ -1349,8 +1362,8 @@ fn transform_method_params(inputs: impl Iterator<Item = syn::FnArg>) -> FfiParam
 
             match classify_param_transform(&pat_type.ty) {
                 ParamTransform::StrRef => {
-                    let ptr_name = syn::Ident::new(&format!("{}_ptr", name), name.span());
-                    let len_name = syn::Ident::new(&format!("{}_len", name), name.span());
+                    let ptr_name = ptr_ident(&name);
+                    let len_name = len_ident(&name);
 
                     ffi_params.push(quote! { #ptr_name: *const u8 });
                     ffi_params.push(quote! { #len_name: usize });
@@ -1372,8 +1385,8 @@ fn transform_method_params(inputs: impl Iterator<Item = syn::FnArg>) -> FfiParam
                     call_args.push(quote! { #name });
                 }
                 ParamTransform::OwnedString => {
-                    let ptr_name = syn::Ident::new(&format!("{}_ptr", name), name.span());
-                    let len_name = syn::Ident::new(&format!("{}_len", name), name.span());
+                    let ptr_name = ptr_ident(&name);
+                    let len_name = len_ident(&name);
 
                     ffi_params.push(quote! { #ptr_name: *const u8 });
                     ffi_params.push(quote! { #len_name: usize });
@@ -1418,8 +1431,8 @@ fn transform_method_params(inputs: impl Iterator<Item = syn::FnArg>) -> FfiParam
                     call_args.push(quote! { #name });
                 }
                 ParamTransform::SliceRef(inner_ty) => {
-                    let ptr_name = syn::Ident::new(&format!("{}_ptr", name), name.span());
-                    let len_name = syn::Ident::new(&format!("{}_len", name), name.span());
+                    let ptr_name = ptr_ident(&name);
+                    let len_name = len_ident(&name);
 
                     ffi_params.push(quote! { #ptr_name: *const #inner_ty });
                     ffi_params.push(quote! { #len_name: usize });
@@ -1435,8 +1448,8 @@ fn transform_method_params(inputs: impl Iterator<Item = syn::FnArg>) -> FfiParam
                     call_args.push(quote! { #name });
                 }
                 ParamTransform::SliceMut(inner_ty) => {
-                    let ptr_name = syn::Ident::new(&format!("{}_ptr", name), name.span());
-                    let len_name = syn::Ident::new(&format!("{}_len", name), name.span());
+                    let ptr_name = ptr_ident(&name);
+                    let len_name = len_ident(&name);
 
                     ffi_params.push(quote! { #ptr_name: *mut #inner_ty });
                     ffi_params.push(quote! { #len_name: usize });
@@ -1471,8 +1484,8 @@ fn transform_method_params(inputs: impl Iterator<Item = syn::FnArg>) -> FfiParam
                     call_args.push(quote! { #name });
                 }
                 ParamTransform::VecParam(inner_ty) => {
-                    let ptr_name = syn::Ident::new(&format!("{}_ptr", name), name.span());
-                    let len_name = syn::Ident::new(&format!("{}_len", name), name.span());
+                    let ptr_name = ptr_ident(&name);
+                    let len_name = len_ident(&name);
 
                     ffi_params.push(quote! { #ptr_name: *const #inner_ty });
                     ffi_params.push(quote! { #len_name: usize });
@@ -1505,12 +1518,12 @@ fn transform_method_params(inputs: impl Iterator<Item = syn::FnArg>) -> FfiParam
 
 fn generate_method_export(
     type_name: &syn::Ident,
-    snake_name: &str,
+    class_name: &str,
     method: &syn::ImplItemFn,
 ) -> Option<proc_macro2::TokenStream> {
     let method_name = &method.sig.ident;
     let export_name = syn::Ident::new(
-        &format!("riff_{}_{}", snake_name, method_name),
+        &naming::method_ffi_name(class_name, &method_name.to_string()),
         method_name.span(),
     );
 
@@ -1607,20 +1620,19 @@ fn extract_ffi_stream_item(attrs: &[syn::Attribute]) -> Option<syn::Type> {
 
 fn generate_stream_exports(
     type_name: &syn::Ident,
-    snake_name: &str,
+    class_name: &str,
     method: &syn::ImplItemFn,
     item_type: &syn::Type,
 ) -> proc_macro2::TokenStream {
     let method_name = &method.sig.ident;
-    let base_name = format!("riff_{}_{}", snake_name, method_name);
+    let stream_name = method_name.to_string();
 
-    let subscribe_ident = syn::Ident::new(&base_name, method_name.span());
-    let pop_batch_ident = syn::Ident::new(&format!("{}_pop_batch", base_name), method_name.span());
-    let wait_ident = syn::Ident::new(&format!("{}_wait", base_name), method_name.span());
-    let poll_ident = syn::Ident::new(&format!("{}_poll", base_name), method_name.span());
-    let unsubscribe_ident =
-        syn::Ident::new(&format!("{}_unsubscribe", base_name), method_name.span());
-    let free_ident = syn::Ident::new(&format!("{}_free", base_name), method_name.span());
+    let subscribe_ident = syn::Ident::new(&naming::stream_ffi_subscribe(class_name, &stream_name), method_name.span());
+    let pop_batch_ident = syn::Ident::new(&naming::stream_ffi_pop_batch(class_name, &stream_name), method_name.span());
+    let wait_ident = syn::Ident::new(&naming::stream_ffi_wait(class_name, &stream_name), method_name.span());
+    let poll_ident = syn::Ident::new(&naming::stream_ffi_poll(class_name, &stream_name), method_name.span());
+    let unsubscribe_ident = syn::Ident::new(&naming::stream_ffi_unsubscribe(class_name, &stream_name), method_name.span());
+    let free_ident = syn::Ident::new(&naming::stream_ffi_free(class_name, &stream_name), method_name.span());
 
     quote! {
         #[unsafe(no_mangle)]
@@ -1733,11 +1745,11 @@ fn expand_ffi_trait(item_trait: syn::ItemTrait) -> Result<proc_macro2::TokenStre
         trait_name.span(),
     );
     let register_fn = syn::Ident::new(
-        &format!("riff_register_{}_vtable", trait_name_snake),
+        &format!("{}_register_{}_vtable", naming::ffi_prefix(), trait_name_snake),
         trait_name.span(),
     );
     let create_fn = syn::Ident::new(
-        &format!("riff_create_{}", trait_name_snake),
+        &format!("{}_create_{}", naming::ffi_prefix(), trait_name_snake),
         trait_name.span(),
     );
 
@@ -2011,18 +2023,7 @@ fn expand_ffi_trait(item_trait: syn::ItemTrait) -> Result<proc_macro2::TokenStre
 }
 
 fn to_snake_case_ident(name: &str) -> syn::Ident {
-    let mut result = String::new();
-    for (i, ch) in name.chars().enumerate() {
-        if ch.is_uppercase() {
-            if i > 0 {
-                result.push('_');
-            }
-            result.push(ch.to_ascii_lowercase());
-        } else {
-            result.push(ch);
-        }
-    }
-    syn::Ident::new(&result, proc_macro2::Span::call_site())
+    syn::Ident::new(&naming::to_snake_case(name), proc_macro2::Span::call_site())
 }
 
 fn rust_type_to_ffi_param_type(ty: &syn::Type) -> proc_macro2::TokenStream {

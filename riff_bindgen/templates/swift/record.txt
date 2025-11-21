@@ -1,3 +1,4 @@
+public typealias {{ class_name }} = {{ ffi_module }}.{{ class_name }}
 {%- if has_aliases %}
 extension {{ class_name }} {
     public init({% for field in fields %}{{ field.swift_name }}: {{ field.swift_type }}{% if !loop.last %}, {% endif %}{% endfor %}) {

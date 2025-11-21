@@ -3,12 +3,167 @@ pub const FFI_PREFIX: &str = "riff";
 pub mod naming {
     use super::FFI_PREFIX;
 
-    pub fn ffi_function_name(module_prefix: &str, func_name: &str) -> String {
-        format!("{}_{}", module_prefix, func_name)
-    }
-
     pub fn ffi_prefix() -> &'static str {
         FFI_PREFIX
+    }
+
+    pub fn to_snake_case(name: &str) -> String {
+        let mut result = String::with_capacity(name.len() + 4);
+        for (i, ch) in name.chars().enumerate() {
+            if ch.is_uppercase() {
+                if i > 0 {
+                    result.push('_');
+                }
+                result.push(ch.to_ascii_lowercase());
+            } else {
+                result.push(ch);
+            }
+        }
+        result
+    }
+
+    pub fn to_upper_camel_case(name: &str) -> String {
+        let mut result = String::with_capacity(name.len());
+        let mut capitalize_next = true;
+        for ch in name.chars() {
+            if ch == '_' || ch == '-' {
+                capitalize_next = true;
+            } else if capitalize_next {
+                result.push(ch.to_ascii_uppercase());
+                capitalize_next = false;
+            } else {
+                result.push(ch);
+            }
+        }
+        result
+    }
+
+    pub fn snake_to_camel(name: &str) -> String {
+        let mut result = String::with_capacity(name.len());
+        let mut capitalize_next = false;
+        for ch in name.chars() {
+            if ch == '_' {
+                capitalize_next = true;
+            } else if capitalize_next {
+                result.push(ch.to_ascii_uppercase());
+                capitalize_next = false;
+            } else {
+                result.push(ch);
+            }
+        }
+        result
+    }
+
+    pub fn class_ffi_prefix(class_name: &str) -> String {
+        format!("{}_{}", FFI_PREFIX, to_snake_case(class_name))
+    }
+
+    pub fn class_ffi_new(class_name: &str) -> String {
+        format!("{}_new", class_ffi_prefix(class_name))
+    }
+
+    pub fn class_ffi_free(class_name: &str) -> String {
+        format!("{}_free", class_ffi_prefix(class_name))
+    }
+
+    pub fn method_ffi_name(class_name: &str, method_name: &str) -> String {
+        format!("{}_{}", class_ffi_prefix(class_name), method_name)
+    }
+
+    pub fn method_ffi_poll(class_name: &str, method_name: &str) -> String {
+        format!("{}_poll", method_ffi_name(class_name, method_name))
+    }
+
+    pub fn method_ffi_complete(class_name: &str, method_name: &str) -> String {
+        format!("{}_complete", method_ffi_name(class_name, method_name))
+    }
+
+    pub fn method_ffi_cancel(class_name: &str, method_name: &str) -> String {
+        format!("{}_cancel", method_ffi_name(class_name, method_name))
+    }
+
+    pub fn method_ffi_free(class_name: &str, method_name: &str) -> String {
+        format!("{}_free", method_ffi_name(class_name, method_name))
+    }
+
+    pub fn function_ffi_name(func_name: &str) -> String {
+        format!("{}_{}", FFI_PREFIX, func_name)
+    }
+
+    pub fn function_ffi_poll(func_name: &str) -> String {
+        format!("{}_poll", function_ffi_name(func_name))
+    }
+
+    pub fn function_ffi_complete(func_name: &str) -> String {
+        format!("{}_complete", function_ffi_name(func_name))
+    }
+
+    pub fn function_ffi_cancel(func_name: &str) -> String {
+        format!("{}_cancel", function_ffi_name(func_name))
+    }
+
+    pub fn function_ffi_free(func_name: &str) -> String {
+        format!("{}_free", function_ffi_name(func_name))
+    }
+
+    pub fn function_ffi_vec_len(func_name: &str) -> String {
+        format!("{}{}", function_ffi_name(func_name), vec_len_suffix())
+    }
+
+    pub fn function_ffi_vec_copy_into(func_name: &str) -> String {
+        format!("{}{}", function_ffi_name(func_name), vec_copy_into_suffix())
+    }
+
+    pub fn stream_ffi_subscribe(class_name: &str, stream_name: &str) -> String {
+        method_ffi_name(class_name, stream_name)
+    }
+
+    pub fn stream_ffi_pop_batch(class_name: &str, stream_name: &str) -> String {
+        format!("{}_pop_batch", method_ffi_name(class_name, stream_name))
+    }
+
+    pub fn stream_ffi_wait(class_name: &str, stream_name: &str) -> String {
+        format!("{}_wait", method_ffi_name(class_name, stream_name))
+    }
+
+    pub fn stream_ffi_poll(class_name: &str, stream_name: &str) -> String {
+        format!("{}_poll", method_ffi_name(class_name, stream_name))
+    }
+
+    pub fn stream_ffi_unsubscribe(class_name: &str, stream_name: &str) -> String {
+        format!("{}_unsubscribe", method_ffi_name(class_name, stream_name))
+    }
+
+    pub fn stream_ffi_free(class_name: &str, stream_name: &str) -> String {
+        format!("{}_free", method_ffi_name(class_name, stream_name))
+    }
+
+    pub fn trait_ffi_free(trait_name: &str) -> String {
+        format!("{}_{}_free", FFI_PREFIX, to_snake_case(trait_name))
+    }
+
+    pub fn callback_vtable_name(trait_name: &str) -> String {
+        format!("{}VTable", trait_name)
+    }
+
+    pub fn callback_foreign_name(trait_name: &str) -> String {
+        format!("Foreign{}", trait_name)
+    }
+
+    pub fn callback_register_fn(trait_name: &str) -> String {
+        format!("{}_register_{}_vtable", FFI_PREFIX, to_snake_case(trait_name))
+    }
+
+    pub fn callback_create_fn(trait_name: &str) -> String {
+        format!("{}_create_{}", FFI_PREFIX, to_snake_case(trait_name))
+    }
+
+    pub fn module_name(crate_name: &str) -> String {
+        to_upper_camel_case(crate_name)
+    }
+
+    pub fn ffi_module_name(crate_name: &str) -> String {
+        format!("{}FFI", module_name(crate_name))
     }
 
     pub fn vec_len_suffix() -> &'static str {
@@ -27,22 +182,9 @@ pub mod naming {
         "_len"
     }
 
-    pub fn snake_to_camel(name: &str) -> String {
-        let mut result = String::with_capacity(name.len());
-        let mut capitalize_next = false;
-
-        for ch in name.chars() {
-            if ch == '_' {
-                capitalize_next = true;
-            } else if capitalize_next {
-                result.push(ch.to_ascii_uppercase());
-                capitalize_next = false;
-            } else {
-                result.push(ch);
-            }
-        }
-
-        result
+    #[deprecated(note = "use function_ffi_name instead")]
+    pub fn ffi_function_name(module_prefix: &str, func_name: &str) -> String {
+        format!("{}_{}", module_prefix, func_name)
     }
 }
 

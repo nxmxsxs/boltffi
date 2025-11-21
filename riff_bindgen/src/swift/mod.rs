@@ -1,4 +1,5 @@
 mod body;
+mod conversion;
 mod names;
 mod templates;
 mod types;
@@ -8,6 +9,7 @@ use askama::Template;
 use crate::model::{CallbackTrait, Class, Enumeration, Function, Module, Record, StreamMode};
 
 pub use body::BodyRenderer;
+pub use conversion::{CallbackInfo, ParamInfo, ParamsInfo, ReturnInfo};
 pub use names::NamingConvention;
 pub use templates::{
     CStyleEnumTemplate, CallbackTraitTemplate, ClassTemplate, DataEnumTemplate, FunctionTemplate,
@@ -24,19 +26,19 @@ impl Swift {
             .expect("preamble template failed")
     }
 
-    pub fn render_record(record: &Record) -> String {
-        RecordTemplate::from_record(record)
+    pub fn render_record(record: &Record, module: &Module) -> String {
+        RecordTemplate::from_record(record, module)
             .render()
             .expect("record template failed")
     }
 
-    pub fn render_enum(enumeration: &Enumeration) -> String {
+    pub fn render_enum(enumeration: &Enumeration, module: &Module) -> String {
         if enumeration.is_c_style() {
             CStyleEnumTemplate::from_enum(enumeration)
                 .render()
                 .expect("c-style enum template failed")
         } else {
-            DataEnumTemplate::from_enum(enumeration)
+            DataEnumTemplate::from_enum(enumeration, module)
                 .render()
                 .expect("data enum template failed")
         }
@@ -93,12 +95,12 @@ impl Swift {
         module
             .records
             .iter()
-            .for_each(|r| sections.push(Self::render_record(r)));
+            .for_each(|r| sections.push(Self::render_record(r, module)));
 
         module
             .enums
             .iter()
-            .for_each(|e| sections.push(Self::render_enum(e)));
+            .for_each(|e| sections.push(Self::render_enum(e, module)));
 
         module.classes.iter().for_each(|c| {
             sections.push(Self::render_class(c, module));

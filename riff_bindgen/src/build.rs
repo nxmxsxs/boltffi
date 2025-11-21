@@ -2,7 +2,7 @@ use std::env;
 use std::fs;
 use std::path::{Path, PathBuf};
 
-use riff_bindgen::{CHeaderGenerator, scan_crate};
+use crate::{CHeaderGenerator, scan_crate};
 
 pub fn generate() {
     let crate_dir =

@@ -1,6 +1,6 @@
 use std::path::PathBuf;
 
-use riff_bindgen::{Swift, scan_crate};
+use riff_bindgen::{CHeaderGenerator, Swift, scan_crate};
 
 use crate::config::Config;
 use crate::error::{CliError, Result};
@@ -64,8 +64,30 @@ fn generate_kotlin(_config: &Config, _output: Option<PathBuf>) -> Result<()> {
     Ok(())
 }
 
-fn generate_header(_config: &Config, _output: Option<PathBuf>) -> Result<()> {
-    println!("Header generation via CLI not yet implemented");
-    println!("Use: cargo build -p riff_core (headers generated via build.rs)");
+fn generate_header(config: &Config, output: Option<PathBuf>) -> Result<()> {
+    let output_dir = output.unwrap_or_else(|| PathBuf::from("dist/include"));
+    let output_path = output_dir.join(format!("{}.h", config.library_name()));
+
+    std::fs::create_dir_all(&output_dir).map_err(|source| CliError::CreateDirectoryFailed {
+        path: output_dir.clone(),
+        source,
+    })?;
+
+    let crate_dir = PathBuf::from(".");
+    let crate_name = config.library_name();
+
+    let module = scan_crate(&crate_dir, crate_name).map_err(|e| CliError::CommandFailed {
+        command: format!("scan_crate: {}", e),
+        status: None,
+    })?;
+
+    let header_code = CHeaderGenerator::generate(&module);
+
+    std::fs::write(&output_path, header_code).map_err(|source| CliError::WriteFailed {
+        path: output_path.clone(),
+        source,
+    })?;
+
+    println!("Generated: {}", output_path.display());
     Ok(())
 }

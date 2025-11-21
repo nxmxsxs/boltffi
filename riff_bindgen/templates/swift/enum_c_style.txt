@@ -2,4 +2,10 @@ public enum {{ class_name }}: Int32 {
 {%- for variant in variants %}
     case {{ variant.swift_name }} = {{ variant.discriminant }}
 {%- endfor %}
+
+    init(fromC c: Int32) {
+        self = {{ class_name }}(rawValue: c)!
+    }
+
+    var cValue: Int32 { rawValue }
 }

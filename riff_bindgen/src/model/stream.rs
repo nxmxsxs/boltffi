@@ -35,30 +35,6 @@ impl StreamMethod {
         self
     }
 
-    pub fn ffi_subscribe(&self, class_prefix: &str) -> String {
-        format!("{}_{}", class_prefix, self.name.to_lowercase())
-    }
-
-    pub fn ffi_pop_batch(&self, class_prefix: &str) -> String {
-        format!("{}_{}_pop_batch", class_prefix, self.name.to_lowercase())
-    }
-
-    pub fn ffi_wait(&self, class_prefix: &str) -> String {
-        format!("{}_{}_wait", class_prefix, self.name.to_lowercase())
-    }
-
-    pub fn ffi_poll(&self, class_prefix: &str) -> String {
-        format!("{}_{}_poll", class_prefix, self.name.to_lowercase())
-    }
-
-    pub fn ffi_unsubscribe(&self, class_prefix: &str) -> String {
-        format!("{}_{}_unsubscribe", class_prefix, self.name.to_lowercase())
-    }
-
-    pub fn ffi_free(&self, class_prefix: &str) -> String {
-        format!("{}_{}_free", class_prefix, self.name.to_lowercase())
-    }
-
     pub fn with_doc(mut self, doc: impl Into<String>) -> Self {
         self.doc = Some(doc.into());
         self

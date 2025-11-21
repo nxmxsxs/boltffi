@@ -1,5 +1,4 @@
 use core::mem::ManuallyDrop;
-use std::ffi::CString;
 
 #[repr(C)]
 pub struct FfiString {

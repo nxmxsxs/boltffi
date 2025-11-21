@@ -28,26 +28,6 @@ impl Method {
         }
     }
 
-    pub fn ffi_name(&self, class_prefix: &str) -> String {
-        format!("{}_{}", class_prefix, self.name.to_lowercase())
-    }
-
-    pub fn ffi_poll(&self, class_prefix: &str) -> String {
-        format!("{}_poll", self.ffi_name(class_prefix))
-    }
-
-    pub fn ffi_complete(&self, class_prefix: &str) -> String {
-        format!("{}_complete", self.ffi_name(class_prefix))
-    }
-
-    pub fn ffi_cancel(&self, class_prefix: &str) -> String {
-        format!("{}_cancel", self.ffi_name(class_prefix))
-    }
-
-    pub fn ffi_free(&self, class_prefix: &str) -> String {
-        format!("{}_free", self.ffi_name(class_prefix))
-    }
-
     pub fn with_param(mut self, param: Parameter) -> Self {
         self.inputs.push(param);
         self

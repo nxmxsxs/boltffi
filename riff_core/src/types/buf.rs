@@ -1,6 +1,4 @@
 use core::mem::ManuallyDrop;
-use core::ptr;
-use std::alloc::{Layout, alloc, dealloc};
 
 #[repr(C)]
 pub struct FfiBuf<T> {
@@ -69,6 +67,30 @@ impl<T> Default for FfiBuf<T> {
             cap: 0,
         }
     }
+}
+
+macro_rules! define_ffi_buf_free {
+    ($($ty:ty => $name:ident),* $(,)?) => {
+        $(
+            #[unsafe(no_mangle)]
+            pub extern "C" fn $name(buf: FfiBuf<$ty>) {
+                drop(buf);
+            }
+        )*
+    };
+}
+
+define_ffi_buf_free! {
+    i8 => riff_free_buf_i8,
+    i16 => riff_free_buf_i16,
+    i32 => riff_free_buf_i32,
+    i64 => riff_free_buf_i64,
+    u8 => riff_free_buf_u8,
+    u16 => riff_free_buf_u16,
+    u32 => riff_free_buf_u32,
+    u64 => riff_free_buf_u64,
+    f32 => riff_free_buf_f32,
+    f64 => riff_free_buf_f64,
 }
 
 #[cfg(test)]

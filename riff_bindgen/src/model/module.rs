@@ -28,10 +28,6 @@ impl Module {
         }
     }
 
-    pub fn ffi_prefix(&self) -> String {
-        "riff".to_string()
-    }
-
     pub fn with_class(mut self, class: Class) -> Self {
         self.classes.push(class);
         self
@@ -75,5 +71,21 @@ impl Module {
         self.callback_traits
             .iter()
             .find(|callback_trait| callback_trait.name == name)
+    }
+
+    pub fn has_exports(&self) -> bool {
+        !self.classes.is_empty()
+            || !self.functions.is_empty()
+            || !self.enums.is_empty()
+            || !self.callback_traits.is_empty()
+    }
+
+    pub fn has_async(&self) -> bool {
+        self.functions.iter().any(|f| f.is_async)
+            || self.classes.iter().any(|c| c.methods.iter().any(|m| m.is_async))
+    }
+
+    pub fn has_streams(&self) -> bool {
+        self.classes.iter().any(|c| !c.streams.is_empty())
     }
 }
