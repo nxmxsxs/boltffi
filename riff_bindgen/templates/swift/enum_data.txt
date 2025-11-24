@@ -1,26 +1,26 @@
 public enum {{ class_name }} {
-{% for variant in variants %}
-{% if variant.fields.is_empty() %}
+{%- for variant in variants %}
+{%- if variant.fields.is_empty() %}
     case {{ variant.swift_name }}
-{% else if variant.is_single_tuple %}
+{%- else if variant.is_single_tuple %}
     case {{ variant.swift_name }}({{ variant.fields[0].swift_type }})
-{% else %}
+{%- else %}
     case {{ variant.swift_name }}({% for field in variant.fields %}{{ field.swift_name }}: {{ field.swift_type }}{% if !loop.last %}, {% endif %}{% endfor %})
-{% endif %}
-{% endfor %}
+{%- endif %}
+{%- endfor %}
 
     init(fromC c: {{ ffi_type }}) {
         switch c.tag {
-{% for variant in variants %}
+{%- for variant in variants %}
         case {{ variant.tag_constant }}:
-{% if variant.fields.is_empty() %}
+{%- if variant.fields.is_empty() %}
             self = .{{ variant.swift_name }}
-{% else if variant.is_single_tuple %}
+{%- else if variant.is_single_tuple %}
             self = .{{ variant.swift_name }}(c.payload.{{ variant.c_name }})
-{% else %}
+{%- else %}
             self = .{{ variant.swift_name }}({% for field in variant.fields %}{{ field.swift_name }}: c.payload.{{ variant.c_name }}.{{ field.c_name }}{% if !loop.last %}, {% endif %}{% endfor %})
-{% endif %}
-{% endfor %}
+{%- endif %}
+{%- endfor %}
         default:
             fatalError("Invalid {{ class_name }} tag: \(c.tag)")
         }
@@ -29,22 +29,22 @@ public enum {{ class_name }} {
     var cValue: {{ ffi_type }} {
         var c = {{ ffi_type }}()
         switch self {
-{% for variant in variants %}
-{% if variant.fields.is_empty() %}
+{%- for variant in variants %}
+{%- if variant.fields.is_empty() %}
         case .{{ variant.swift_name }}:
             c.tag = {{ variant.tag_constant }}
-{% else if variant.is_single_tuple %}
+{%- else if variant.is_single_tuple %}
         case let .{{ variant.swift_name }}(value):
             c.tag = {{ variant.tag_constant }}
             c.payload.{{ variant.c_name }} = value
-{% else %}
+{%- else %}
         case let .{{ variant.swift_name }}({% for field in variant.fields %}{{ field.swift_name }}{% if !loop.last %}, {% endif %}{% endfor %}):
             c.tag = {{ variant.tag_constant }}
-{% for field in variant.fields %}
+{%- for field in variant.fields %}
             c.payload.{{ variant.c_name }}.{{ field.c_name }} = {{ field.swift_name }}
-{% endfor %}
-{% endif %}
-{% endfor %}
+{%- endfor %}
+{%- endif %}
+{%- endfor %}
         }
         return c
     }

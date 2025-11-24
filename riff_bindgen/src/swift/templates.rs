@@ -115,6 +115,11 @@ pub struct FunctionTemplate {
     pub ffi_free_vec: String,
     pub ffi_vec_len: String,
     pub ffi_vec_copy_into: String,
+    pub has_wrappers: bool,
+    pub wrappers_open: String,
+    pub wrappers_close: String,
+    pub ffi_args: String,
+    pub callback_args: String,
 }
 
 impl FunctionTemplate {
@@ -128,6 +133,17 @@ impl FunctionTemplate {
             function.inputs.iter().map(|p| (p.name.as_str(), &p.param_type)),
             &func_name_pascal,
         );
+
+        let ffi_name = naming::function_ffi_name(&function.name);
+        let call_builder = super::marshal::SyncCallBuilder::new(&ffi_name, false)
+            .with_params(function.non_callback_params().map(|p| (p.name.as_str(), &p.param_type)));
+
+        let callback_args = params_info
+            .callbacks
+            .iter()
+            .map(|cb| format!("{}, {}", cb.trampoline_name, cb.ptr_name))
+            .collect::<Vec<_>>()
+            .join(", ");
 
         let ffi_prefix = naming::ffi_prefix().to_string();
 
@@ -159,7 +175,7 @@ impl FunctionTemplate {
         Self {
             prefix: ffi_prefix,
             func_name: NamingConvention::method_name(&function.name),
-            ffi_name: naming::function_ffi_name(&function.name),
+            ffi_name,
             params: params_info.params,
             return_type,
             returns_string: ret.is_string,
@@ -187,6 +203,11 @@ impl FunctionTemplate {
             ffi_free_vec,
             ffi_vec_len: naming::function_ffi_vec_len(&function.name),
             ffi_vec_copy_into: naming::function_ffi_vec_copy_into(&function.name),
+            has_wrappers: call_builder.has_wrappers(),
+            wrappers_open: call_builder.build_wrappers_open(),
+            wrappers_close: call_builder.build_wrappers_close(),
+            ffi_args: call_builder.build_ffi_args(),
+            callback_args,
         }
     }
 }
@@ -478,22 +499,28 @@ impl StreamCallbackBodyTemplate {
 #[template(path = "swift/method_sync.txt", escape = "none")]
 pub struct SyncMethodBodyTemplate {
     pub ffi_name: String,
-    pub params: Vec<super::conversion::ParamInfo>,
+    pub params: Vec<super::marshal::ParamConversion>,
     pub has_return: bool,
-    pub has_pointer_params: bool,
+    pub has_wrappers: bool,
+    pub wrappers_open: String,
+    pub wrappers_close: String,
+    pub ffi_args: String,
 }
 
 impl SyncMethodBodyTemplate {
     pub fn from_method(method: &Method, class: &Class, _module: &Module) -> Self {
-        let params_info = super::conversion::ParamsInfo::from_inputs(
-            method.non_callback_params().map(|p| (p.name.as_str(), &p.param_type)),
-            &NamingConvention::class_name(&method.name),
-        );
+        let ffi_name = naming::method_ffi_name(&class.name, &method.name);
+        let call_builder = super::marshal::SyncCallBuilder::new(&ffi_name, true)
+            .with_params(method.non_callback_params().map(|p| (p.name.as_str(), &p.param_type)));
+
         Self {
-            ffi_name: naming::method_ffi_name(&class.name, &method.name),
-            params: params_info.params,
+            ffi_name,
+            params: call_builder.params().to_vec(),
             has_return: method.output.as_ref().is_some_and(|t| !t.is_void()),
-            has_pointer_params: params_info.has_pointer_params,
+            has_wrappers: call_builder.has_wrappers(),
+            wrappers_open: call_builder.build_wrappers_open(),
+            wrappers_close: call_builder.build_wrappers_close(),
+            ffi_args: call_builder.build_ffi_args(),
         }
     }
 }
@@ -502,22 +529,44 @@ impl SyncMethodBodyTemplate {
 #[template(path = "swift/method_callback.txt", escape = "none")]
 pub struct CallbackMethodBodyTemplate {
     pub ffi_name: String,
-    pub params: Vec<super::conversion::ParamInfo>,
+    pub params: Vec<super::marshal::ParamConversion>,
     pub has_return: bool,
     pub callbacks: Vec<super::conversion::CallbackInfo>,
+    pub has_wrappers: bool,
+    pub wrappers_open: String,
+    pub wrappers_close: String,
+    pub ffi_args: String,
+    pub callback_args: String,
 }
 
 impl CallbackMethodBodyTemplate {
     pub fn from_method(method: &Method, class: &Class, _module: &Module) -> Self {
+        let ffi_name = naming::method_ffi_name(&class.name, &method.name);
+        let call_builder = super::marshal::SyncCallBuilder::new(&ffi_name, true)
+            .with_params(method.non_callback_params().map(|p| (p.name.as_str(), &p.param_type)));
+
         let params_info = super::conversion::ParamsInfo::from_inputs(
             method.inputs.iter().map(|p| (p.name.as_str(), &p.param_type)),
             &NamingConvention::class_name(&method.name),
         );
+
+        let callback_args = params_info
+            .callbacks
+            .iter()
+            .map(|cb| format!("{}, {}", cb.trampoline_name, cb.ptr_name))
+            .collect::<Vec<_>>()
+            .join(", ");
+
         Self {
-            ffi_name: naming::method_ffi_name(&class.name, &method.name),
-            params: params_info.params,
+            ffi_name,
+            params: call_builder.params().to_vec(),
             has_return: method.output.as_ref().is_some_and(|t| !t.is_void()),
             callbacks: params_info.callbacks,
+            has_wrappers: call_builder.has_wrappers(),
+            wrappers_open: call_builder.build_wrappers_open(),
+            wrappers_close: call_builder.build_wrappers_close(),
+            ffi_args: call_builder.build_ffi_args(),
+            callback_args,
         }
     }
 }
@@ -526,24 +575,32 @@ impl CallbackMethodBodyTemplate {
 #[template(path = "swift/method_throwing.txt", escape = "none")]
 pub struct ThrowingMethodBodyTemplate {
     pub ffi_name: String,
-    pub params: Vec<super::conversion::ParamInfo>,
+    pub params: Vec<super::marshal::ParamConversion>,
     pub return_type: String,
+    pub has_wrappers: bool,
+    pub wrappers_open: String,
+    pub wrappers_close: String,
+    pub ffi_args: String,
 }
 
 impl ThrowingMethodBodyTemplate {
     pub fn from_method(method: &Method, class: &Class, _module: &Module) -> Self {
-        let params_info = super::conversion::ParamsInfo::from_inputs(
-            method.inputs.iter().map(|p| (p.name.as_str(), &p.param_type)),
-            &NamingConvention::class_name(&method.name),
-        );
+        let ffi_name = naming::method_ffi_name(&class.name, &method.name);
+        let call_builder = super::marshal::SyncCallBuilder::new(&ffi_name, true)
+            .with_params(method.inputs.iter().map(|p| (p.name.as_str(), &p.param_type)));
+
         Self {
-            ffi_name: naming::method_ffi_name(&class.name, &method.name),
-            params: params_info.params,
+            ffi_name,
+            params: call_builder.params().to_vec(),
             return_type: method
                 .output
                 .as_ref()
                 .map(TypeMapper::map_type)
                 .unwrap_or_else(|| "Void".into()),
+            has_wrappers: call_builder.has_wrappers(),
+            wrappers_open: call_builder.build_wrappers_open(),
+            wrappers_close: call_builder.build_wrappers_close(),
+            ffi_args: call_builder.build_ffi_args(),
         }
     }
 }

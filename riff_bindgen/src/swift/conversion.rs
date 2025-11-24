@@ -218,18 +218,18 @@ impl ParamsInfo {
         let mut callback_index = 0;
 
         for (name, ty) in inputs {
+            let is_first = !seen_pointer;
+            let info = ParamInfo::from_param(name, ty, is_first);
+            if info.needs_wrapper() {
+                seen_pointer = true;
+            }
+            params.push(info);
+
             if matches!(ty, Type::Callback(_)) {
                 if let Some(cb) = CallbackInfo::from_param(name, ty, func_name_pascal, callback_index) {
                     callbacks.push(cb);
                     callback_index += 1;
                 }
-            } else {
-                let is_first = !seen_pointer;
-                let info = ParamInfo::from_param(name, ty, is_first);
-                if info.needs_wrapper() {
-                    seen_pointer = true;
-                }
-                params.push(info);
             }
         }
 

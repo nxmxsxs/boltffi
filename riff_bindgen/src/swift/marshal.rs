@@ -330,6 +330,137 @@ impl ReturnConversion {
     pub fn default_value(&self) -> String {
         self.swift_type.unwrap_result().default_value()
     }
+
+    pub fn convert_ffi_result(&self, expr: &str) -> String {
+        match &self.strategy {
+            ReturnStrategy::Direct => expr.into(),
+            ReturnStrategy::DirectEnum { type_name } => {
+                format!("{}(fromC: {})", type_name, expr)
+            }
+            ReturnStrategy::DirectRecord { type_name } => {
+                format!("{}(fromC: {})", type_name, expr)
+            }
+            ReturnStrategy::String => format!("stringFromFfi({})", expr),
+            ReturnStrategy::Vec { .. } => {
+                format!("Array(UnsafeBufferPointer(start: {}.ptr, count: Int({}.len)))", expr, expr)
+            }
+            ReturnStrategy::Option { inner_type } => {
+                format!("{} != 0 ? {} as {} : nil", expr, expr, inner_type)
+            }
+            ReturnStrategy::Result { inner } => {
+                let inner_conv = ReturnConversion {
+                    swift_type: self.swift_type.unwrap_result().clone(),
+                    strategy: inner.as_ref().clone(),
+                    display_type: self.display_type.clone(),
+                };
+                inner_conv.convert_ffi_result(expr)
+            }
+            ReturnStrategy::Void | ReturnStrategy::VoidChecked => String::new(),
+        }
+    }
+
+    pub fn generate_sync_return(&self, ffi_call: &str) -> SyncReturnCode {
+        match &self.strategy {
+            ReturnStrategy::Direct => SyncReturnCode {
+                declarations: vec![],
+                call_expr: format!("return {}", ffi_call),
+                post_call: vec![],
+            },
+            ReturnStrategy::DirectEnum { type_name } => SyncReturnCode {
+                declarations: vec![],
+                call_expr: format!("return {}(fromC: {})", type_name, ffi_call),
+                post_call: vec![],
+            },
+            ReturnStrategy::DirectRecord { type_name } => SyncReturnCode {
+                declarations: vec![],
+                call_expr: format!("return {}(fromC: {})", type_name, ffi_call),
+                post_call: vec![],
+            },
+            ReturnStrategy::String => {
+                let free_fn = self.free_fn().unwrap_or_default();
+                SyncReturnCode {
+                    declarations: vec![
+                        "var result = FfiString(ptr: nil, len: 0, cap: 0)".into(),
+                    ],
+                    call_expr: format!("let status = {}, &result)", ffi_call.trim_end_matches(')')),
+                    post_call: vec![
+                        format!("defer {{ {}(result) }}", free_fn),
+                        "ensureOk(status)".into(),
+                        "return stringFromFfi(result)".into(),
+                    ],
+                }
+            }
+            ReturnStrategy::Option { inner_type } => SyncReturnCode {
+                declarations: vec![
+                    format!("var outValue: {} = {}", inner_type, self.default_value()),
+                ],
+                call_expr: format!("let isSome = {}, &outValue)", ffi_call.trim_end_matches(')')),
+                post_call: vec![
+                    "return isSome != 0 ? outValue : nil".into(),
+                ],
+            },
+            ReturnStrategy::Result { .. } => SyncReturnCode {
+                declarations: vec![
+                    format!("var outValue: {} = {}", self.display_type, self.default_value()),
+                ],
+                call_expr: format!("let status = {}, &outValue)", ffi_call.trim_end_matches(')')),
+                post_call: vec![
+                    "try checkStatus(status)".into(),
+                    "return outValue".into(),
+                ],
+            },
+            ReturnStrategy::Void => SyncReturnCode {
+                declarations: vec![],
+                call_expr: ffi_call.into(),
+                post_call: vec![],
+            },
+            ReturnStrategy::VoidChecked => SyncReturnCode {
+                declarations: vec![],
+                call_expr: format!("let status = {}", ffi_call),
+                post_call: vec!["ensureOk(status)".into()],
+            },
+            ReturnStrategy::Vec { inner_type, inner_is_struct } => {
+                if *inner_is_struct {
+                    SyncReturnCode {
+                        declarations: vec![],
+                        call_expr: "// Vec of structs requires two-phase copy".into(),
+                        post_call: vec![],
+                    }
+                } else {
+                    SyncReturnCode {
+                        declarations: vec![
+                            format!("var arr = [{}](repeating: {}, count: Int(len))", inner_type, self.default_value()),
+                            "var written: UInt = 0".into(),
+                        ],
+                        call_expr: "// Vec requires ffi_vec_len + ffi_vec_copy_into".into(),
+                        post_call: vec![
+                            "ensureOk(status)".into(),
+                            "let writtenCount = min(Int(written), arr.count)".into(),
+                            "if writtenCount < arr.count { arr.removeSubrange(writtenCount..<arr.count) }".into(),
+                            "return arr".into(),
+                        ],
+                    }
+                }
+            }
+        }
+    }
+}
+
+#[derive(Debug, Clone)]
+pub struct SyncReturnCode {
+    pub declarations: Vec<String>,
+    pub call_expr: String,
+    pub post_call: Vec<String>,
+}
+
+impl SyncReturnCode {
+    pub fn declarations_str(&self) -> String {
+        self.declarations.join("\n")
+    }
+
+    pub fn post_call_str(&self) -> String {
+        self.post_call.join("\n")
+    }
 }
 
 pub struct SyncCallBuilder {

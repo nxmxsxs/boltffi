@@ -70,4 +70,22 @@ impl Function {
             .as_ref()
             .is_some_and(|output| !output.is_void())
     }
+
+    pub fn has_callbacks(&self) -> bool {
+        self.inputs
+            .iter()
+            .any(|p| matches!(p.param_type, Type::Callback(_)))
+    }
+
+    pub fn callback_params(&self) -> impl Iterator<Item = &Parameter> {
+        self.inputs
+            .iter()
+            .filter(|p| matches!(p.param_type, Type::Callback(_)))
+    }
+
+    pub fn non_callback_params(&self) -> impl Iterator<Item = &Parameter> {
+        self.inputs
+            .iter()
+            .filter(|p| !matches!(p.param_type, Type::Callback(_)))
+    }
 }

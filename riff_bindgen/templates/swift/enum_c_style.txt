@@ -3,9 +3,6 @@ public enum {{ class_name }}: Int32 {
     case {{ variant.swift_name }} = {{ variant.discriminant }}
 {%- endfor %}
 
-    init(fromC c: Int32) {
-        self = {{ class_name }}(rawValue: c)!
-    }
-
+    init(fromC c: Int32) { self = {{ class_name }}(rawValue: c)! }
     var cValue: Int32 { rawValue }
 }

@@ -11,7 +11,9 @@ use crate::model::{CallbackTrait, Class, Enumeration, Function, Module, Record, 
 
 pub use body::BodyRenderer;
 pub use conversion::{CallbackInfo, ParamInfo, ParamsInfo, ReturnInfo};
-pub use marshal::{ParamConversion, ReturnConversion, ReturnStrategy, SwiftType, SyncCallBuilder};
+pub use marshal::{
+    ParamConversion, ReturnConversion, ReturnStrategy, SwiftType, SyncCallBuilder, SyncReturnCode,
+};
 pub use names::NamingConvention;
 pub use templates::{
     CStyleEnumTemplate, CallbackTraitTemplate, ClassTemplate, DataEnumTemplate, FunctionTemplate,
@@ -122,6 +124,13 @@ impl Swift {
             .iter()
             .for_each(|f| sections.push(Self::render_function(f, module)));
 
-        sections.join("\n\n")
+        let mut output = sections
+            .into_iter()
+            .map(|s| s.trim().to_string())
+            .filter(|s| !s.is_empty())
+            .collect::<Vec<_>>()
+            .join("\n\n");
+        output.push('\n');
+        output
     }
 }
