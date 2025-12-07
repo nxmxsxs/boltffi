@@ -1,7 +1,9 @@
+mod buffer;
 mod memory;
 mod refcount;
 mod violation;
 
+pub use buffer::BufferBoundsCheck;
 pub use memory::{AllocFreeBalance, NoUseAfterFree, NoDoubleFree};
 pub use refcount::{RetainReleaseBalance, NoDoubleRelease};
 pub use violation::{Violation, ViolationKind, Severity};
@@ -35,6 +37,7 @@ impl RuleRegistry {
         registry.register(Box::new(NoDoubleFree));
         registry.register(Box::new(RetainReleaseBalance));
         registry.register(Box::new(NoDoubleRelease));
+        registry.register(Box::new(BufferBoundsCheck));
         registry
     }
 

@@ -1,4 +1,4 @@
-use crate::ir::{Statement, VerifyUnit, Expression, Literal};
+use crate::ir::{Statement, VerifyUnit, Expression, Literal, VarId};
 use crate::source::SourceSpan;
 use super::effects::{Effect, EffectTrace, Capacity};
 
@@ -77,15 +77,35 @@ impl EffectCollector {
                 );
             }
 
-            Statement::FfiCall { function_name, out_params, span, .. } => {
+            Statement::FfiCall { function_name, arguments, out_params, span, .. } => {
+                let arg_vars: Vec<VarId> = arguments.iter()
+                    .filter_map(Self::expr_to_var)
+                    .collect();
+                
                 self.trace.push(
                     Effect::FfiCall {
                         function_name: function_name.clone(),
-                        arguments: vec![],
+                        arguments: arg_vars.clone(),
                         out_params: out_params.clone(),
                     },
                     span.clone(),
                 );
+
+                if function_name.contains("copy_into") {
+                    if let Some(ptr_var) = arg_vars.first() {
+                        let capacity = arg_vars.get(2)
+                            .map(|v| Capacity::Variable(*v))
+                            .unwrap_or(Capacity::Unknown);
+                        
+                        self.trace.push(
+                            Effect::BufferWrite {
+                                pointer: *ptr_var,
+                                size: capacity,
+                            },
+                            span.clone(),
+                        );
+                    }
+                }
 
                 out_params.iter().for_each(|var| {
                     self.trace.push(
@@ -246,6 +266,13 @@ impl EffectCollector {
                 }
             }
             _ => Capacity::Unknown,
+        }
+    }
+
+    fn expr_to_var(expr: &Expression) -> Option<VarId> {
+        match expr {
+            Expression::Variable(var_id) => Some(*var_id),
+            _ => None,
         }
     }
 }
