@@ -1,5 +1,12 @@
-use riff_verify::{Reporter, VerificationResult, Verifier};
+use riff_verify::{Reporter, VerificationResult, Verifier, ViolationKind};
 use std::path::Path;
+
+fn verify_swift(source: &str) -> VerificationResult {
+    let mut verifier = Verifier::swift().expect("failed to create verifier");
+    verifier
+        .verify_source(Path::new("test.swift"), source)
+        .expect("failed to verify")
+}
 
 #[test]
 fn test_verify_generated_benchriff() {
@@ -79,4 +86,91 @@ public func echoString(value: String) -> String {
 
     let reporter = Reporter::human();
     eprintln!("{}", reporter.report(&result));
+}
+
+#[test]
+fn test_detects_memory_leak() {
+    let source = r#"
+public func leaksMemory() {
+    let ptr = UnsafeMutablePointer<Int32>.allocate(capacity: 10)
+    // No deallocate - this is a leak!
+}
+"#;
+    let result = verify_swift(source);
+    assert!(result.is_failed(), "Should detect memory leak");
+    assert!(result.error_count() > 0);
+    
+    if let VerificationResult::Failed { violations, .. } = &result {
+        assert!(violations.iter().any(|v| matches!(v.kind, ViolationKind::MemoryLeak { .. })));
+    }
+}
+
+#[test]
+fn test_detects_double_free() {
+    let source = r#"
+public func doublesFree() {
+    let ptr = UnsafeMutablePointer<Int32>.allocate(capacity: 10)
+    ptr.deallocate()
+    ptr.deallocate()
+}
+"#;
+    let result = verify_swift(source);
+    assert!(result.is_failed(), "Should detect double free");
+    
+    if let VerificationResult::Failed { violations, .. } = &result {
+        assert!(violations.iter().any(|v| matches!(v.kind, ViolationKind::DoubleFree { .. })));
+    }
+}
+
+#[test]
+fn test_detects_retain_leak() {
+    let source = r#"
+public func leaksRetain() {
+    let obj = MyObject()
+    let handle = Unmanaged.passRetained(obj).toOpaque()
+    // No release - this is a retain leak!
+}
+"#;
+    let result = verify_swift(source);
+    assert!(result.is_failed(), "Should detect retain leak");
+    
+    if let VerificationResult::Failed { violations, .. } = &result {
+        assert!(violations.iter().any(|v| matches!(v.kind, ViolationKind::RetainLeak { .. })));
+    }
+}
+
+#[test]
+fn test_detects_double_release() {
+    let source = r#"
+public func doublesRelease() {
+    let obj = MyObject()
+    let handle = Unmanaged.passRetained(obj).toOpaque()
+    Unmanaged<MyObject>.fromOpaque(handle).release()
+    Unmanaged<MyObject>.fromOpaque(handle).release()
+}
+"#;
+    let result = verify_swift(source);
+    assert!(result.is_failed(), "Should detect double release");
+    
+    if let VerificationResult::Failed { violations, .. } = &result {
+        assert!(violations.iter().any(|v| matches!(v.kind, ViolationKind::DoubleRelease { .. })));
+    }
+}
+
+#[test]
+fn test_correct_code_passes() {
+    let source = r#"
+public func correctAlloc() {
+    let ptr = UnsafeMutablePointer<Int32>.allocate(capacity: 10)
+    defer { ptr.deallocate() }
+}
+
+public func correctRetain() {
+    let obj = MyObject()
+    let handle = Unmanaged.passRetained(obj).toOpaque()
+    Unmanaged<MyObject>.fromOpaque(handle).release()
+}
+"#;
+    let result = verify_swift(source);
+    assert!(result.is_verified(), "Correct code should pass verification");
 }
