@@ -1,0 +1,17 @@
+/target
+**/*.rs.bk
+.DS_Store
+
+.vscode/
+.idea/
+debug/
+
+Cargo.lock
+
+.DS_Store
+swift_test/test_ffi
+docs
+bench_demo/rust-mobiffi/target
+bench_demo/rust-uniffi/target
+bench_demo/swift-bench/.build
+bench_demo
