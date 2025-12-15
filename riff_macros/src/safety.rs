@@ -1,7 +1,7 @@
 use proc_macro2::Span;
 use syn::spanned::Spanned;
 use syn::visit::Visit;
-use syn::{Block, Expr, ExprPath, ExprUnsafe, ItemFn, Path, Type};
+use syn::{Expr, ExprPath, ExprUnsafe, ItemFn, Path, Type};
 
 #[derive(Debug)]
 pub struct SafetyViolation {
@@ -28,7 +28,9 @@ impl ViolationKind {
             Self::UnsafeBlock => "unsafe blocks are not allowed in #[riff::export] functions",
             Self::MemForget => "mem::forget is not allowed - it can violate ownership semantics",
             Self::MemTransmute => "mem::transmute is not allowed - it can violate type safety",
-            Self::RawPointerType => "raw pointer types (*const/*mut) are not allowed - use safe references",
+            Self::RawPointerType => {
+                "raw pointer types (*const/*mut) are not allowed - use safe references"
+            }
             Self::BoxIntoRaw => "Box::into_raw is not allowed - ownership must flow through return",
             Self::BoxLeak => "Box::leak is not allowed - it creates untracked references",
             Self::VecIntoRawParts => "Vec::into_raw_parts is not allowed - use normal Vec returns",
@@ -180,12 +182,6 @@ pub fn scan_function(func: &ItemFn) -> Vec<SafetyViolation> {
     scanner.violations
 }
 
-pub fn scan_block(block: &Block) -> Vec<SafetyViolation> {
-    let mut scanner = SafetyScanner::new();
-    scanner.visit_block(block);
-    scanner.violations
-}
-
 pub fn violations_to_compile_errors(violations: &[SafetyViolation]) -> proc_macro2::TokenStream {
     violations
         .iter()
@@ -237,7 +233,11 @@ mod tests {
             }
         "#,
         );
-        assert!(violations.iter().any(|v| matches!(v.kind, ViolationKind::MemForget)));
+        assert!(
+            violations
+                .iter()
+                .any(|v| matches!(v.kind, ViolationKind::MemForget))
+        );
     }
 
     #[test]
@@ -249,7 +249,11 @@ mod tests {
             }
         "#,
         );
-        assert!(violations.iter().any(|v| matches!(v.kind, ViolationKind::RawPointerType)));
+        assert!(
+            violations
+                .iter()
+                .any(|v| matches!(v.kind, ViolationKind::RawPointerType))
+        );
     }
 
     #[test]
@@ -262,7 +266,11 @@ mod tests {
             }
         "#,
         );
-        assert!(violations.iter().any(|v| matches!(v.kind, ViolationKind::BoxIntoRaw)));
+        assert!(
+            violations
+                .iter()
+                .any(|v| matches!(v.kind, ViolationKind::BoxIntoRaw))
+        );
     }
 
     #[test]
@@ -287,6 +295,10 @@ mod tests {
             }
         "#,
         );
-        assert!(violations.iter().any(|v| matches!(v.kind, ViolationKind::ManuallyDrop)));
+        assert!(
+            violations
+                .iter()
+                .any(|v| matches!(v.kind, ViolationKind::ManuallyDrop))
+        );
     }
 }
