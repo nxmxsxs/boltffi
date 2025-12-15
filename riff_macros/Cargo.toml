@@ -8,7 +8,7 @@ authors = ["Ali A. Hilal <me@alihilal.com>"]
 proc-macro = true
 
 [dependencies]
-syn = { version = "2", features = ["full", "parsing", "printing"] }
+syn = { version = "2", features = ["full", "parsing", "printing", "visit"] }
 quote = "1"
 proc-macro2 = "1"
 riff_ffi_rules = { path = "../riff_ffi_rules" }

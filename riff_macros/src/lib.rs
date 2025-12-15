@@ -8,6 +8,7 @@ mod data;
 mod export;
 mod params;
 mod returns;
+mod safety;
 mod util;
 
 #[proc_macro_derive(FfiType)]

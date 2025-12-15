@@ -8,9 +8,16 @@ use crate::returns::{
     ReturnKind, classify_async_return, classify_return, get_complete_conversion,
     get_default_ffi_value, get_ffi_return_type, get_rust_return_type,
 };
+use crate::safety;
 
 pub fn ffi_export_impl(item: TokenStream) -> TokenStream {
     let input = syn::parse_macro_input!(item as ItemFn);
+
+    let violations = safety::scan_function(&input);
+    if !violations.is_empty() {
+        return TokenStream::from(safety::violations_to_compile_errors(&violations));
+    }
+
     let fn_name = &input.sig.ident;
     let fn_inputs = &input.sig.inputs;
     let fn_output = &input.sig.output;
