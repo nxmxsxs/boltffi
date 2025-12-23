@@ -8,12 +8,12 @@ use askama::Template;
 pub use marshal::{ParamConversion, ReturnKind};
 pub use names::NamingConvention;
 pub use templates::{
-    ClassTemplate, CStyleEnumTemplate, FunctionTemplate, PreambleTemplate, RecordTemplate,
-    SealedEnumTemplate,
+    CallbackTraitTemplate, ClassTemplate, CStyleEnumTemplate, FunctionTemplate, NativeTemplate,
+    PreambleTemplate, RecordTemplate, SealedEnumTemplate,
 };
 pub use types::TypeMapper;
 
-use crate::model::{Class, Enumeration, Function, Module, Record};
+use crate::model::{CallbackTrait, Class, Enumeration, Function, Module, Record};
 
 pub struct Kotlin;
 
@@ -42,6 +42,13 @@ impl Kotlin {
             .classes
             .iter()
             .for_each(|class| sections.push(Self::render_class(class)));
+
+        module
+            .callback_traits
+            .iter()
+            .for_each(|cb| sections.push(Self::render_callback_trait(cb, module)));
+
+        sections.push(Self::render_native(module));
 
         let mut output = sections
             .into_iter()
@@ -88,12 +95,27 @@ impl Kotlin {
             .render()
             .expect("class template failed")
     }
+
+    pub fn render_native(module: &Module) -> String {
+        NativeTemplate::from_module(module)
+            .render()
+            .expect("native template failed")
+    }
+
+    pub fn render_callback_trait(callback_trait: &CallbackTrait, module: &Module) -> String {
+        CallbackTraitTemplate::from_trait(callback_trait, module)
+            .render()
+            .expect("callback trait template failed")
+    }
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::model::{Constructor, Method, Parameter, Primitive, Receiver, RecordField, Type, Variant};
+    use crate::model::{
+        Constructor, Method, Module, Parameter, Primitive, Receiver, RecordField, TraitMethod,
+        TraitMethodParam, Type, Variant,
+    };
 
     #[test]
     fn test_kotlin_type_mapping() {
@@ -207,5 +229,58 @@ mod tests {
         assert!(output.contains("private val handle: Long"));
         assert!(output.contains("override fun close()"));
         assert!(output.contains("fun getReading()"));
+    }
+
+    #[test]
+    fn test_render_async_function() {
+        let function = Function::new("fetch_data")
+            .with_output(Type::String)
+            .make_async();
+
+        let output = Kotlin::render_function(&function);
+        assert!(output.contains("suspend fun fetchData"));
+        assert!(output.contains("suspendCancellableCoroutine"));
+        assert!(output.contains("FfiCallback"));
+    }
+
+    #[test]
+    fn test_render_callback_trait() {
+        let callback = CallbackTrait::new("data_handler")
+            .with_method(
+                TraitMethod::new("on_data")
+                    .with_param(TraitMethodParam::new("data", Type::Bytes)),
+            )
+            .with_method(TraitMethod::new("on_error").with_param(TraitMethodParam::new(
+                "code",
+                Type::Primitive(Primitive::I32),
+            )));
+
+        let module = Module::new("test");
+        let output = Kotlin::render_callback_trait(&callback, &module);
+        assert!(output.contains("interface DataHandler"));
+        assert!(output.contains("fun onData(`data`: ByteArray)"));
+        assert!(output.contains("fun onError(code: Int)"));
+        assert!(output.contains("DataHandlerBridge"));
+    }
+
+    #[test]
+    fn test_render_native() {
+        let module = Module::new("mylib")
+            .with_function(
+                Function::new("get_version").with_output(Type::Primitive(Primitive::I32)),
+            )
+            .with_class(
+                Class::new("sensor")
+                    .with_constructor(Constructor::new())
+                    .with_method(Method::new("read", Receiver::Ref)),
+            );
+
+        let output = Kotlin::render_native(&module);
+        assert!(output.contains("interface NativeLib : Library"));
+        assert!(output.contains("riff_get_version"));
+        assert!(output.contains("riff_sensor_new"));
+        assert!(output.contains("riff_sensor_free"));
+        assert!(output.contains("riff_sensor_read"));
+        assert!(output.contains("riff_cancel_async"));
     }
 }
