@@ -12,3 +12,11 @@ private fun checkStatus(code: Int) {
         throw FfiException(code, message)
     }
 }
+
+private inline fun <T> useDirectBuffer(buffer: ByteBuffer, block: (ByteBuffer) -> T): T {
+    return try {
+        block(buffer)
+    } finally {
+        Native.{{ prefix }}_free_direct_buffer(buffer)
+    }
+}

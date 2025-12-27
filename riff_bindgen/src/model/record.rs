@@ -44,6 +44,10 @@ impl Record {
         self.fields.len()
     }
 
+    pub fn is_blittable(&self) -> bool {
+        self.fields.iter().all(|field| field.field_type.is_primitive())
+    }
+
     pub fn layout(&self) -> StructLayout {
         StructLayout::from_layouts(self.fields.iter().map(|field| field.field_type.c_layout()))
     }

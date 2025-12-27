@@ -158,3 +158,10 @@ JNIEXPORT jstring JNICALL Java_{{ jni_prefix }}_Native_{{ prefix }}_1last_1error
 JNIEXPORT void JNICALL Java_{{ jni_prefix }}_Native_{{ prefix }}_1clear_1last_1error(JNIEnv *env, jclass cls) {
     {{ prefix }}_clear_last_error();
 }
+
+JNIEXPORT void JNICALL Java_{{ jni_prefix }}_Native_{{ prefix }}_1free_1direct_1buffer(JNIEnv *env, jclass cls, jobject buffer) {
+    if (buffer) {
+        void* ptr = (*env)->GetDirectBufferAddress(env, buffer);
+        if (ptr) free(ptr);
+    }
+}

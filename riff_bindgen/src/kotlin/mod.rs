@@ -11,12 +11,12 @@ pub use jni::JniGenerator;
 pub use marshal::{JniParamInfo, JniReturnKind, ParamConversion, ReturnKind};
 pub use names::NamingConvention;
 pub use templates::{
-    CStyleEnumTemplate, CallbackTraitTemplate, ClassTemplate, FunctionTemplate, NativeTemplate,
-    PreambleTemplate, RecordReaderTemplate, RecordTemplate, SealedEnumTemplate,
+    CStyleEnumTemplate, ClassTemplate, FunctionTemplate, NativeTemplate, PreambleTemplate,
+    RecordReaderTemplate, RecordTemplate, SealedEnumTemplate,
 };
 pub use types::TypeMapper;
 
-use crate::model::{CallbackTrait, Class, Enumeration, Function, Module, Record};
+use crate::model::{Class, Enumeration, Function, Module, Record, Type};
 
 pub struct Kotlin;
 
@@ -35,9 +35,12 @@ impl Kotlin {
             .iter()
             .for_each(|enumeration| sections.push(Self::render_enum(enumeration)));
 
+        let blittable_vec_records = Self::find_blittable_vec_records(module);
         module.records.iter().for_each(|record| {
             sections.push(Self::render_record(record));
-            sections.push(Self::render_record_reader(record));
+            if blittable_vec_records.contains(&record.name.as_str()) {
+                sections.push(Self::render_record_reader(record));
+            }
         });
 
         module
@@ -50,11 +53,6 @@ impl Kotlin {
             .classes
             .iter()
             .for_each(|class| sections.push(Self::render_class(class)));
-
-        module
-            .callback_traits
-            .iter()
-            .for_each(|cb| sections.push(Self::render_callback_trait(cb, module)));
 
         sections.push(Self::render_native(module));
 
@@ -122,15 +120,30 @@ impl Kotlin {
             .expect("native template failed")
     }
 
-    pub fn render_callback_trait(callback_trait: &CallbackTrait, module: &Module) -> String {
-        CallbackTraitTemplate::from_trait(callback_trait, module)
-            .render()
-            .expect("callback trait template failed")
+    fn find_blittable_vec_records(module: &Module) -> std::collections::HashSet<&str> {
+        module
+            .functions
+            .iter()
+            .filter_map(|func| {
+                if let Some(Type::Vec(inner)) = &func.output {
+                    if let Type::Record(record_name) = inner.as_ref() {
+                        let is_blittable = module
+                            .records
+                            .iter()
+                            .find(|record| &record.name == record_name)
+                            .map(|record| record.is_blittable())
+                            .unwrap_or(false);
+                        if is_blittable {
+                            return Some(record_name.as_str());
+                        }
+                    }
+                }
+                None
+            })
+            .collect()
     }
 
     fn is_supported_function(func: &Function) -> bool {
-        use crate::model::Type;
-
         if func.is_async {
             return false;
         }
@@ -149,8 +162,7 @@ impl Kotlin {
 mod tests {
     use super::*;
     use crate::model::{
-        Constructor, Method, Module, Parameter, Primitive, Receiver, RecordField, TraitMethod,
-        TraitMethodParam, Type, Variant,
+        Constructor, Method, Module, Parameter, Primitive, Receiver, RecordField, Type, Variant,
     };
 
     #[test]
@@ -276,27 +288,6 @@ mod tests {
         let output = Kotlin::render_function(&function, &module);
         assert!(output.contains("fun fetchData(): String"));
         assert!(output.contains("Native.riff_fetch_data"));
-    }
-
-    #[test]
-    fn test_render_callback_trait() {
-        let callback = CallbackTrait::new("data_handler")
-            .with_method(
-                TraitMethod::new("on_data").with_param(TraitMethodParam::new("data", Type::Bytes)),
-            )
-            .with_method(
-                TraitMethod::new("on_error").with_param(TraitMethodParam::new(
-                    "code",
-                    Type::Primitive(Primitive::I32),
-                )),
-            );
-
-        let module = Module::new("test");
-        let output = Kotlin::render_callback_trait(&callback, &module);
-        assert!(output.contains("interface DataHandler"));
-        assert!(output.contains("fun onData(`data`: ByteArray)"));
-        assert!(output.contains("fun onError(code: Int)"));
-        assert!(output.contains("DataHandlerBridge"));
     }
 
     #[test]

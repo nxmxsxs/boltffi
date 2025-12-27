@@ -2,7 +2,7 @@ use askama::Template;
 use riff_ffi_rules::naming;
 
 use super::marshal::{JniParamInfo, JniReturnKind};
-use crate::model::{Class, Function, Method, Module, Primitive, Type};
+use crate::model::{Class, Function, Method, Module, Type};
 
 #[derive(Template)]
 #[template(path = "kotlin/jni_glue.txt", escape = "none")]
@@ -12,6 +12,70 @@ pub struct JniGlueTemplate {
     pub module_name: String,
     pub functions: Vec<JniFunctionView>,
     pub classes: Vec<JniClassView>,
+}
+
+enum VecReturnKind {
+    None,
+    Primitive(PrimitiveVecInfo),
+    Record(RecordVecInfo),
+}
+
+struct PrimitiveVecInfo {
+    len_ffi: String,
+    copy_ffi: String,
+    c_type: String,
+    jni_array_type: String,
+    new_array_fn: String,
+}
+
+struct RecordVecInfo {
+    len_ffi: String,
+    copy_ffi: String,
+    struct_size: usize,
+}
+
+impl VecReturnKind {
+    fn from_output(output: &Option<Type>, func_name: &str, module: &Module) -> Self {
+        let Some(Type::Vec(inner)) = output else {
+            return Self::None;
+        };
+
+        let len_ffi = naming::function_ffi_vec_len(func_name);
+        let copy_ffi = naming::function_ffi_vec_copy_into(func_name);
+
+        match inner.as_ref() {
+            Type::Primitive(primitive) => Self::Primitive(PrimitiveVecInfo {
+                len_ffi,
+                copy_ffi,
+                c_type: primitive.c_type_name().to_string(),
+                jni_array_type: primitive.jni_array_type().to_string(),
+                new_array_fn: primitive.jni_new_array_fn().to_string(),
+            }),
+            Type::Record(record_name) => {
+                let struct_size = module
+                    .records
+                    .iter()
+                    .find(|record| &record.name == record_name)
+                    .map(|record| record.struct_size().as_usize())
+                    .unwrap_or(0);
+
+                Self::Record(RecordVecInfo {
+                    len_ffi,
+                    copy_ffi,
+                    struct_size,
+                })
+            }
+            _ => Self::None,
+        }
+    }
+
+    fn is_primitive(&self) -> bool {
+        matches!(self, Self::Primitive(_))
+    }
+
+    fn is_record(&self) -> bool {
+        matches!(self, Self::Record(_))
+    }
 }
 
 pub struct JniFunctionView {
@@ -72,8 +136,8 @@ impl JniGlueTemplate {
         let functions: Vec<JniFunctionView> = module
             .functions
             .iter()
-            .filter(|f| !f.is_async && Self::is_supported_function(f))
-            .map(|f| Self::map_function(f, &prefix, &jni_prefix, module))
+            .filter(|func| !func.is_async && Self::is_supported_function(func, module))
+            .map(|func| Self::map_function(func, &prefix, &jni_prefix, module))
             .collect();
 
         let classes: Vec<JniClassView> = module
@@ -91,20 +155,34 @@ impl JniGlueTemplate {
         }
     }
 
-    fn is_supported_function(func: &Function) -> bool {
+    fn is_supported_function(func: &Function, module: &Module) -> bool {
         let supported_output = match &func.output {
             None => true,
             Some(Type::Primitive(_)) => true,
             Some(Type::String) => true,
-            Some(Type::Vec(inner)) => matches!(inner.as_ref(), Type::Primitive(_) | Type::Record(_)),
+            Some(Type::Vec(inner)) => match inner.as_ref() {
+                Type::Primitive(_) => true,
+                Type::Record(record_name) => Self::is_record_blittable(record_name, module),
+                _ => false,
+            },
             _ => false,
         };
 
-        let supported_inputs = func.inputs.iter().all(|p| {
-            matches!(&p.param_type, Type::Primitive(_) | Type::String)
-        });
+        let supported_inputs = func
+            .inputs
+            .iter()
+            .all(|param| matches!(&param.param_type, Type::Primitive(_) | Type::String));
 
         supported_output && supported_inputs
+    }
+
+    fn is_record_blittable(record_name: &str, module: &Module) -> bool {
+        module
+            .records
+            .iter()
+            .find(|record| record.name == record_name)
+            .map(|record| record.is_blittable())
+            .unwrap_or(false)
     }
 
     fn is_supported_method(method: &Method) -> bool {
@@ -133,41 +211,12 @@ impl JniGlueTemplate {
         let params: Vec<JniParamInfo> = func
             .inputs
             .iter()
-            .map(|p| JniParamInfo::from_param(&p.name, &p.param_type))
+            .map(|param| JniParamInfo::from_param(&param.name, &param.param_type))
             .collect();
 
         let jni_return = return_kind.jni_return_type().to_string();
-        let jni_params = if params.is_empty() {
-            String::new()
-        } else {
-            format!(
-                ", {}",
-                params
-                    .iter()
-                    .map(|p| p.jni_param_decl())
-                    .collect::<Vec<_>>()
-                    .join(", ")
-            )
-        };
-
-        let (is_vec, is_vec_record, vec_len_ffi, vec_copy_ffi, vec_c_type, vec_jni_array_type, vec_new_array_fn, vec_struct_size) =
-            if let Some(Type::Vec(inner)) = &func.output {
-                let len_ffi = naming::function_ffi_vec_len(&func.name);
-                let copy_ffi = naming::function_ffi_vec_copy_into(&func.name);
-                let is_record = matches!(inner.as_ref(), Type::Record(_));
-                (
-                    true,
-                    is_record,
-                    len_ffi,
-                    copy_ffi,
-                    Self::primitive_c_type(inner),
-                    Self::primitive_jni_array_type(inner),
-                    Self::new_array_fn(inner),
-                    if is_record { Self::record_struct_size(inner, module) } else { 0 },
-                )
-            } else {
-                (false, false, String::new(), String::new(), String::new(), String::new(), String::new(), 0)
-            };
+        let jni_params = Self::format_jni_params(&params);
+        let vec_return = VecReturnKind::from_output(&func.output, &func.name, module);
 
         JniFunctionView {
             ffi_name,
@@ -176,78 +225,73 @@ impl JniGlueTemplate {
             jni_params,
             return_kind,
             params,
-            is_vec,
-            is_vec_record,
-            vec_len_ffi,
-            vec_copy_ffi,
-            vec_c_type,
-            vec_jni_array_type,
-            vec_new_array_fn,
-            vec_struct_size,
+            is_vec: vec_return.is_primitive(),
+            is_vec_record: vec_return.is_record(),
+            vec_len_ffi: Self::extract_len_ffi(&vec_return),
+            vec_copy_ffi: Self::extract_copy_ffi(&vec_return),
+            vec_c_type: Self::extract_c_type(&vec_return),
+            vec_jni_array_type: Self::extract_jni_array_type(&vec_return),
+            vec_new_array_fn: Self::extract_new_array_fn(&vec_return),
+            vec_struct_size: Self::extract_struct_size(&vec_return),
         }
     }
 
-    fn record_struct_size(inner: &Type, module: &Module) -> usize {
-        match inner {
-            Type::Record(name) => module
-                .records
-                .iter()
-                .find(|record| &record.name == name)
-                .map(|record| record.struct_size().as_usize())
-                .unwrap_or(0),
+    fn format_jni_params(params: &[JniParamInfo]) -> String {
+        if params.is_empty() {
+            String::new()
+        } else {
+            format!(
+                ", {}",
+                params
+                    .iter()
+                    .map(|param| param.jni_param_decl())
+                    .collect::<Vec<_>>()
+                    .join(", ")
+            )
+        }
+    }
+
+    fn extract_len_ffi(vec_return: &VecReturnKind) -> String {
+        match vec_return {
+            VecReturnKind::Primitive(info) => info.len_ffi.clone(),
+            VecReturnKind::Record(info) => info.len_ffi.clone(),
+            VecReturnKind::None => String::new(),
+        }
+    }
+
+    fn extract_copy_ffi(vec_return: &VecReturnKind) -> String {
+        match vec_return {
+            VecReturnKind::Primitive(info) => info.copy_ffi.clone(),
+            VecReturnKind::Record(info) => info.copy_ffi.clone(),
+            VecReturnKind::None => String::new(),
+        }
+    }
+
+    fn extract_c_type(vec_return: &VecReturnKind) -> String {
+        match vec_return {
+            VecReturnKind::Primitive(info) => info.c_type.clone(),
+            _ => String::new(),
+        }
+    }
+
+    fn extract_jni_array_type(vec_return: &VecReturnKind) -> String {
+        match vec_return {
+            VecReturnKind::Primitive(info) => info.jni_array_type.clone(),
+            _ => String::new(),
+        }
+    }
+
+    fn extract_new_array_fn(vec_return: &VecReturnKind) -> String {
+        match vec_return {
+            VecReturnKind::Primitive(info) => info.new_array_fn.clone(),
+            _ => String::new(),
+        }
+    }
+
+    fn extract_struct_size(vec_return: &VecReturnKind) -> usize {
+        match vec_return {
+            VecReturnKind::Record(info) => info.struct_size,
             _ => 0,
-        }
-    }
-
-    fn new_array_fn(ty: &Type) -> String {
-        match ty {
-            Type::Primitive(Primitive::I32) | Type::Primitive(Primitive::U32) => "NewIntArray",
-            Type::Primitive(Primitive::I64) | Type::Primitive(Primitive::U64) | Type::Primitive(Primitive::Usize) | Type::Primitive(Primitive::Isize) => "NewLongArray",
-            Type::Primitive(Primitive::F32) => "NewFloatArray",
-            Type::Primitive(Primitive::F64) => "NewDoubleArray",
-            Type::Primitive(Primitive::I8) | Type::Primitive(Primitive::U8) => "NewByteArray",
-            Type::Primitive(Primitive::I16) | Type::Primitive(Primitive::U16) => "NewShortArray",
-            Type::Primitive(Primitive::Bool) => "NewBooleanArray",
-            _ => "NewLongArray",
-        }.to_string()
-    }
-
-    fn primitive_c_type(ty: &Type) -> String {
-        match ty {
-            Type::Primitive(p) => match p {
-                crate::model::Primitive::I8 => "int8_t",
-                crate::model::Primitive::U8 => "uint8_t",
-                crate::model::Primitive::I16 => "int16_t",
-                crate::model::Primitive::U16 => "uint16_t",
-                crate::model::Primitive::I32 => "int32_t",
-                crate::model::Primitive::U32 => "uint32_t",
-                crate::model::Primitive::I64 => "int64_t",
-                crate::model::Primitive::U64 => "uint64_t",
-                crate::model::Primitive::Isize => "intptr_t",
-                crate::model::Primitive::Usize => "uintptr_t",
-                crate::model::Primitive::F32 => "float",
-                crate::model::Primitive::F64 => "double",
-                crate::model::Primitive::Bool => "bool",
-            }
-            .to_string(),
-            _ => "void*".to_string(),
-        }
-    }
-
-    fn primitive_jni_array_type(ty: &Type) -> String {
-        match ty {
-            Type::Primitive(p) => match p {
-                crate::model::Primitive::I8 | crate::model::Primitive::U8 => "jbyteArray",
-                crate::model::Primitive::I16 | crate::model::Primitive::U16 => "jshortArray",
-                crate::model::Primitive::I32 | crate::model::Primitive::U32 => "jintArray",
-                crate::model::Primitive::I64 | crate::model::Primitive::U64
-                | crate::model::Primitive::Isize | crate::model::Primitive::Usize => "jlongArray",
-                crate::model::Primitive::F32 => "jfloatArray",
-                crate::model::Primitive::F64 => "jdoubleArray",
-                crate::model::Primitive::Bool => "jbooleanArray",
-            }
-            .to_string(),
-            _ => "jlongArray".to_string(),
         }
     }
 
