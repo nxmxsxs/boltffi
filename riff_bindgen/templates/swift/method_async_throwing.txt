@@ -10,7 +10,7 @@ return try await withTaskCancellationHandler {
                     var status = FfiStatus()
                     let result = {{ ffi_complete }}(futureHandle, &status)
                     if status.code != 0 {
-                        cont.resume(throwing: FfiError(status: status))
+                        cont.resume(throwing: FfiError(message: "ffi call failed"))
                     } else {
                         cont.resume(returning: result)
                     }
