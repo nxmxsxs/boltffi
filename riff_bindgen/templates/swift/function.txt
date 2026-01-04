@@ -1,3 +1,15 @@
+{%- macro async_resume_throwing_decoded(err) -%}
+{%- if err.is_string_error -%}
+                                continuation.resume(throwing: FfiError(fromC: outErr))
+{%- else -%}
+                                continuation.resume(throwing: {{ err.swift_type }}(fromC: outErr))
+{%- endif -%}
+{%- endmacro -%}
+
+{%- macro async_resume_throwing_status() -%}
+                                continuation.resume(throwing: FfiError(message: "ffi call failed"))
+{%- endmacro -%}
+
 public func {{ func_name }}({% for param in params %}{% if param.is_mut_slice %}{{ param.swift_name }}: inout {{ param.swift_type }}{% else %}{{ param.swift_name }}: {{ param.swift_type }}{% endif %}{% if !loop.last %}, {% endif %}{% endfor %}{% if params.len() > 0 && callbacks.len() > 0 %}, {% endif %}{% for cb in callbacks %}{{ cb.param_name }}: @escaping ({{ cb.swift_type }}) -> Void{% if !loop.last %}, {% endif %}{% endfor %}){% if is_async %} async throws{% else if throws %} throws{% endif %}{% if let Some(ret) = return_type %} -> {{ ret }}{% endif %} {
 {%- if is_async %}
 {#- ASYNC FUNCTION #}
@@ -39,14 +51,15 @@ public func {{ func_name }}({% for param in params %}{% if param.is_mut_slice %}
                         if case .alreadyFinished = decision { return }
                         var status = FfiStatus()
 {%- if return_kind.is_result() && return_kind.result_ok_is_vec() %}
-                        let buf = {{ ffi_complete }}(ctx.handle, &status)
+{%- match structured_error %}{%- when Some with (err) %}
+                        var outErr = {{ err.ffi_type }}()
+                        let buf = {{ ffi_complete }}(ctx.handle, &status, &outErr)
                         {{ ffi_free }}(ctx.handle)
                         switch decision {
                         case .finishWithContinuation(let continuation):
                             if status.code != 0 {
                                 {{ ffi_free_vec }}(buf)
-                                let message = lastErrorMessage() ?? ""
-                                continuation.resume(throwing: FfiError(status: status, message: message))
+                                {% call async_resume_throwing_decoded(err) %}
                             } else {
                                 let arr = Array(UnsafeBufferPointer(start: buf.ptr, count: Int(buf.len)))
                                 {{ ffi_free_vec }}(buf)
@@ -57,14 +70,16 @@ public func {{ func_name }}({% for param in params %}{% if param.is_mut_slice %}
                         case .alreadyFinished:
                             break
                         }
+{%- when None %}{% endmatch %}
 {%- else if return_kind.is_result() %}
-                        let result = {{ ffi_complete }}(ctx.handle, &status)
+{%- match structured_error %}{%- when Some with (err) %}
+                        var outErr = {{ err.ffi_type }}()
+                        let result = {{ ffi_complete }}(ctx.handle, &status, &outErr)
                         {{ ffi_free }}(ctx.handle)
                         switch decision {
                         case .finishWithContinuation(let continuation):
                             if status.code != 0 {
-                                let message = lastErrorMessage() ?? ""
-                                continuation.resume(throwing: FfiError(status: status, message: message))
+                                {% call async_resume_throwing_decoded(err) %}
                             } else {
                                 continuation.resume(returning: result)
                             }
@@ -73,6 +88,7 @@ public func {{ func_name }}({% for param in params %}{% if param.is_mut_slice %}
                         case .alreadyFinished:
                             break
                         }
+{%- when None %}{% endmatch %}
 {%- else if return_kind.is_string() %}
                         let ffiStr = {{ ffi_complete }}(ctx.handle, &status)
                         {{ ffi_free }}(ctx.handle)
@@ -80,8 +96,7 @@ public func {{ func_name }}({% for param in params %}{% if param.is_mut_slice %}
                         switch decision {
                         case .finishWithContinuation(let continuation):
                             if status.code != 0 {
-                                let message = lastErrorMessage() ?? ""
-                                continuation.resume(throwing: FfiError(status: status, message: message))
+                                {% call async_resume_throwing_status() %}
                             } else {
                                 let str = stringFromFfi(ffiStr)
                                 continuation.resume(returning: str)
@@ -98,8 +113,7 @@ public func {{ func_name }}({% for param in params %}{% if param.is_mut_slice %}
                         case .finishWithContinuation(let continuation):
                             if status.code != 0 {
                                 {{ ffi_free_vec }}(buf)
-                                let message = lastErrorMessage() ?? ""
-                                continuation.resume(throwing: FfiError(status: status, message: message))
+                                {% call async_resume_throwing_status() %}
                             } else {
                                 let arr = Array(UnsafeBufferPointer(start: buf.ptr, count: Int(buf.len)))
                                 {{ ffi_free_vec }}(buf)
@@ -116,8 +130,7 @@ public func {{ func_name }}({% for param in params %}{% if param.is_mut_slice %}
                         switch decision {
                         case .finishWithContinuation(let continuation):
                             if status.code != 0 {
-                                let message = lastErrorMessage() ?? ""
-                                continuation.resume(throwing: FfiError(status: status, message: message))
+                                {% call async_resume_throwing_status() %}
                             } else {
                                 continuation.resume(returning: opt.isSome ? opt.value : nil)
                             }
@@ -132,8 +145,7 @@ public func {{ func_name }}({% for param in params %}{% if param.is_mut_slice %}
                         switch decision {
                         case .finishWithContinuation(let continuation):
                             if status.code != 0 {
-                                let message = lastErrorMessage() ?? ""
-                                continuation.resume(throwing: FfiError(status: status, message: message))
+                                {% call async_resume_throwing_status() %}
                             } else {
                                 continuation.resume(returning: result)
                             }
@@ -148,8 +160,7 @@ public func {{ func_name }}({% for param in params %}{% if param.is_mut_slice %}
                         switch decision {
                         case .finishWithContinuation(let continuation):
                             if status.code != 0 {
-                                let message = lastErrorMessage() ?? ""
-                                continuation.resume(throwing: FfiError(status: status, message: message))
+                                {% call async_resume_throwing_status() %}
                             } else {
                                 continuation.resume(returning: ())
                             }
@@ -201,13 +212,39 @@ public func {{ func_name }}({% for param in params %}{% if param.is_mut_slice %}
 {%- endfor %}
 {%- endif %}
 {%- if has_wrappers %}
-    {% if return_type.is_some() %}return {% endif %}{{ wrappers_open }}
+    {% if return_type.is_some() %}return {% endif %}{% if throws %}try {% endif %}{{ wrappers_open }}
 {%- endif %}
 {%- if return_kind.is_result() %}
-    var outValue: {% match return_type %}{% when Some with (ret) %}{{ ret }}{% when None %}Void{% endmatch %} = {% match return_type %}{% when Some with (ret) %}0{% when None %}(){% endmatch %}
-    let status = {{ ffi_name }}({{ ffi_args }}{% if !ffi_args.is_empty() %}, {% endif %}&outValue)
-    try checkStatus(status)
+{%- match structured_error %}{%- when Some with (err) %}
+    var outErr = {{ err.ffi_type }}()
+{%- if let Some(ffi_ok) = result_ok_ffi_type %}
+    var outValue = {{ ffi_ok }}()
+    let status = {{ ffi_name }}({{ ffi_args }}{% if !ffi_args.is_empty() %}, {% endif %}&outValue, &outErr)
+{%- else %}
+    let status = {{ ffi_name }}({{ ffi_args }}{% if !ffi_args.is_empty() %}, {% endif %}&outErr)
+{%- endif %}
+    if status.code != 0 {
+{%- if err.is_string_error %}
+        throw FfiError(fromC: outErr)
+{%- else %}
+        throw {{ err.swift_type }}(fromC: outErr)
+{%- endif %}
+    }
+{%- match return_type %}{% when Some with (ret) %}
+{%- if let Some(ffi_ok) = result_ok_ffi_type %}
+{%- if ffi_ok == ret %}
     return outValue
+{%- else if ffi_ok == "Int32" %}
+    return {{ ret }}(fromC: outValue)
+{%- else if ffi_ok.ends_with("FfiString") %}
+    defer { {{ prefix }}_free_string(outValue) }
+    return stringFromFfi(outValue)
+{%- else %}
+    return {{ ret }}(fromC: outValue)
+{%- endif %}
+{%- endif %}
+{% when None %}{% endmatch %}
+{%- when None %}{% endmatch %}
 {%- else if return_kind.is_string() %}
     let status = {{ ffi_name }}({{ ffi_args }}{% if !ffi_args.is_empty() && !callback_args.is_empty() %}, {% endif %}{{ callback_args }}{% if !ffi_args.is_empty() || !callback_args.is_empty() %}, {% endif %}&result)
     defer { {{ prefix }}_free_string(result) }

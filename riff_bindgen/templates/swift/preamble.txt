@@ -4,9 +4,13 @@ import {{ ffi_module_name }}
 {%- endif %}
 
 public struct FfiError: Error {
-    public let status: FfiStatus
     public let message: String
-    public init(status: FfiStatus, message: String = "") { self.status = status; self.message = message }
+    public init(message: String) { self.message = message }
+{%- if let Some(ffi_module) = ffi_module_name %}
+    public init(fromC c: {{ ffi_module }}.FfiError) {
+        self.message = stringFromFfi(c.message)
+    }
+{%- endif %}
 }
 
 private enum StreamPollResult: Int8 {
@@ -21,27 +25,16 @@ private func stringFromFfi(_ ffiString: FfiString) -> String {
 }
 
 @inline(__always)
-private func lastErrorMessage() -> String? {
-    var errorString = FfiString(ptr: nil, len: 0, cap: 0)
-    let status = {{ prefix }}_last_error_message(&errorString)
-    defer { {{ prefix }}_free_string(errorString); {{ prefix }}_clear_last_error() }
-    guard status.code == 0 else { return nil }
-    return stringFromFfi(errorString)
-}
-
-@inline(__always)
 private func checkStatus(_ status: FfiStatus, context: StaticString = #function) throws {
     guard status.code == 0 else {
-        let message = lastErrorMessage() ?? ""
-        throw FfiError(status: status, message: message.isEmpty ? "FFI failed in \(context)" : message)
+        throw FfiError(message: "FFI failed in \(context) with code \(status.code)")
     }
 }
 
 @inline(__always)
 private func ensureOk(_ status: FfiStatus, context: StaticString = #function) {
     guard status.code == 0 else {
-        let message = lastErrorMessage() ?? ""
-        fatalError(message.isEmpty ? "FFI failed in \(context) [\(status.code)]" : message)
+        fatalError("FFI failed in \(context) [\(status.code)]")
     }
 }
 

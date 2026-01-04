@@ -1,4 +1,4 @@
-public enum {{ class_name }}: Int32 {
+public enum {{ class_name }}: Int32{% if is_error %}, Error{% endif %} {
 {%- for variant in variants %}
     case {{ variant.swift_name }} = {{ variant.discriminant }}
 {%- endfor %}

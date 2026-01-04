@@ -82,6 +82,12 @@ impl RecordTemplate {
     }
 }
 
+pub struct StructuredError {
+    pub swift_type: String,
+    pub ffi_type: String,
+    pub is_string_error: bool,
+}
+
 #[derive(Template)]
 #[template(path = "swift/function.txt", escape = "none")]
 pub struct FunctionTemplate {
@@ -91,6 +97,8 @@ pub struct FunctionTemplate {
     pub params: Vec<super::conversion::ParamInfo>,
     pub return_type: Option<String>,
     pub return_kind: super::marshal::ReturnKind,
+    pub structured_error: Option<StructuredError>,
+    pub result_ok_ffi_type: Option<String>,
     pub is_async: bool,
     pub throws: bool,
     pub has_callbacks: bool,
@@ -108,7 +116,7 @@ pub struct FunctionTemplate {
 }
 
 impl FunctionTemplate {
-    pub fn from_function(function: &Function, _module: &Module) -> Self {
+    pub fn from_function(function: &Function, module: &Module) -> Self {
         use super::conversion::{ParamsInfo, ReturnInfo};
         use crate::model::Type;
 
@@ -166,6 +174,9 @@ impl FunctionTemplate {
         let return_kind =
             super::marshal::ReturnKind::from_function(function.output.as_ref(), &function.name);
 
+        let structured_error = Self::extract_structured_error(&function.output, module);
+        let result_ok_ffi_type = Self::extract_result_ok_ffi_type(&function.output, module);
+
         Self {
             prefix: ffi_prefix,
             func_name: NamingConvention::method_name(&function.name),
@@ -173,6 +184,8 @@ impl FunctionTemplate {
             params: params_info.params,
             return_type,
             return_kind,
+            structured_error,
+            result_ok_ffi_type,
             is_async: function.is_async,
             throws: function.throws() || ret.is_result,
             has_callbacks: params_info.has_callbacks,
@@ -189,6 +202,61 @@ impl FunctionTemplate {
             callback_args,
         }
     }
+
+    fn extract_structured_error(
+        output: &Option<crate::model::Type>,
+        module: &Module,
+    ) -> Option<StructuredError> {
+        use crate::model::Type;
+        let Type::Result { err, .. } = output.as_ref()? else {
+            return None;
+        };
+        let ffi_module = NamingConvention::ffi_module_name(&module.name);
+        match err.as_ref() {
+            Type::Enum(err_name) => {
+                let enum_def = module.enums.iter().find(|e| &e.name == err_name)?;
+                if !enum_def.is_error {
+                    return None;
+                }
+                Some(StructuredError {
+                    swift_type: NamingConvention::class_name(err_name),
+                    ffi_type: format!("{}.{}", ffi_module, err_name),
+                    is_string_error: false,
+                })
+            }
+            Type::String => Some(StructuredError {
+                swift_type: "FfiError".to_string(),
+                ffi_type: format!("{}.FfiError", ffi_module),
+                is_string_error: true,
+            }),
+            _ => None,
+        }
+    }
+
+    fn extract_result_ok_ffi_type(
+        output: &Option<crate::model::Type>,
+        module: &Module,
+    ) -> Option<String> {
+        use crate::model::Type;
+        let Type::Result { ok, .. } = output.as_ref()? else {
+            return None;
+        };
+        let ffi_module = NamingConvention::ffi_module_name(&module.name);
+        match ok.as_ref() {
+            Type::Void => None,
+            Type::String => Some(format!("{}.FfiString", ffi_module)),
+            Type::Record(name) => Some(NamingConvention::class_name(name)),
+            Type::Enum(name) => {
+                let enum_def = module.enums.iter().find(|e| &e.name == name);
+                if enum_def.map(|e| e.is_data_enum()).unwrap_or(false) {
+                    Some(format!("{}.{}", ffi_module, name))
+                } else {
+                    Some("Int32".to_string())
+                }
+            }
+            _ => Some(TypeMapper::map_type(ok)),
+        }
+    }
 }
 
 #[derive(Template)]
@@ -196,6 +264,7 @@ impl FunctionTemplate {
 pub struct CStyleEnumTemplate {
     pub class_name: String,
     pub variants: Vec<CStyleVariantView>,
+    pub is_error: bool,
 }
 
 impl CStyleEnumTemplate {
@@ -211,6 +280,7 @@ impl CStyleEnumTemplate {
                     discriminant: variant.discriminant.unwrap_or(index as i64),
                 })
                 .collect(),
+            is_error: enumeration.is_error,
         }
     }
 }
@@ -221,6 +291,7 @@ pub struct DataEnumTemplate {
     pub class_name: String,
     pub ffi_type: String,
     pub variants: Vec<DataVariantView>,
+    pub is_error: bool,
 }
 
 impl DataEnumTemplate {
@@ -229,6 +300,7 @@ impl DataEnumTemplate {
         Self {
             class_name: NamingConvention::class_name(&enumeration.name),
             ffi_type: format!("{}.{}", ffi_module, enumeration.name),
+            is_error: enumeration.is_error,
             variants: enumeration
                 .variants
                 .iter()

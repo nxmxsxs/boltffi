@@ -1,4 +1,4 @@
-public enum {{ class_name }} {
+public enum {{ class_name }}{% if is_error %}: Error{% endif %} {
 {%- for variant in variants %}
 {%- if variant.fields.is_empty() %}
     case {{ variant.swift_name }}
