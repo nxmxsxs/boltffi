@@ -5,54 +5,53 @@
 {%- when None %}{% endmatch %}
 interface {{ interface_name }} {
 {%- for method in methods %}
-    fun {{ method.name }}({% for param in method.params %}{{ param.name }}: {{ param.kotlin_type }}{% if !loop.last %}, {% endif %}{% endfor %}){% match method.return_type %}{% when Some with (ret) %}: {{ ret }}{% when None %}{% endmatch %}
+{%- if method.is_async %}
+    suspend fun {{ method.name }}({% for param in method.params %}{{ param.name }}: {{ param.kotlin_type }}{% if !loop.last %}, {% endif %}{% endfor %}){% match method.return_info %}{% when Some with (ret) %}: {{ ret.kotlin_type }}{% when None %}{% endmatch %}
+{%- else %}
+    fun {{ method.name }}({% for param in method.params %}{{ param.name }}: {{ param.kotlin_type }}{% if !loop.last %}, {% endif %}{% endfor %}){% match method.return_info %}{% when Some with (ret) %}: {{ ret.kotlin_type }}{% when None %}{% endmatch %}
+{%- endif %}
 {%- endfor %}
 }
 
-private class {{ wrapper_class }}(private val impl: {{ interface_name }}) {
-    val handle: Long = nextHandle.getAndIncrement()
+private object {{ handle_map_name }} {
+    private val map = java.util.concurrent.ConcurrentHashMap<Long, {{ interface_name }}>()
+    private val counter = java.util.concurrent.atomic.AtomicLong(1L)
 
-    companion object {
-        private val nextHandle = java.util.concurrent.atomic.AtomicLong(1L)
-        private val instances = java.util.concurrent.ConcurrentHashMap<Long, {{ wrapper_class }}>()
-
-        fun register(wrapper: {{ wrapper_class }}) {
-            instances[wrapper.handle] = wrapper
-        }
-
-        fun get(handle: Long): {{ wrapper_class }}? = instances[handle]
-
-        fun unregister(handle: Long) {
-            instances.remove(handle)
-        }
-    }
-}
-
-private interface {{ vtable_type }} {
-    fun free(handle: Long)
-    fun clone(handle: Long): Long
-{%- for method in methods %}
-    fun {{ method.ffi_name }}(handle: Long{% for param in method.params %}, {{ param.ffi_name }}: {{ param.jni_type }}{% endfor %}): {{ method.return_jni_type }}
-{%- endfor %}
-}
-
-private val {{ vtable_var }} = object : {{ vtable_type }} {
-    override fun free(handle: Long) {
-        {{ wrapper_class }}.unregister(handle)
-    }
-
-    override fun clone(handle: Long): Long {
+    fun insert(obj: {{ interface_name }}): Long {
+        val handle = counter.getAndAdd(2L)
+        map[handle] = obj
         return handle
     }
-{%- for method in methods %}
 
-    override fun {{ method.ffi_name }}(handle: Long{% for param in method.params %}, {{ param.ffi_name }}: {{ param.jni_type }}{% endfor %}): {{ method.return_jni_type }} {
-        val wrapper = {{ wrapper_class }}.get(handle) ?: return {% if method.has_return %}0{% else %}1{% endif %}
-        {% if method.has_return %}return {% endif %}wrapper.impl.{{ method.name }}({% for param in method.params %}{{ param.conversion }}{% if !loop.last %}, {% endif %}{% endfor %})
-{%- if !method.has_return %}
-        return 0
-{%- endif %}
+    fun get(handle: Long): {{ interface_name }}? = map[handle]
+
+    fun remove(handle: Long): {{ interface_name }}? = map.remove(handle)
+
+    fun clone(handle: Long): Long {
+        val obj = map[handle] ?: return 0L
+        return insert(obj)
     }
+}
+
+object {{ callbacks_object }} {
+    @JvmStatic
+    fun free(handle: Long) {
+        {{ handle_map_name }}.remove(handle)
+    }
+
+    @JvmStatic
+    fun clone(handle: Long): Long {
+        return {{ handle_map_name }}.clone(handle)
+    }
+{%- for method in methods %}
+{%- if !method.is_async %}
+
+    @JvmStatic
+    fun {{ method.ffi_name }}(handle: Long{% for param in method.params %}, {{ param.ffi_name }}: {{ param.jni_type }}{% endfor %}){% match method.return_info %}{% when Some with (ret) %}: {{ ret.jni_type }}{% when None %}{% endmatch %} {
+        val impl = {{ handle_map_name }}.get(handle) ?: {% match method.return_info %}{% when Some with (ret) %}return {{ ret.default_value }}{% when None %}return{% endmatch %}
+        {% match method.return_info %}{% when Some with (ret) %}return impl.{{ method.name }}({% for param in method.params %}{{ param.conversion }}{% if !loop.last %}, {% endif %}{% endfor %}){{ ret.to_jni }}{% when None %}impl.{{ method.name }}({% for param in method.params %}{{ param.conversion }}{% if !loop.last %}, {% endif %}{% endfor %}){% endmatch %}
+    }
+{%- endif %}
 {%- endfor %}
 }
 
@@ -65,8 +64,6 @@ object {{ bridge_name }} {
 
     fun create(impl: {{ interface_name }}): Long {
         register()
-        val wrapper = {{ wrapper_class }}(impl)
-        {{ wrapper_class }}.register(wrapper)
-        return wrapper.handle
+        return {{ handle_map_name }}.insert(impl)
     }
 }

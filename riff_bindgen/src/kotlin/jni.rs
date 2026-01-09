@@ -3,7 +3,7 @@ use riff_ffi_rules::naming;
 
 use super::marshal::{JniParamInfo, JniReturnKind, OptionView, ResultView};
 use super::{NamingConvention, TypeMapper};
-use crate::model::{Class, DataEnumLayout, Function, Method, Module, Type};
+use crate::model::{CallbackTrait, Class, DataEnumLayout, Function, Method, Module, Type};
 
 #[derive(Template)]
 #[template(path = "kotlin/jni_glue.txt", escape = "none")]
@@ -17,6 +17,33 @@ pub struct JniGlueTemplate {
     pub functions: Vec<JniFunctionView>,
     pub async_functions: Vec<JniAsyncFunctionView>,
     pub classes: Vec<JniClassView>,
+    pub callback_traits: Vec<JniCallbackTraitView>,
+}
+
+pub struct JniCallbackTraitView {
+    pub trait_name: String,
+    pub vtable_type: String,
+    pub register_fn: String,
+    pub callbacks_class: String,
+    pub methods: Vec<JniCallbackMethodView>,
+}
+
+pub struct JniCallbackMethodView {
+    pub ffi_name: String,
+    pub jni_method_name: String,
+    pub jni_signature: String,
+    pub jni_return_type: String,
+    pub jni_call_type: String,
+    pub c_return_type: String,
+    pub has_return: bool,
+    pub params: Vec<JniCallbackParamView>,
+}
+
+pub struct JniCallbackParamView {
+    pub ffi_name: String,
+    pub c_type: String,
+    pub jni_type: String,
+    pub jni_arg: String,
 }
 
 pub struct JniAsyncFunctionView {
@@ -299,8 +326,16 @@ impl JniGlueTemplate {
             .map(|c| Self::map_class(c, &prefix, &jni_prefix, module))
             .collect();
 
+        let callback_traits: Vec<JniCallbackTraitView> = module
+            .callback_traits
+            .iter()
+            .filter(|t| t.sync_methods().count() > 0)
+            .map(|t| Self::map_callback_trait(t, &package_path))
+            .collect();
+
         let has_async = !async_functions.is_empty()
-            || classes.iter().any(|c| !c.async_methods.is_empty());
+            || classes.iter().any(|c| !c.async_methods.is_empty())
+            || !callback_traits.is_empty();
 
         let class_name = NamingConvention::class_name(&module.name);
 
@@ -314,6 +349,208 @@ impl JniGlueTemplate {
             functions,
             async_functions,
             classes,
+            callback_traits,
+        }
+    }
+
+    fn map_callback_trait(
+        callback_trait: &CallbackTrait,
+        package_path: &str,
+    ) -> JniCallbackTraitView {
+        let trait_name = NamingConvention::class_name(&callback_trait.name);
+        let callbacks_class = format!("{}Callbacks", trait_name);
+
+        let methods: Vec<JniCallbackMethodView> = callback_trait
+            .sync_methods()
+            .filter(|method| Self::is_supported_callback_method(method))
+            .map(|method| {
+                let ffi_name = naming::to_snake_case(&method.name);
+                let has_return = method.has_return();
+
+                let (jni_return_type, jni_call_type, c_return_type) = method
+                    .output
+                    .as_ref()
+                    .map(|ty| {
+                        (
+                            Self::jni_call_return_type(ty),
+                            Self::jni_call_method_suffix(ty),
+                            Self::c_type_for_callback(ty),
+                        )
+                    })
+                    .unwrap_or(("void".to_string(), "Void".to_string(), "void".to_string()));
+
+                let params: Vec<JniCallbackParamView> = method
+                    .inputs
+                    .iter()
+                    .map(|param| {
+                        let c_type = Self::c_type_for_callback(&param.param_type);
+                        let jni_type = Self::jni_type_for_callback(&param.param_type);
+                        let jni_arg = Self::jni_arg_for_callback(&param.name, &param.param_type);
+
+                        JniCallbackParamView {
+                            ffi_name: param.name.clone(),
+                            c_type,
+                            jni_type,
+                            jni_arg,
+                        }
+                    })
+                    .collect();
+
+                let jni_signature = Self::build_jni_signature(&method.inputs, &method.output);
+
+                JniCallbackMethodView {
+                    jni_method_name: ffi_name.clone(),
+                    ffi_name,
+                    jni_signature,
+                    jni_return_type,
+                    jni_call_type,
+                    c_return_type,
+                    has_return,
+                    params,
+                }
+            })
+            .collect();
+
+        JniCallbackTraitView {
+            trait_name: trait_name.clone(),
+            vtable_type: naming::callback_vtable_name(&callback_trait.name),
+            register_fn: naming::callback_register_fn(&callback_trait.name),
+            callbacks_class: format!("{}/{}", package_path, callbacks_class),
+            methods,
+        }
+    }
+
+    fn is_supported_callback_method(method: &crate::model::TraitMethod) -> bool {
+        let supported_return = match &method.output {
+            None => true,
+            Some(Type::Void) => true,
+            Some(Type::Primitive(_)) => true,
+            _ => false,
+        };
+
+        let supported_params = method.inputs.iter().all(|param| {
+            matches!(
+                &param.param_type,
+                Type::Primitive(_)
+            )
+        });
+
+        supported_return && supported_params
+    }
+
+    fn jni_call_return_type(ty: &Type) -> String {
+        match ty {
+            Type::Primitive(p) => match p {
+                crate::model::Primitive::Bool => "jboolean".to_string(),
+                crate::model::Primitive::I8 => "jbyte".to_string(),
+                crate::model::Primitive::I16 => "jshort".to_string(),
+                crate::model::Primitive::I32 => "jint".to_string(),
+                crate::model::Primitive::I64 | crate::model::Primitive::Isize => "jlong".to_string(),
+                crate::model::Primitive::U8 => "jbyte".to_string(),
+                crate::model::Primitive::U16 => "jshort".to_string(),
+                crate::model::Primitive::U32 => "jint".to_string(),
+                crate::model::Primitive::U64 | crate::model::Primitive::Usize => "jlong".to_string(),
+                crate::model::Primitive::F32 => "jfloat".to_string(),
+                crate::model::Primitive::F64 => "jdouble".to_string(),
+            },
+            Type::Void => "void".to_string(),
+            _ => "jobject".to_string(),
+        }
+    }
+
+    fn jni_call_method_suffix(ty: &Type) -> String {
+        match ty {
+            Type::Primitive(p) => match p {
+                crate::model::Primitive::Bool => "Boolean".to_string(),
+                crate::model::Primitive::I8 | crate::model::Primitive::U8 => "Byte".to_string(),
+                crate::model::Primitive::I16 | crate::model::Primitive::U16 => "Short".to_string(),
+                crate::model::Primitive::I32 | crate::model::Primitive::U32 => "Int".to_string(),
+                crate::model::Primitive::I64
+                | crate::model::Primitive::U64
+                | crate::model::Primitive::Isize
+                | crate::model::Primitive::Usize => "Long".to_string(),
+                crate::model::Primitive::F32 => "Float".to_string(),
+                crate::model::Primitive::F64 => "Double".to_string(),
+            },
+            Type::Void => "Void".to_string(),
+            _ => "Object".to_string(),
+        }
+    }
+
+    fn c_type_for_callback(ty: &Type) -> String {
+        match ty {
+            Type::Primitive(p) => p.c_type_name().to_string(),
+            Type::Void => "void".to_string(),
+            _ => "void*".to_string(),
+        }
+    }
+
+    fn jni_type_for_callback(ty: &Type) -> String {
+        match ty {
+            Type::Primitive(p) => match p {
+                crate::model::Primitive::Bool => "jboolean".to_string(),
+                crate::model::Primitive::I8 | crate::model::Primitive::U8 => "jbyte".to_string(),
+                crate::model::Primitive::I16 | crate::model::Primitive::U16 => "jshort".to_string(),
+                crate::model::Primitive::I32 | crate::model::Primitive::U32 => "jint".to_string(),
+                crate::model::Primitive::I64
+                | crate::model::Primitive::U64
+                | crate::model::Primitive::Isize
+                | crate::model::Primitive::Usize => "jlong".to_string(),
+                crate::model::Primitive::F32 => "jfloat".to_string(),
+                crate::model::Primitive::F64 => "jdouble".to_string(),
+            },
+            _ => "jobject".to_string(),
+        }
+    }
+
+    fn jni_arg_for_callback(name: &str, ty: &Type) -> String {
+        match ty {
+            Type::Primitive(p) => match p {
+                crate::model::Primitive::U8 => format!("(jbyte){}", name),
+                crate::model::Primitive::U16 => format!("(jshort){}", name),
+                crate::model::Primitive::U32 => format!("(jint){}", name),
+                crate::model::Primitive::U64 | crate::model::Primitive::Usize => {
+                    format!("(jlong){}", name)
+                }
+                _ => name.to_string(),
+            },
+            _ => name.to_string(),
+        }
+    }
+
+    fn build_jni_signature(
+        inputs: &[crate::model::TraitMethodParam],
+        output: &Option<Type>,
+    ) -> String {
+        let params_sig: String = std::iter::once("J".to_string())
+            .chain(inputs.iter().map(|p| Self::jni_type_signature(&p.param_type)))
+            .collect();
+
+        let return_sig = output
+            .as_ref()
+            .map(Self::jni_type_signature)
+            .unwrap_or_else(|| "V".to_string());
+
+        format!("({}){}", params_sig, return_sig)
+    }
+
+    fn jni_type_signature(ty: &Type) -> String {
+        match ty {
+            Type::Primitive(p) => match p {
+                crate::model::Primitive::Bool => "Z".to_string(),
+                crate::model::Primitive::I8 | crate::model::Primitive::U8 => "B".to_string(),
+                crate::model::Primitive::I16 | crate::model::Primitive::U16 => "S".to_string(),
+                crate::model::Primitive::I32 | crate::model::Primitive::U32 => "I".to_string(),
+                crate::model::Primitive::I64
+                | crate::model::Primitive::U64
+                | crate::model::Primitive::Isize
+                | crate::model::Primitive::Usize => "J".to_string(),
+                crate::model::Primitive::F32 => "F".to_string(),
+                crate::model::Primitive::F64 => "D".to_string(),
+            },
+            Type::Void => "V".to_string(),
+            Type::String => "Ljava/lang/String;".to_string(),
+            _ => "Ljava/lang/Object;".to_string(),
         }
     }
 

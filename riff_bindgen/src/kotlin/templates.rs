@@ -2,7 +2,7 @@ use askama::Template;
 use heck::ToShoutySnakeCase;
 use riff_ffi_rules::naming;
 
-use crate::model::{Class, DataEnumLayout, Enumeration, Function, Module, Record, Type};
+use crate::model::{CallbackTrait, Class, DataEnumLayout, Enumeration, Function, Module, Record, Type};
 
 use super::layout::{KotlinBufferRead, KotlinBufferWrite};
 use super::marshal::{OptionView, ParamConversion, ResultView, ReturnKind};
@@ -1073,6 +1073,174 @@ impl NativeTemplate {
                 _ => base_type.to_string(),
             },
             _ => base_type.to_string(),
+        }
+    }
+}
+
+#[derive(Template)]
+#[template(path = "kotlin/callback_trait.txt", escape = "none")]
+pub struct CallbackTraitTemplate {
+    pub doc: Option<String>,
+    pub interface_name: String,
+    pub wrapper_class: String,
+    pub handle_map_name: String,
+    pub callbacks_object: String,
+    pub bridge_name: String,
+    pub vtable_type: String,
+    pub register_fn: String,
+    pub create_fn: String,
+    pub methods: Vec<TraitMethodView>,
+}
+
+pub struct CallbackReturnInfo {
+    pub kotlin_type: String,
+    pub jni_type: String,
+    pub default_value: String,
+    pub to_jni: String,
+}
+
+pub struct TraitMethodView {
+    pub name: String,
+    pub ffi_name: String,
+    pub params: Vec<TraitParamView>,
+    pub return_info: Option<CallbackReturnInfo>,
+    pub is_async: bool,
+}
+
+pub struct TraitParamView {
+    pub name: String,
+    pub ffi_name: String,
+    pub kotlin_type: String,
+    pub jni_type: String,
+    pub conversion: String,
+}
+
+impl CallbackTraitTemplate {
+    pub fn from_trait(callback_trait: &CallbackTrait, _module: &Module) -> Self {
+        let trait_name = &callback_trait.name;
+        let interface_name = NamingConvention::class_name(trait_name);
+
+        Self {
+            doc: callback_trait.doc.clone(),
+            interface_name: interface_name.clone(),
+            wrapper_class: format!("{}Wrapper", interface_name),
+            handle_map_name: format!("{}HandleMap", interface_name),
+            callbacks_object: format!("{}Callbacks", interface_name),
+            bridge_name: format!("{}Bridge", interface_name),
+            vtable_type: naming::callback_vtable_name(trait_name),
+            register_fn: naming::callback_register_fn(trait_name),
+            create_fn: naming::callback_create_fn(trait_name),
+            methods: callback_trait
+                .methods
+                .iter()
+                .filter(|method| Self::is_supported_callback_method(method))
+                .map(|method| {
+                    let return_info = method.output.as_ref().and_then(|ty| {
+                        if matches!(ty, Type::Void) {
+                            None
+                        } else {
+                            Some(CallbackReturnInfo {
+                                kotlin_type: TypeMapper::map_type(ty),
+                                jni_type: TypeMapper::jni_type(ty),
+                                default_value: Self::default_value(ty),
+                                to_jni: Self::jni_return_conversion(ty),
+                            })
+                        }
+                    });
+
+                    TraitMethodView {
+                        name: NamingConvention::method_name(&method.name),
+                        ffi_name: naming::to_snake_case(&method.name),
+                        params: method
+                            .inputs
+                            .iter()
+                            .map(|param| {
+                                let kotlin_name = NamingConvention::param_name(&param.name);
+                                TraitParamView {
+                                    name: kotlin_name.clone(),
+                                    ffi_name: param.name.clone(),
+                                    kotlin_type: TypeMapper::map_type(&param.param_type),
+                                    jni_type: TypeMapper::jni_type(&param.param_type),
+                                    conversion: Self::jni_param_conversion(
+                                        &kotlin_name,
+                                        &param.param_type,
+                                    ),
+                                }
+                            })
+                            .collect(),
+                        return_info,
+                        is_async: method.is_async,
+                    }
+                })
+                .collect(),
+        }
+    }
+
+    fn jni_return_conversion(ty: &Type) -> String {
+        match ty {
+            Type::Primitive(p) => match p {
+                crate::model::Primitive::U8
+                | crate::model::Primitive::U16
+                | crate::model::Primitive::U32 => ".toInt()".to_string(),
+                crate::model::Primitive::U64 | crate::model::Primitive::Usize => {
+                    ".toLong()".to_string()
+                }
+                _ => String::new(),
+            },
+            _ => String::new(),
+        }
+    }
+
+    fn jni_param_conversion(name: &str, ty: &Type) -> String {
+        match ty {
+            Type::Primitive(p) => match p {
+                crate::model::Primitive::U8
+                | crate::model::Primitive::U16
+                | crate::model::Primitive::U32 => format!("{}.toUInt()", name),
+                crate::model::Primitive::U64 | crate::model::Primitive::Usize => {
+                    format!("{}.toULong()", name)
+                }
+                _ => name.to_string(),
+            },
+            _ => name.to_string(),
+        }
+    }
+
+    fn is_supported_callback_method(method: &crate::model::TraitMethod) -> bool {
+        let supported_return = match &method.output {
+            None => true,
+            Some(Type::Void) => true,
+            Some(Type::Primitive(_)) => true,
+            _ => false,
+        };
+
+        let supported_params = method.inputs.iter().all(|param| {
+            matches!(&param.param_type, Type::Primitive(_))
+        });
+
+        supported_return && supported_params
+    }
+
+    fn default_value(ty: &Type) -> String {
+        match ty {
+            Type::Primitive(p) => match p {
+                crate::model::Primitive::Bool => "false".to_string(),
+                crate::model::Primitive::I8
+                | crate::model::Primitive::I16
+                | crate::model::Primitive::I32
+                | crate::model::Primitive::U8
+                | crate::model::Primitive::U16
+                | crate::model::Primitive::U32 => "0".to_string(),
+                crate::model::Primitive::I64
+                | crate::model::Primitive::U64
+                | crate::model::Primitive::Isize
+                | crate::model::Primitive::Usize => "0L".to_string(),
+                crate::model::Primitive::F32 => "0.0f".to_string(),
+                crate::model::Primitive::F64 => "0.0".to_string(),
+            },
+            Type::String => "\"\"".to_string(),
+            Type::Void => "Unit".to_string(),
+            _ => "throw IllegalStateException(\"Handle not found\")".to_string(),
         }
     }
 }

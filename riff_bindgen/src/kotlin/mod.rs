@@ -11,13 +11,13 @@ pub use jni::JniGenerator;
 pub use marshal::{JniParamInfo, JniReturnKind, ParamConversion, ReturnKind};
 pub use names::NamingConvention;
 pub use templates::{
-    AsyncFunctionTemplate, CStyleEnumTemplate, ClassTemplate, DataEnumCodecTemplate,
-    FunctionTemplate, NativeTemplate, PreambleTemplate, RecordReaderTemplate, RecordTemplate,
-    RecordWriterTemplate, SealedEnumTemplate,
+    AsyncFunctionTemplate, CStyleEnumTemplate, CallbackTraitTemplate, ClassTemplate,
+    DataEnumCodecTemplate, FunctionTemplate, NativeTemplate, PreambleTemplate,
+    RecordReaderTemplate, RecordTemplate, RecordWriterTemplate, SealedEnumTemplate,
 };
 pub use types::TypeMapper;
 
-use crate::model::{Class, Enumeration, Function, Module, Record, Type};
+use crate::model::{CallbackTrait, Class, Enumeration, Function, Module, Record, Type};
 
 pub struct Kotlin;
 
@@ -64,6 +64,11 @@ impl Kotlin {
             .classes
             .iter()
             .for_each(|class| sections.push(Self::render_class(class, module)));
+
+        module
+            .callback_traits
+            .iter()
+            .for_each(|t| sections.push(Self::render_callback_trait(t, module)));
 
         sections.push(Self::render_native(module));
 
@@ -147,6 +152,12 @@ impl Kotlin {
         NativeTemplate::from_module(module)
             .render()
             .expect("native template failed")
+    }
+
+    pub fn render_callback_trait(callback_trait: &CallbackTrait, module: &Module) -> String {
+        CallbackTraitTemplate::from_trait(callback_trait, module)
+            .render()
+            .expect("callback trait template failed")
     }
 
     fn find_blittable_vec_return_records(module: &Module) -> std::collections::HashSet<&str> {
