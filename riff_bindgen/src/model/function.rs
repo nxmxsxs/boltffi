@@ -9,6 +9,7 @@ pub struct Function {
     pub inputs: Vec<Parameter>,
     pub returns: ReturnType,
     pub is_async: bool,
+    pub wire_encoded: bool,
     pub doc: Option<String>,
     pub deprecated: Option<Deprecation>,
 }
@@ -20,9 +21,15 @@ impl Function {
             inputs: Vec::new(),
             returns: ReturnType::Void,
             is_async: false,
+            wire_encoded: false,
             doc: None,
             deprecated: None,
         }
+    }
+
+    pub fn with_wire_encoded(mut self) -> Self {
+        self.wire_encoded = true;
+        self
     }
 
     pub fn with_param(mut self, param: Parameter) -> Self {

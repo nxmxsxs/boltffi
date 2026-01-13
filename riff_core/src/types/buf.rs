@@ -1,4 +1,5 @@
 use core::mem::ManuallyDrop;
+use crate::wire::{WireBuffer, WireEncode};
 
 #[repr(C)]
 pub struct FfiBuf<T> {
@@ -66,6 +67,12 @@ impl<T> Default for FfiBuf<T> {
             len: 0,
             cap: 0,
         }
+    }
+}
+
+impl FfiBuf<u8> {
+    pub fn wire_encode<V: WireEncode>(value: &V) -> Self {
+        Self::from_vec(WireBuffer::new(value).into_bytes())
     }
 }
 

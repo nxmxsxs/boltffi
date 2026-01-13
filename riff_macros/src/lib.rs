@@ -73,7 +73,7 @@ pub fn export(attr: TokenStream, item: TokenStream) -> TokenStream {
     let item_clone = item.clone();
 
     if let Ok(item_fn) = syn::parse::<ItemFn>(item_clone.clone()) {
-        return ffi_export(attr, TokenStream::from(quote!(#item_fn)));
+        return export::ffi_export_impl(TokenStream::from(quote!(#item_fn)));
     }
 
     if let Ok(item_impl) = syn::parse::<syn::ItemImpl>(item_clone.clone()) {

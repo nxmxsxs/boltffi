@@ -16,6 +16,7 @@ pub enum ReturnKind {
     ResultUnit { err: syn::Type },
     Vec(syn::Type),
     Option(OptionReturnAbi),
+    WireEncoded(syn::Type),
 }
 
 pub enum AsyncErrorKind {
