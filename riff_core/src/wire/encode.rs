@@ -8,13 +8,6 @@ use std::time::{Duration, SystemTime, UNIX_EPOCH};
 #[cfg(feature = "uuid")]
 use uuid::Uuid;
 
-#[cfg(feature = "uom")]
-use uom::si::{
-    f64::{Length, Velocity},
-    length::meter,
-    velocity::kilometer_per_hour,
-};
-
 #[cfg(feature = "url")]
 use url::Url;
 
@@ -328,58 +321,6 @@ impl WireEncode for DateTime<Utc> {
         seconds.encode_to(&mut buf[..8]);
         nanos.encode_to(&mut buf[8..12]);
         12
-    }
-}
-
-#[cfg(feature = "uom")]
-impl WireSize for Length {
-    #[inline]
-    fn is_fixed_size() -> bool {
-        true
-    }
-
-    #[inline]
-    fn fixed_size() -> Option<usize> {
-        Some(8)
-    }
-
-    #[inline]
-    fn wire_size(&self) -> usize {
-        8
-    }
-}
-
-#[cfg(feature = "uom")]
-impl WireEncode for Length {
-    #[inline]
-    fn encode_to(&self, buf: &mut [u8]) -> usize {
-        self.get::<meter>().encode_to(buf)
-    }
-}
-
-#[cfg(feature = "uom")]
-impl WireSize for Velocity {
-    #[inline]
-    fn is_fixed_size() -> bool {
-        true
-    }
-
-    #[inline]
-    fn fixed_size() -> Option<usize> {
-        Some(8)
-    }
-
-    #[inline]
-    fn wire_size(&self) -> usize {
-        8
-    }
-}
-
-#[cfg(feature = "uom")]
-impl WireEncode for Velocity {
-    #[inline]
-    fn encode_to(&self, buf: &mut [u8]) -> usize {
-        self.get::<kilometer_per_hour>().encode_to(buf)
     }
 }
 

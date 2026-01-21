@@ -176,8 +176,8 @@ mod tests {
             .with_field(RecordField::new("y", Type::Primitive(Primitive::F64)));
         let output = Swift::render_record(&point_record, &module);
         assert!(output.contains("public struct Point: Hashable, Equatable, Sendable"));
-        assert!(output.contains("public let x: Double"));
-        assert!(output.contains("public let y: Double"));
+        assert!(output.contains("public var x: Double"));
+        assert!(output.contains("public var y: Double"));
         assert!(output.contains("static func decode(wireBuffer wire: WireBuffer, at offset: Int)"));
 
         let sensor_record = Record::new("SensorData")
@@ -191,8 +191,8 @@ mod tests {
             ));
         let output = Swift::render_record(&sensor_record, &module);
         assert!(output.contains("public struct SensorData: Hashable, Equatable, Sendable"));
-        assert!(output.contains("public let sensorId: Int32"));
-        assert!(output.contains("public let timestampMs: UInt64"));
+        assert!(output.contains("public var sensorId: Int32"));
+        assert!(output.contains("public var timestampMs: UInt64"));
     }
 
     #[test]

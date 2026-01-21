@@ -8,13 +8,6 @@ use std::time::{Duration, SystemTime, UNIX_EPOCH};
 #[cfg(feature = "uuid")]
 use uuid::Uuid;
 
-#[cfg(feature = "uom")]
-use uom::si::{
-    f64::{Length, Velocity},
-    length::meter,
-    velocity::kilometer_per_hour,
-};
-
 #[cfg(feature = "url")]
 use url::Url;
 
@@ -178,27 +171,6 @@ impl WireDecode for DateTime<Utc> {
         let (nanos, nanos_used) = u32::decode_from(buf.get(seconds_used..).ok_or(DecodeError::BufferTooSmall)?)?;
         let date_time = DateTime::from_timestamp(seconds, nanos).ok_or(DecodeError::InvalidValue)?;
         Ok((date_time, seconds_used + nanos_used))
-    }
-}
-
-#[cfg(feature = "uom")]
-impl WireDecode for Length {
-    #[inline]
-    fn decode_from(buf: &[u8]) -> DecodeResult<Self> {
-        let (meters, used) = f64::decode_from(buf)?;
-        Ok((Length::new::<meter>(meters), used))
-    }
-}
-
-#[cfg(feature = "uom")]
-impl WireDecode for Velocity {
-    #[inline]
-    fn decode_from(buf: &[u8]) -> DecodeResult<Self> {
-        let (kilometers_per_hour, used) = f64::decode_from(buf)?;
-        Ok((
-            Velocity::new::<kilometer_per_hour>(kilometers_per_hour),
-            used,
-        ))
     }
 }
 

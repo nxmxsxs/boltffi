@@ -379,12 +379,64 @@ impl SourceScanner {
             .items
             .iter()
             .filter_map(|item| match item {
+                Item::Macro(item_macro)
+                    if item_macro
+                        .mac
+                        .path
+                        .segments
+                        .last()
+                        .is_some_and(|segment| segment.ident == "custom_type") =>
+                {
+                    Some(item_macro)
+                }
+                _ => None,
+            })
+            .try_for_each(|item_macro| self.collect_custom_type_macro(item_macro, &alias_resolver))?;
+        syntax
+            .items
+            .iter()
+            .filter_map(|item| match item {
                 Item::Impl(item_impl) if has_attribute(&item_impl.attrs, "custom_ffi") => {
                     Some(item_impl)
                 }
                 _ => None,
             })
             .try_for_each(|item_impl| self.collect_custom_type(item_impl, &alias_resolver))
+    }
+
+    fn collect_custom_type_macro(
+        &mut self,
+        item_macro: &syn::ItemMacro,
+        alias_resolver: &AliasResolver,
+    ) -> Result<(), String> {
+        let spec: CustomTypeMacroSpec = syn::parse2(item_macro.mac.tokens.clone())
+            .map_err(|e| format!("custom_type!: failed to parse: {e}"))?;
+
+        let name = spec.name.to_string();
+        if self.type_registry.records.contains(&name)
+            || self.type_registry.enums.contains(&name)
+            || self.type_registry.classes.contains(&name)
+        {
+            return Err(format!(
+                "custom_type!: `{}` conflicts with an existing record/enum/class name",
+                name
+            ));
+        }
+
+        let repr_syn_type = &spec.repr;
+        let repr = rust_type_to_ffi_type(repr_syn_type, &self.type_registry, alias_resolver, None)
+            .ok_or_else(|| {
+                format!(
+                    "custom_type!: `{}` has an unsupported repr type: {}",
+                    name,
+                    quote::quote!(#repr_syn_type).to_string()
+                )
+            })?;
+
+        self.type_registry
+            .register_custom_type(name.clone(), repr.clone());
+        self.custom_types.push(ScannedCustomType { name, repr });
+        Ok(())
     }
 
     fn collect_custom_type(
@@ -1038,6 +1090,50 @@ impl SourceScanner {
         }
 
         module
+    }
+}
+
+struct CustomTypeMacroSpec {
+    name: syn::Ident,
+    repr: syn::Type,
+}
+
+impl syn::parse::Parse for CustomTypeMacroSpec {
+    fn parse(input: syn::parse::ParseStream) -> syn::Result<Self> {
+        let _visibility: syn::Visibility = input.parse()?;
+        let name: syn::Ident = input.parse()?;
+        input.parse::<syn::Token![,]>()?;
+
+        let mut repr: Option<syn::Type> = None;
+        while !input.is_empty() {
+            let key: syn::Ident = input.parse()?;
+            input.parse::<syn::Token![=]>()?;
+            match key.to_string().as_str() {
+                "remote" => {
+                    let _: syn::Type = input.parse()?;
+                }
+                "repr" => {
+                    repr = Some(input.parse()?);
+                }
+                "error" => {
+                    let _: syn::Type = input.parse()?;
+                }
+                "into_ffi" | "try_from_ffi" => {
+                    let _: syn::Expr = input.parse()?;
+                }
+                _ => {
+                    let _: syn::Expr = input.parse()?;
+                }
+            }
+
+            if input.peek(syn::Token![,]) {
+                input.parse::<syn::Token![,]>()?;
+            }
+        }
+
+        let repr = repr.ok_or_else(|| input.error("custom_type!: missing `repr = ...`"))?;
+
+        Ok(Self { name, repr })
     }
 }
 

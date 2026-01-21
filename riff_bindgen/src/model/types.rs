@@ -303,7 +303,7 @@ const BUILTIN_SPECS: &[BuiltinSpec] = &[
     },
     BuiltinSpec {
         id: BuiltinId::SystemTime,
-        rust_paths: &["std::time::SystemTime", "chrono::DateTime"],
+        rust_paths: &["std::time::SystemTime"],
     },
     BuiltinSpec {
         id: BuiltinId::Uuid,
