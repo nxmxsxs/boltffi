@@ -18,6 +18,14 @@ pub struct RecordDef {
     pub deprecated: Option<DeprecationInfo>,
 }
 
+impl RecordDef {
+    pub fn is_blittable(&self) -> bool {
+        self.fields
+            .iter()
+            .all(|f| matches!(f.type_expr, TypeExpr::Primitive(_)))
+    }
+}
+
 #[derive(Debug, Clone)]
 pub struct FieldDef {
     pub name: FieldName,

@@ -48,6 +48,13 @@ pub enum RecordLayout {
     Encoded {
         fields: Vec<EncodedField>,
     },
+    Recursive,
+}
+
+impl RecordLayout {
+    pub fn is_blittable(&self) -> bool {
+        matches!(self, RecordLayout::Blittable { .. })
+    }
 }
 
 #[derive(Debug, Clone)]
@@ -72,6 +79,7 @@ pub enum EnumLayout {
         tag_type: PrimitiveType,
         variants: Vec<VariantLayout>,
     },
+    Recursive,
 }
 
 #[derive(Debug, Clone)]

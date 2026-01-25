@@ -5,6 +5,7 @@ pub mod cheader;
 pub mod ir;
 pub mod kotlin;
 pub mod model;
+pub mod render;
 pub mod scan;
 pub mod swift;
 
@@ -15,6 +16,7 @@ pub use model::{
 };
 
 pub use kotlin::{FactoryStyle, JniGenerator, Kotlin, KotlinApiStyle, KotlinOptions};
+pub use render::{Renderer, swift::SwiftLowerer};
 pub use scan::{SourceScanner, scan_crate};
 pub use swift::Swift;
 

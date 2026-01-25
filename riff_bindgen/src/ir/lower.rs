@@ -1,4 +1,5 @@
-use std::collections::HashMap;
+use std::cell::RefCell;
+use std::collections::{HashMap, HashSet};
 
 use crate::ir::codec::{
     BlittableField, CodecPlan, EncodedField, EnumLayout, RecordLayout, VariantLayout,
@@ -19,14 +20,19 @@ use crate::ir::plan::{
 };
 use crate::ir::types::{PrimitiveType, TypeExpr};
 
-#[derive(Clone, Copy)]
 pub struct Lowerer<'c> {
     contract: &'c FfiContract,
+    record_stack: RefCell<HashSet<RecordId>>,
+    enum_stack: RefCell<HashSet<EnumId>>,
 }
 
 impl<'c> Lowerer<'c> {
     pub fn new(contract: &'c FfiContract) -> Self {
-        Self { contract }
+        Self {
+            contract,
+            record_stack: RefCell::new(HashSet::new()),
+            enum_stack: RefCell::new(HashSet::new()),
+        }
     }
 
     pub fn lower_function(&self, func: &FunctionDef) -> CallPlan {
@@ -350,17 +356,26 @@ impl<'c> Lowerer<'c> {
     }
 
     fn record_layout(&self, id: &RecordId) -> RecordLayout {
+        if self.record_stack.borrow().contains(id) {
+            return RecordLayout::Recursive;
+        }
+
+        self.record_stack.borrow_mut().insert(id.clone());
+
         let def = self
             .contract
             .catalog
             .resolve_record(id)
             .expect("record should be resolved");
 
-        if self.is_blittable_record(def) {
+        let layout = if self.is_blittable_record(def) {
             self.build_blittable_record_layout(def)
         } else {
             self.build_encoded_record_layout(def)
-        }
+        };
+
+        self.record_stack.borrow_mut().remove(id);
+        layout
     }
 
     fn is_blittable_record(&self, def: &RecordDef) -> bool {
@@ -388,13 +403,19 @@ impl<'c> Lowerer<'c> {
     }
 
     fn enum_layout(&self, id: &EnumId) -> EnumLayout {
+        if self.enum_stack.borrow().contains(id) {
+            return EnumLayout::Recursive;
+        }
+
+        self.enum_stack.borrow_mut().insert(id.clone());
+
         let def = self
             .contract
             .catalog
             .resolve_enum(id)
             .expect("enum should be resolved");
 
-        match &def.repr {
+        let layout = match &def.repr {
             EnumRepr::CStyle { tag_type, .. } => EnumLayout::CStyle {
                 tag_type: *tag_type,
             },
@@ -410,7 +431,10 @@ impl<'c> Lowerer<'c> {
                     })
                     .collect(),
             },
-        }
+        };
+
+        self.enum_stack.borrow_mut().remove(id);
+        layout
     }
 
     fn variant_payload_layout(&self, payload: &VariantPayload) -> VariantPayloadLayout {
@@ -556,7 +580,7 @@ pub fn lower_contract(contract: &FfiContract) -> LoweredContract {
         .catalog
         .all_classes()
         .flat_map(|class| {
-            class.methods.iter().map(move |m| {
+            class.methods.iter().map(|m| {
                 (
                     (class.id.clone(), m.id.clone()),
                     lowerer.lower_method(class, m),
@@ -565,16 +589,17 @@ pub fn lower_contract(contract: &FfiContract) -> LoweredContract {
         })
         .collect();
 
-    let constructors =
-        contract
-            .catalog
-            .all_classes()
-            .flat_map(|class| {
-                class.constructors.iter().enumerate().map(move |(idx, c)| {
-                    ((class.id.clone(), idx), lowerer.lower_constructor(class, c))
-                })
-            })
-            .collect();
+    let constructors = contract
+        .catalog
+        .all_classes()
+        .flat_map(|class| {
+            class
+                .constructors
+                .iter()
+                .enumerate()
+                .map(|(idx, c)| ((class.id.clone(), idx), lowerer.lower_constructor(class, c)))
+        })
+        .collect();
 
     let callbacks = contract
         .catalog
@@ -582,11 +607,35 @@ pub fn lower_contract(contract: &FfiContract) -> LoweredContract {
         .map(|cb| (cb.id.clone(), lowerer.lower_callback(cb)))
         .collect();
 
+    let record_codecs = contract
+        .catalog
+        .all_records()
+        .map(|r| {
+            (
+                r.id.clone(),
+                lowerer.build_codec(&TypeExpr::Record(r.id.clone())),
+            )
+        })
+        .collect();
+
+    let enum_codecs = contract
+        .catalog
+        .all_enums()
+        .map(|e| {
+            (
+                e.id.clone(),
+                lowerer.build_codec(&TypeExpr::Enum(e.id.clone())),
+            )
+        })
+        .collect();
+
     LoweredContract {
         functions,
         methods,
         constructors,
         callbacks,
+        record_codecs,
+        enum_codecs,
     }
 }
 
@@ -595,6 +644,8 @@ pub struct LoweredContract {
     pub methods: HashMap<(ClassId, MethodId), CallPlan>,
     pub constructors: HashMap<(ClassId, usize), CallPlan>,
     pub callbacks: HashMap<CallbackId, Vec<CallPlan>>,
+    pub record_codecs: HashMap<RecordId, CodecPlan>,
+    pub enum_codecs: HashMap<EnumId, CodecPlan>,
 }
 
 #[cfg(test)]
