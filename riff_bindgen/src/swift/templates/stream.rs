@@ -30,8 +30,7 @@ impl StreamAsyncBodyTemplate {
             subscribe_fn: naming::stream_ffi_subscribe(&class.name, &stream.name).into_string(),
             pop_batch_fn: naming::stream_ffi_pop_batch(&class.name, &stream.name).into_string(),
             poll_fn: naming::stream_ffi_poll(&class.name, &stream.name).into_string(),
-            unsubscribe_fn: naming::stream_ffi_unsubscribe(&class.name, &stream.name)
-                .into_string(),
+            unsubscribe_fn: naming::stream_ffi_unsubscribe(&class.name, &stream.name).into_string(),
             free_fn: naming::stream_ffi_free(&class.name, &stream.name).into_string(),
             prefix: naming::ffi_prefix().to_string(),
             atomic_cas_fn: format!("{}_atomic_u8_cas", naming::ffi_prefix()),
@@ -84,8 +83,7 @@ impl StreamCallbackBodyTemplate {
             subscribe_fn: naming::stream_ffi_subscribe(&class.name, &stream.name).into_string(),
             pop_batch_fn: naming::stream_ffi_pop_batch(&class.name, &stream.name).into_string(),
             poll_fn: naming::stream_ffi_poll(&class.name, &stream.name).into_string(),
-            unsubscribe_fn: naming::stream_ffi_unsubscribe(&class.name, &stream.name)
-                .into_string(),
+            unsubscribe_fn: naming::stream_ffi_unsubscribe(&class.name, &stream.name).into_string(),
             free_fn: naming::stream_ffi_free(&class.name, &stream.name).into_string(),
             atomic_cas_fn: format!("{}_atomic_u8_cas", naming::ffi_prefix()),
         }
@@ -112,8 +110,7 @@ impl StreamSubscriptionTemplate {
             item_type: TypeMapper::map_type(&stream.item_type),
             pop_batch_fn: naming::stream_ffi_pop_batch(&class.name, &stream.name).into_string(),
             wait_fn: naming::stream_ffi_wait(&class.name, &stream.name).into_string(),
-            unsubscribe_fn: naming::stream_ffi_unsubscribe(&class.name, &stream.name)
-                .into_string(),
+            unsubscribe_fn: naming::stream_ffi_unsubscribe(&class.name, &stream.name).into_string(),
             free_fn: naming::stream_ffi_free(&class.name, &stream.name).into_string(),
         }
     }

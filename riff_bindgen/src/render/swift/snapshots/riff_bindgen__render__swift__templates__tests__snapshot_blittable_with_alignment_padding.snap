@@ -1,0 +1,32 @@
+---
+source: riff_bindgen/src/render/swift/templates.rs
+expression: render_record(&record)
+---
+public struct Padded: Hashable, Equatable, Sendable {
+    public var a: UInt8
+    public var b: UInt32
+    public var c: UInt8
+
+    public init(a: UInt8, b: UInt32, c: UInt8) {
+        self.a = a
+        self.b = b
+        self.c = c
+    }
+
+    @inlinable static func decode(wireBuffer wire: WireBuffer, at offset: Int) -> (value: Padded, size: Int) {
+        return (Padded(a: wire.readU8(at: offset), b: wire.readU32(at: offset + 4), c: wire.readU8(at: offset + 8)), 12)
+    }
+}
+
+extension Padded: WireEncodable {
+    @usableFromInline static var isBlittable: Bool { true }
+    @inlinable func wireEncodedSize() -> Int { 12 }
+    @inlinable func wireEncodeTo(_ data: inout Data) {
+        var copy = self
+        Swift.withUnsafeBytes(of: &copy) { data.append(contentsOf: $0) }
+    }
+    @inlinable func wireEncodeToBytes(_ bytes: inout [UInt8]) {
+        var copy = self
+        Swift.withUnsafeBytes(of: &copy) { bytes.append(contentsOf: $0) }
+    }
+}

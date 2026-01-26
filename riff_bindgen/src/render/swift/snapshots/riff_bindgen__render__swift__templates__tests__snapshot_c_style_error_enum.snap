@@ -1,0 +1,23 @@
+---
+source: riff_bindgen/src/render/swift/templates.rs
+expression: render_enum(&e)
+---
+public enum ApiError: Int32, Hashable, Sendable, CaseIterable, Error {
+    case notFound = 0
+    case unauthorized = 1
+    case serverError = 2
+
+    @usableFromInline init(fromC c: Int32) { self = ApiError(rawValue: c)! }
+    @usableFromInline var cValue: Int32 { rawValue }
+
+    @inlinable static func decode(wireBuffer wire: WireBuffer, at offset: Int) -> (value: ApiError, size: Int) {
+        (ApiError(rawValue: wire.readI32(at: offset))!, 4)
+    }
+}
+
+extension ApiError: WireEncodable {
+    @usableFromInline static var isBlittable: Bool { true }
+    @inlinable func wireEncodedSize() -> Int { 4 }
+    @inlinable func wireEncodeTo(_ data: inout Data) { data.appendI32(rawValue) }
+    @inlinable func wireEncodeToBytes(_ bytes: inout [UInt8]) { bytes.appendI32(rawValue) }
+}

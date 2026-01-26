@@ -30,14 +30,12 @@ extension {{ class_name }}: WireEncodable {
     @usableFromInline static var isBlittable: Bool { true }
     @inlinable func wireEncodedSize() -> Int { {{ size }} }
     @inlinable func wireEncodeTo(_ data: inout Data) {
-{%- for field in fields %}
-        {{ field.encode_at_offset() }}
-{%- endfor %}
+        var copy = self
+        Swift.withUnsafeBytes(of: &copy) { data.append(contentsOf: $0) }
     }
     @inlinable func wireEncodeToBytes(_ bytes: inout [UInt8]) {
-{%- for field in fields %}
-        {{ field.wire_encode_bytes() }}
-{%- endfor %}
+        var copy = self
+        Swift.withUnsafeBytes(of: &copy) { bytes.append(contentsOf: $0) }
     }
 {%- endif %}
 {%- else %}

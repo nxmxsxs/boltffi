@@ -592,8 +592,7 @@ impl AsyncCallPlan {
             func_name: NamingConvention::method_name(&method.name),
             ffi_name: naming::method_ffi_name(&class.name, &method.name).into_string(),
             ffi_poll: naming::method_ffi_poll(&class.name, &method.name).into_string(),
-            ffi_complete: naming::method_ffi_complete(&class.name, &method.name)
-                .into_string(),
+            ffi_complete: naming::method_ffi_complete(&class.name, &method.name).into_string(),
             ffi_cancel: naming::method_ffi_cancel(&class.name, &method.name).into_string(),
             ffi_free: naming::method_ffi_free(&class.name, &method.name).into_string(),
             signature_params,

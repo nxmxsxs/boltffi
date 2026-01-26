@@ -119,11 +119,7 @@ pub mod naming {
     }
 
     pub fn method_ffi_name(class_name: &str, method_name: &str) -> Name<GlobalSymbol> {
-        Name::new(format!(
-            "{}_{}",
-            class_ffi_prefix(class_name),
-            method_name
-        ))
+        Name::new(format!("{}_{}", class_ffi_prefix(class_name), method_name))
     }
 
     pub fn method_ffi_poll(class_name: &str, method_name: &str) -> Name<GlobalSymbol> {
@@ -196,23 +192,14 @@ pub mod naming {
     }
 
     pub fn stream_ffi_wait(class_name: &str, stream_name: &str) -> Name<GlobalSymbol> {
-        Name::new(format!(
-            "{}_wait",
-            method_ffi_name(class_name, stream_name)
-        ))
+        Name::new(format!("{}_wait", method_ffi_name(class_name, stream_name)))
     }
 
     pub fn stream_ffi_poll(class_name: &str, stream_name: &str) -> Name<GlobalSymbol> {
-        Name::new(format!(
-            "{}_poll",
-            method_ffi_name(class_name, stream_name)
-        ))
+        Name::new(format!("{}_poll", method_ffi_name(class_name, stream_name)))
     }
 
-    pub fn stream_ffi_unsubscribe(
-        class_name: &str,
-        stream_name: &str,
-    ) -> Name<GlobalSymbol> {
+    pub fn stream_ffi_unsubscribe(class_name: &str, stream_name: &str) -> Name<GlobalSymbol> {
         Name::new(format!(
             "{}_unsubscribe",
             method_ffi_name(class_name, stream_name)
@@ -220,10 +207,7 @@ pub mod naming {
     }
 
     pub fn stream_ffi_free(class_name: &str, stream_name: &str) -> Name<GlobalSymbol> {
-        Name::new(format!(
-            "{}_free",
-            method_ffi_name(class_name, stream_name)
-        ))
+        Name::new(format!("{}_free", method_ffi_name(class_name, stream_name)))
     }
 
     pub fn free_buf_u8() -> Name<GlobalSymbol> {
@@ -235,11 +219,7 @@ pub mod naming {
     }
 
     pub fn trait_ffi_free(trait_name: &str) -> Name<GlobalSymbol> {
-        Name::new(format!(
-            "{}_{}_free",
-            FFI_PREFIX,
-            to_snake_case(trait_name)
-        ))
+        Name::new(format!("{}_{}_free", FFI_PREFIX, to_snake_case(trait_name)))
     }
 
     pub fn callback_vtable_name(trait_name: &str) -> Name<VtableType> {

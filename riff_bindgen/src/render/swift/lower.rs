@@ -10,7 +10,6 @@ use crate::ir::abi::{
     AbiCall, AbiCallbackInvocation, AbiParam, AbiStream, AsyncResultTransport, CallId, CallMode,
     ErrorTransport, ParamRole, ReturnTransport, StreamItemTransport,
 };
-use crate::ir::plan::{CallbackStyle, Mutability};
 use crate::ir::codec::{CodecPlan, EnumLayout, RecordLayout, VariantPayloadLayout, VecLayout};
 use crate::ir::contract::FfiContract;
 use crate::ir::definitions::{
@@ -18,12 +17,13 @@ use crate::ir::definitions::{
 };
 use crate::ir::ids::{CallbackId, ClassId, EnumId, ParamName, RecordId};
 use crate::ir::plan::AbiType;
+use crate::ir::plan::{CallbackStyle, Mutability};
 use crate::ir::types::{PrimitiveType, TypeExpr};
 
 use super::codec;
 use super::plan::{
-    SwiftAsyncConversion, SwiftAsyncResult, SwiftCallback, SwiftCallbackMethod, SwiftCallbackParam,
-    SwiftCallMode, SwiftClass, SwiftClosureTrampoline, SwiftClosureTrampolineParam,
+    SwiftAsyncConversion, SwiftAsyncResult, SwiftCallMode, SwiftCallback, SwiftCallbackMethod,
+    SwiftCallbackParam, SwiftClass, SwiftClosureTrampoline, SwiftClosureTrampolineParam,
     SwiftConstructor, SwiftConversion, SwiftEnum, SwiftField, SwiftFunction, SwiftMethod,
     SwiftModule, SwiftParam, SwiftRecord, SwiftReturn, SwiftStream, SwiftStreamMode, SwiftVariant,
     SwiftVariantPayload,
@@ -86,7 +86,10 @@ impl AbiIndex {
     }
 
     fn record_codec<'a>(&self, contract: &'a AbiContract, id: &RecordId) -> &'a CodecPlan {
-        let index = self.record_codecs.get(id).expect("record codec should exist");
+        let index = self
+            .record_codecs
+            .get(id)
+            .expect("record codec should exist");
         &contract.record_codecs[*index].1
     }
 
@@ -325,9 +328,7 @@ impl<'a> SwiftLowerer<'a> {
                                 let label = camel_case(name.as_str());
                                 let mut first = self.lower_param(first_param, call);
                                 first.label = Some(label.clone());
-                                let rest = rest_params
-                                    .iter()
-                                    .map(|p| self.lower_param(p, call));
+                                let rest = rest_params.iter().map(|p| self.lower_param(p, call));
                                 SwiftConstructor::Convenience {
                                     name: label,
                                     ffi_symbol: call.symbol.as_str().to_string(),
@@ -456,7 +457,10 @@ impl<'a> SwiftLowerer<'a> {
                                 .params
                                 .iter()
                                 .filter(|p| {
-                                    matches!(p.role, ParamRole::InDirect | ParamRole::InEncoded { .. })
+                                    matches!(
+                                        p.role,
+                                        ParamRole::InDirect | ParamRole::InEncoded { .. }
+                                    )
                                 })
                                 .map(|p| self.lower_callback_param(p))
                                 .collect(),
@@ -485,11 +489,7 @@ impl<'a> SwiftLowerer<'a> {
     fn lower_callback_param(&self, param: &AbiParam) -> SwiftCallbackParam {
         let label = camel_case(param.name.as_str());
         let (swift_type, ffi_args, decode_prelude) = match &param.role {
-            ParamRole::InDirect => (
-                self.abi_to_swift(param.ffi_type),
-                vec![label.clone()],
-                None,
-            ),
+            ParamRole::InDirect => (self.abi_to_swift(param.ffi_type), vec![label.clone()], None),
             ParamRole::InEncoded { codec, .. } => {
                 let len_name = format!("{}Len", label);
                 (
@@ -563,7 +563,11 @@ impl<'a> SwiftLowerer<'a> {
 
         let (swift_type, conversion) = match &abi_param.role {
             ParamRole::InDirect => (self.swift_type(&param.type_expr), SwiftConversion::Direct),
-            ParamRole::InBuffer { element_abi, mutability, .. } => {
+            ParamRole::InBuffer {
+                element_abi,
+                mutability,
+                ..
+            } => {
                 let element_type = self.abi_to_swift(*element_abi);
                 if *element_abi == AbiType::U8 && *mutability == Mutability::Shared {
                     ("Data".to_string(), SwiftConversion::ToData)
@@ -582,7 +586,9 @@ impl<'a> SwiftLowerer<'a> {
             ParamRole::InString { .. } => ("String".to_string(), SwiftConversion::ToString),
             ParamRole::InEncoded { codec, .. } => (
                 codec::swift_type(codec),
-                SwiftConversion::ToWireBuffer { codec: codec.clone() },
+                SwiftConversion::ToWireBuffer {
+                    codec: codec.clone(),
+                },
             ),
             ParamRole::InHandle { class_id, nullable } => {
                 let class_name = self.swift_name_for_class(class_id);
@@ -599,30 +605,31 @@ impl<'a> SwiftLowerer<'a> {
                     },
                 )
             }
-            ParamRole::InCallback { callback_id, nullable, style } => {
-                match style {
-                    CallbackStyle::BoxedDyn => {
-                        let protocol = pascal_case(callback_id.as_str());
-                        let swift_type = if *nullable {
-                            format!("(any {})?", protocol)
-                        } else {
-                            format!("any {}", protocol)
-                        };
-                        (
-                            swift_type,
-                            SwiftConversion::WrapCallback { protocol },
-                        )
-                    }
-                    CallbackStyle::ImplTrait => {
-                        let closure_plan = self.build_closure_trampoline(callback_id, &swift_name);
-                        let swift_type = format!("@escaping {}", closure_plan.swift_type);
-                        (
-                            swift_type,
-                            SwiftConversion::InlineClosure { closure: closure_plan },
-                        )
-                    }
+            ParamRole::InCallback {
+                callback_id,
+                nullable,
+                style,
+            } => match style {
+                CallbackStyle::BoxedDyn => {
+                    let protocol = pascal_case(callback_id.as_str());
+                    let swift_type = if *nullable {
+                        format!("(any {})?", protocol)
+                    } else {
+                        format!("any {}", protocol)
+                    };
+                    (swift_type, SwiftConversion::WrapCallback { protocol })
                 }
-            }
+                CallbackStyle::ImplTrait => {
+                    let closure_plan = self.build_closure_trampoline(callback_id, &swift_name);
+                    let swift_type = format!("@escaping {}", closure_plan.swift_type);
+                    (
+                        swift_type,
+                        SwiftConversion::InlineClosure {
+                            closure: closure_plan,
+                        },
+                    )
+                }
+            },
             ParamRole::OutBuffer { codec, .. } => {
                 let element_type = match codec {
                     CodecPlan::Vec { element, .. } => codec::swift_type(element),
@@ -633,7 +640,10 @@ impl<'a> SwiftLowerer<'a> {
                     SwiftConversion::MutableBuffer { element_type },
                 )
             }
-            _ => panic!("unsupported ABI param role for Swift param: {:?}", abi_param.role),
+            _ => panic!(
+                "unsupported ABI param role for Swift param: {:?}",
+                abi_param.role
+            ),
         };
 
         SwiftParam {
@@ -680,7 +690,11 @@ impl<'a> SwiftLowerer<'a> {
         }
     }
 
-    fn swift_return_from_abi(&self, return_: &ReturnTransport, error: &ErrorTransport) -> SwiftReturn {
+    fn swift_return_from_abi(
+        &self,
+        return_: &ReturnTransport,
+        error: &ErrorTransport,
+    ) -> SwiftReturn {
         let base = match return_ {
             ReturnTransport::Void => SwiftReturn::Void,
             ReturnTransport::Direct(abi) => SwiftReturn::Direct {
@@ -692,9 +706,15 @@ impl<'a> SwiftLowerer<'a> {
             },
             ReturnTransport::Handle { class_id, nullable } => {
                 let class_name = self.swift_name_for_class(class_id);
-                SwiftReturn::Handle { class_name, nullable: *nullable }
+                SwiftReturn::Handle {
+                    class_name,
+                    nullable: *nullable,
+                }
             }
-            ReturnTransport::Callback { callback_id, nullable } => {
+            ReturnTransport::Callback {
+                callback_id,
+                nullable,
+            } => {
                 let protocol = pascal_case(callback_id.as_str());
                 let swift_type = if *nullable {
                     format!("(any {})?", protocol)
@@ -730,7 +750,9 @@ impl<'a> SwiftLowerer<'a> {
             },
             TypeExpr::Callback(id) => {
                 let protocol = pascal_case(id.as_str());
-                SwiftReturn::Direct { swift_type: format!("any {}", protocol) }
+                SwiftReturn::Direct {
+                    swift_type: format!("any {}", protocol),
+                }
             }
             TypeExpr::Option(inner) => match inner.as_ref() {
                 TypeExpr::Handle(id) => SwiftReturn::Handle {
@@ -739,7 +761,9 @@ impl<'a> SwiftLowerer<'a> {
                 },
                 TypeExpr::Callback(id) => {
                     let protocol = pascal_case(id.as_str());
-                    SwiftReturn::Direct { swift_type: format!("(any {})?", protocol) }
+                    SwiftReturn::Direct {
+                        swift_type: format!("(any {})?", protocol),
+                    }
                 }
                 _ => {
                     let codec = self.codec_for_type_expr(ty);
@@ -829,7 +853,9 @@ impl<'a> SwiftLowerer<'a> {
                     CodecPlan::Record {
                         layout: RecordLayout::Blittable { size, .. },
                         ..
-                    } => VecLayout::Blittable { element_size: *size },
+                    } => VecLayout::Blittable {
+                        element_size: *size,
+                    },
                     _ => VecLayout::Encoded,
                 }
             }
@@ -1042,7 +1068,10 @@ impl<'a> SwiftLowerer<'a> {
                     nullable: *nullable,
                 },
             },
-            AsyncResultTransport::Callback { callback_id, nullable } => SwiftAsyncResult::Direct {
+            AsyncResultTransport::Callback {
+                callback_id,
+                nullable,
+            } => SwiftAsyncResult::Direct {
                 swift_type: if *nullable {
                     format!("(any {})?", pascal_case(callback_id.as_str()))
                 } else {
@@ -1074,19 +1103,25 @@ impl<'a> SwiftLowerer<'a> {
 fn lower_first_char(name: &str) -> String {
     name.chars()
         .enumerate()
-        .map(|(index, ch)| if index == 0 { ch.to_ascii_lowercase() } else { ch })
+        .map(|(index, ch)| {
+            if index == 0 {
+                ch.to_ascii_lowercase()
+            } else {
+                ch
+            }
+        })
         .collect()
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::ir::Lowerer as IrLowerer;
     use crate::ir::contract::{FfiContract, PackageInfo};
     use crate::ir::definitions::{
         CStyleVariant, DataVariant, EnumDef, EnumRepr, FieldDef, RecordDef, VariantPayload,
     };
     use crate::ir::ids::{FieldName, VariantName};
-    use crate::ir::Lowerer as IrLowerer;
 
     fn empty_contract() -> FfiContract {
         FfiContract {
@@ -1129,7 +1164,10 @@ mod tests {
 
         assert_eq!(module.records.len(), 1);
         let record = &module.records[0];
-        assert!(record.is_blittable, "Point should be blittable (primitives only)");
+        assert!(
+            record.is_blittable,
+            "Point should be blittable (primitives only)"
+        );
         assert_eq!(record.blittable_size, Some(16));
     }
 
@@ -1158,7 +1196,10 @@ mod tests {
 
         assert_eq!(module.records.len(), 1);
         let record = &module.records[0];
-        assert!(!record.is_blittable, "User should NOT be blittable (has String)");
+        assert!(
+            !record.is_blittable,
+            "User should NOT be blittable (has String)"
+        );
         assert_eq!(record.blittable_size, None);
     }
 
@@ -1167,13 +1208,11 @@ mod tests {
         let mut contract = empty_contract();
         contract.catalog.insert_record(RecordDef {
             id: RecordId::new("Scores"),
-            fields: vec![
-                FieldDef {
-                    name: FieldName::new("values"),
-                    type_expr: TypeExpr::Vec(Box::new(TypeExpr::Primitive(PrimitiveType::I32))),
-                    doc: None,
-                },
-            ],
+            fields: vec![FieldDef {
+                name: FieldName::new("values"),
+                type_expr: TypeExpr::Vec(Box::new(TypeExpr::Primitive(PrimitiveType::I32))),
+                doc: None,
+            }],
             doc: None,
             deprecated: None,
         });
@@ -1182,7 +1221,10 @@ mod tests {
 
         assert_eq!(module.records.len(), 1);
         let record = &module.records[0];
-        assert!(!record.is_blittable, "Scores should NOT be blittable (has Vec)");
+        assert!(
+            !record.is_blittable,
+            "Scores should NOT be blittable (has Vec)"
+        );
     }
 
     #[test]
@@ -1219,17 +1261,61 @@ mod tests {
         contract.catalog.insert_record(RecordDef {
             id: RecordId::new("AllPrimitives"),
             fields: vec![
-                FieldDef { name: FieldName::new("a"), type_expr: TypeExpr::Primitive(PrimitiveType::Bool), doc: None },
-                FieldDef { name: FieldName::new("b"), type_expr: TypeExpr::Primitive(PrimitiveType::I8), doc: None },
-                FieldDef { name: FieldName::new("c"), type_expr: TypeExpr::Primitive(PrimitiveType::U8), doc: None },
-                FieldDef { name: FieldName::new("d"), type_expr: TypeExpr::Primitive(PrimitiveType::I16), doc: None },
-                FieldDef { name: FieldName::new("e"), type_expr: TypeExpr::Primitive(PrimitiveType::U16), doc: None },
-                FieldDef { name: FieldName::new("f"), type_expr: TypeExpr::Primitive(PrimitiveType::I32), doc: None },
-                FieldDef { name: FieldName::new("g"), type_expr: TypeExpr::Primitive(PrimitiveType::U32), doc: None },
-                FieldDef { name: FieldName::new("h"), type_expr: TypeExpr::Primitive(PrimitiveType::I64), doc: None },
-                FieldDef { name: FieldName::new("i"), type_expr: TypeExpr::Primitive(PrimitiveType::U64), doc: None },
-                FieldDef { name: FieldName::new("j"), type_expr: TypeExpr::Primitive(PrimitiveType::F32), doc: None },
-                FieldDef { name: FieldName::new("k"), type_expr: TypeExpr::Primitive(PrimitiveType::F64), doc: None },
+                FieldDef {
+                    name: FieldName::new("a"),
+                    type_expr: TypeExpr::Primitive(PrimitiveType::Bool),
+                    doc: None,
+                },
+                FieldDef {
+                    name: FieldName::new("b"),
+                    type_expr: TypeExpr::Primitive(PrimitiveType::I8),
+                    doc: None,
+                },
+                FieldDef {
+                    name: FieldName::new("c"),
+                    type_expr: TypeExpr::Primitive(PrimitiveType::U8),
+                    doc: None,
+                },
+                FieldDef {
+                    name: FieldName::new("d"),
+                    type_expr: TypeExpr::Primitive(PrimitiveType::I16),
+                    doc: None,
+                },
+                FieldDef {
+                    name: FieldName::new("e"),
+                    type_expr: TypeExpr::Primitive(PrimitiveType::U16),
+                    doc: None,
+                },
+                FieldDef {
+                    name: FieldName::new("f"),
+                    type_expr: TypeExpr::Primitive(PrimitiveType::I32),
+                    doc: None,
+                },
+                FieldDef {
+                    name: FieldName::new("g"),
+                    type_expr: TypeExpr::Primitive(PrimitiveType::U32),
+                    doc: None,
+                },
+                FieldDef {
+                    name: FieldName::new("h"),
+                    type_expr: TypeExpr::Primitive(PrimitiveType::I64),
+                    doc: None,
+                },
+                FieldDef {
+                    name: FieldName::new("i"),
+                    type_expr: TypeExpr::Primitive(PrimitiveType::U64),
+                    doc: None,
+                },
+                FieldDef {
+                    name: FieldName::new("j"),
+                    type_expr: TypeExpr::Primitive(PrimitiveType::F32),
+                    doc: None,
+                },
+                FieldDef {
+                    name: FieldName::new("k"),
+                    type_expr: TypeExpr::Primitive(PrimitiveType::F64),
+                    doc: None,
+                },
             ],
             doc: None,
             deprecated: None,
@@ -1259,9 +1345,21 @@ mod tests {
             repr: EnumRepr::CStyle {
                 tag_type: PrimitiveType::I32,
                 variants: vec![
-                    CStyleVariant { name: VariantName::new("Active"), discriminant: 0, doc: None },
-                    CStyleVariant { name: VariantName::new("Inactive"), discriminant: 1, doc: None },
-                    CStyleVariant { name: VariantName::new("Pending"), discriminant: 2, doc: None },
+                    CStyleVariant {
+                        name: VariantName::new("Active"),
+                        discriminant: 0,
+                        doc: None,
+                    },
+                    CStyleVariant {
+                        name: VariantName::new("Inactive"),
+                        discriminant: 1,
+                        doc: None,
+                    },
+                    CStyleVariant {
+                        name: VariantName::new("Pending"),
+                        discriminant: 2,
+                        doc: None,
+                    },
                 ],
             },
             is_error: false,
@@ -1292,7 +1390,9 @@ mod tests {
                     DataVariant {
                         name: VariantName::new("Int"),
                         discriminant: 0,
-                        payload: VariantPayload::Tuple(vec![TypeExpr::Primitive(PrimitiveType::I64)]),
+                        payload: VariantPayload::Tuple(vec![TypeExpr::Primitive(
+                            PrimitiveType::I64,
+                        )]),
                         doc: None,
                     },
                     DataVariant {
@@ -1357,13 +1457,11 @@ mod tests {
         let mut contract = empty_contract();
         contract.catalog.insert_record(RecordDef {
             id: RecordId::new("MaybeValue"),
-            fields: vec![
-                FieldDef {
-                    name: FieldName::new("value"),
-                    type_expr: TypeExpr::Option(Box::new(TypeExpr::Primitive(PrimitiveType::I32))),
-                    doc: None,
-                },
-            ],
+            fields: vec![FieldDef {
+                name: FieldName::new("value"),
+                type_expr: TypeExpr::Option(Box::new(TypeExpr::Primitive(PrimitiveType::I32))),
+                doc: None,
+            }],
             doc: None,
             deprecated: None,
         });
@@ -1379,13 +1477,11 @@ mod tests {
         let mut contract = empty_contract();
         contract.catalog.insert_record(RecordDef {
             id: RecordId::new("Numbers"),
-            fields: vec![
-                FieldDef {
-                    name: FieldName::new("items"),
-                    type_expr: TypeExpr::Vec(Box::new(TypeExpr::Primitive(PrimitiveType::I32))),
-                    doc: None,
-                },
-            ],
+            fields: vec![FieldDef {
+                name: FieldName::new("items"),
+                type_expr: TypeExpr::Vec(Box::new(TypeExpr::Primitive(PrimitiveType::I32))),
+                doc: None,
+            }],
             doc: None,
             deprecated: None,
         });
@@ -1401,32 +1497,32 @@ mod tests {
         let mut contract = empty_contract();
         contract.catalog.insert_record(RecordDef {
             id: RecordId::new("Inner"),
-            fields: vec![
-                FieldDef {
-                    name: FieldName::new("value"),
-                    type_expr: TypeExpr::Primitive(PrimitiveType::I32),
-                    doc: None,
-                },
-            ],
+            fields: vec![FieldDef {
+                name: FieldName::new("value"),
+                type_expr: TypeExpr::Primitive(PrimitiveType::I32),
+                doc: None,
+            }],
             doc: None,
             deprecated: None,
         });
         contract.catalog.insert_record(RecordDef {
             id: RecordId::new("Outer"),
-            fields: vec![
-                FieldDef {
-                    name: FieldName::new("inner"),
-                    type_expr: TypeExpr::Record(RecordId::new("Inner")),
-                    doc: None,
-                },
-            ],
+            fields: vec![FieldDef {
+                name: FieldName::new("inner"),
+                type_expr: TypeExpr::Record(RecordId::new("Inner")),
+                doc: None,
+            }],
             doc: None,
             deprecated: None,
         });
 
         let module = lower_contract(&contract);
 
-        let outer = module.records.iter().find(|r| r.class_name == "Outer").unwrap();
+        let outer = module
+            .records
+            .iter()
+            .find(|r| r.class_name == "Outer")
+            .unwrap();
         assert_eq!(outer.fields[0].swift_type, "Inner");
     }
 }

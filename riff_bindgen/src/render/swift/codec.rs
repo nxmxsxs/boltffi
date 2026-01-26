@@ -63,10 +63,16 @@ pub fn decode_inline(codec: &CodecPlan) -> String {
     let (reader, decode_return) = decode_expr(codec);
     match decode_return {
         DecodeReturn::BareValue(size) => {
-            format!("{{ let v = {}; {} += {}; return v }}()", reader, OFFSET_VAR, size)
+            format!(
+                "{{ let v = {}; {} += {}; return v }}()",
+                reader, OFFSET_VAR, size
+            )
         }
         DecodeReturn::WithSize => {
-            format!("{{ let (v, s) = {}; {} += s; return v }}()", reader, OFFSET_VAR)
+            format!(
+                "{{ let (v, s) = {}; {} += s; return v }}()",
+                reader, OFFSET_VAR
+            )
         }
     }
 }
@@ -113,9 +119,7 @@ pub fn decode_with_wire_buffer(codec: &CodecPlan, wire_buffer_expr: &str) -> Str
             .replace("wireBuffer: wire", &format!("wireBuffer: {}", wire_let))
             .replace(OFFSET_VAR, "0")
     } else {
-        reader
-            .replace("wire", &wire_let)
-            .replace(OFFSET_VAR, "0")
+        reader.replace("wire", &wire_let).replace(OFFSET_VAR, "0")
     };
     match decode_return {
         DecodeReturn::BareValue(_) => expr,
@@ -219,19 +223,58 @@ fn decode_expr(codec: &CodecPlan) -> (String, DecodeReturn) {
 
 fn decode_primitive(p: PrimitiveType) -> (String, DecodeReturn) {
     match p {
-        PrimitiveType::Bool => (format!("wire.readBool(at: {})", OFFSET_VAR), DecodeReturn::BareValue(1)),
-        PrimitiveType::I8 => (format!("wire.readI8(at: {})", OFFSET_VAR), DecodeReturn::BareValue(1)),
-        PrimitiveType::U8 => (format!("wire.readU8(at: {})", OFFSET_VAR), DecodeReturn::BareValue(1)),
-        PrimitiveType::I16 => (format!("wire.readI16(at: {})", OFFSET_VAR), DecodeReturn::BareValue(2)),
-        PrimitiveType::U16 => (format!("wire.readU16(at: {})", OFFSET_VAR), DecodeReturn::BareValue(2)),
-        PrimitiveType::I32 => (format!("wire.readI32(at: {})", OFFSET_VAR), DecodeReturn::BareValue(4)),
-        PrimitiveType::U32 => (format!("wire.readU32(at: {})", OFFSET_VAR), DecodeReturn::BareValue(4)),
-        PrimitiveType::I64 => (format!("wire.readI64(at: {})", OFFSET_VAR), DecodeReturn::BareValue(8)),
-        PrimitiveType::U64 => (format!("wire.readU64(at: {})", OFFSET_VAR), DecodeReturn::BareValue(8)),
-        PrimitiveType::ISize => (format!("Int(wire.readI64(at: {}))", OFFSET_VAR), DecodeReturn::BareValue(8)),
-        PrimitiveType::USize => (format!("UInt(wire.readU64(at: {}))", OFFSET_VAR), DecodeReturn::BareValue(8)),
-        PrimitiveType::F32 => (format!("wire.readF32(at: {})", OFFSET_VAR), DecodeReturn::BareValue(4)),
-        PrimitiveType::F64 => (format!("wire.readF64(at: {})", OFFSET_VAR), DecodeReturn::BareValue(8)),
+        PrimitiveType::Bool => (
+            format!("wire.readBool(at: {})", OFFSET_VAR),
+            DecodeReturn::BareValue(1),
+        ),
+        PrimitiveType::I8 => (
+            format!("wire.readI8(at: {})", OFFSET_VAR),
+            DecodeReturn::BareValue(1),
+        ),
+        PrimitiveType::U8 => (
+            format!("wire.readU8(at: {})", OFFSET_VAR),
+            DecodeReturn::BareValue(1),
+        ),
+        PrimitiveType::I16 => (
+            format!("wire.readI16(at: {})", OFFSET_VAR),
+            DecodeReturn::BareValue(2),
+        ),
+        PrimitiveType::U16 => (
+            format!("wire.readU16(at: {})", OFFSET_VAR),
+            DecodeReturn::BareValue(2),
+        ),
+        PrimitiveType::I32 => (
+            format!("wire.readI32(at: {})", OFFSET_VAR),
+            DecodeReturn::BareValue(4),
+        ),
+        PrimitiveType::U32 => (
+            format!("wire.readU32(at: {})", OFFSET_VAR),
+            DecodeReturn::BareValue(4),
+        ),
+        PrimitiveType::I64 => (
+            format!("wire.readI64(at: {})", OFFSET_VAR),
+            DecodeReturn::BareValue(8),
+        ),
+        PrimitiveType::U64 => (
+            format!("wire.readU64(at: {})", OFFSET_VAR),
+            DecodeReturn::BareValue(8),
+        ),
+        PrimitiveType::ISize => (
+            format!("Int(wire.readI64(at: {}))", OFFSET_VAR),
+            DecodeReturn::BareValue(8),
+        ),
+        PrimitiveType::USize => (
+            format!("UInt(wire.readU64(at: {}))", OFFSET_VAR),
+            DecodeReturn::BareValue(8),
+        ),
+        PrimitiveType::F32 => (
+            format!("wire.readF32(at: {})", OFFSET_VAR),
+            DecodeReturn::BareValue(4),
+        ),
+        PrimitiveType::F64 => (
+            format!("wire.readF64(at: {})", OFFSET_VAR),
+            DecodeReturn::BareValue(8),
+        ),
     }
 }
 
@@ -263,10 +306,15 @@ fn decode_builtin(id: &str) -> (String, DecodeReturn) {
 fn decode_record(name: &str, layout: &RecordLayout) -> (String, DecodeReturn) {
     let class_name = pascal_case(name);
     match layout {
-        RecordLayout::Blittable { .. } | RecordLayout::Encoded { .. } | RecordLayout::Recursive => (
-            format!("{}.decode(wireBuffer: wire, at: {})", class_name, OFFSET_VAR),
-            DecodeReturn::WithSize,
-        ),
+        RecordLayout::Blittable { .. } | RecordLayout::Encoded { .. } | RecordLayout::Recursive => {
+            (
+                format!(
+                    "{}.decode(wireBuffer: wire, at: {})",
+                    class_name, OFFSET_VAR
+                ),
+                DecodeReturn::WithSize,
+            )
+        }
     }
 }
 
@@ -278,7 +326,10 @@ fn decode_enum(name: &str, layout: &EnumLayout) -> (String, DecodeReturn) {
             DecodeReturn::BareValue(4),
         ),
         EnumLayout::Data { .. } | EnumLayout::Recursive => (
-            format!("{}.decode(wireBuffer: wire, at: {})", class_name, OFFSET_VAR),
+            format!(
+                "{}.decode(wireBuffer: wire, at: {})",
+                class_name, OFFSET_VAR
+            ),
             DecodeReturn::WithSize,
         ),
     }
@@ -296,7 +347,10 @@ fn decode_vec(element: &CodecPlan, layout: &VecLayout) -> (String, DecodeReturn)
         VecLayout::Blittable { .. } => {
             let element_type = swift_type(element);
             (
-                format!("wire.readBlittableArrayWithSize(at: {}, as: {}.self)", OFFSET_VAR, element_type),
+                format!(
+                    "wire.readBlittableArrayWithSize(at: {}, as: {}.self)",
+                    OFFSET_VAR, element_type
+                ),
                 DecodeReturn::WithSize,
             )
         }
@@ -310,7 +364,10 @@ fn decode_vec(element: &CodecPlan, layout: &VecLayout) -> (String, DecodeReturn)
                 DecodeReturn::WithSize => inner_replaced,
             };
             (
-                format!("wire.readArray(at: {}, reader: {{ {} }})", OFFSET_VAR, tuple_reader),
+                format!(
+                    "wire.readArray(at: {}, reader: {{ {} }})",
+                    OFFSET_VAR, tuple_reader
+                ),
                 DecodeReturn::WithSize,
             )
         }
@@ -327,7 +384,10 @@ fn decode_option(inner: &CodecPlan) -> (String, DecodeReturn) {
         DecodeReturn::WithSize => inner_replaced,
     };
     (
-        format!("wire.readOptional(at: {}, reader: {{ {} }})", OFFSET_VAR, tuple_reader),
+        format!(
+            "wire.readOptional(at: {}, reader: {{ {} }})",
+            OFFSET_VAR, tuple_reader
+        ),
         DecodeReturn::WithSize,
     )
 }
@@ -335,7 +395,7 @@ fn decode_option(inner: &CodecPlan) -> (String, DecodeReturn) {
 fn decode_result(ok: &CodecPlan, err: &CodecPlan) -> (String, DecodeReturn) {
     let (ok_reader, ok_return) = decode_expr(ok);
     let (err_reader, err_return) = decode_expr(err);
-    
+
     let ok_replaced = ok_reader.replace(OFFSET_VAR, "$0");
     let ok_tuple = match ok_return {
         DecodeReturn::BareValue(size) => {
@@ -343,7 +403,7 @@ fn decode_result(ok: &CodecPlan, err: &CodecPlan) -> (String, DecodeReturn) {
         }
         DecodeReturn::WithSize => ok_replaced,
     };
-    
+
     let err_replaced = err_reader.replace(OFFSET_VAR, "$0");
     let err_tuple = match err_return {
         DecodeReturn::BareValue(size) => {
@@ -351,9 +411,12 @@ fn decode_result(ok: &CodecPlan, err: &CodecPlan) -> (String, DecodeReturn) {
         }
         DecodeReturn::WithSize => err_replaced,
     };
-    
+
     (
-        format!("wire.readResult(at: {}, okReader: {{ {} }}, errReader: {{ {} }})", OFFSET_VAR, ok_tuple, err_tuple),
+        format!(
+            "wire.readResult(at: {}, okReader: {{ {} }}, errReader: {{ {} }})",
+            OFFSET_VAR, ok_tuple, err_tuple
+        ),
         DecodeReturn::WithSize,
     )
 }
@@ -384,19 +447,71 @@ fn encode_info(codec: &CodecPlan, name: &str) -> (String, String, String) {
 
 fn encode_primitive(p: PrimitiveType, name: &str) -> (String, String, String) {
     match p {
-        PrimitiveType::Bool => ("1".into(), format!("data.appendBool({})", name), format!("bytes.appendBool({})", name)),
-        PrimitiveType::I8 => ("1".into(), format!("data.appendI8({})", name), format!("bytes.appendI8({})", name)),
-        PrimitiveType::U8 => ("1".into(), format!("data.appendU8({})", name), format!("bytes.appendU8({})", name)),
-        PrimitiveType::I16 => ("2".into(), format!("data.appendI16({})", name), format!("bytes.appendI16({})", name)),
-        PrimitiveType::U16 => ("2".into(), format!("data.appendU16({})", name), format!("bytes.appendU16({})", name)),
-        PrimitiveType::I32 => ("4".into(), format!("data.appendI32({})", name), format!("bytes.appendI32({})", name)),
-        PrimitiveType::U32 => ("4".into(), format!("data.appendU32({})", name), format!("bytes.appendU32({})", name)),
-        PrimitiveType::I64 => ("8".into(), format!("data.appendI64({})", name), format!("bytes.appendI64({})", name)),
-        PrimitiveType::U64 => ("8".into(), format!("data.appendU64({})", name), format!("bytes.appendU64({})", name)),
-        PrimitiveType::ISize => ("8".into(), format!("data.appendI64(Int64({}))", name), format!("bytes.appendI64(Int64({}))", name)),
-        PrimitiveType::USize => ("8".into(), format!("data.appendU64(UInt64({}))", name), format!("bytes.appendU64(UInt64({}))", name)),
-        PrimitiveType::F32 => ("4".into(), format!("data.appendF32({})", name), format!("bytes.appendF32({})", name)),
-        PrimitiveType::F64 => ("8".into(), format!("data.appendF64({})", name), format!("bytes.appendF64({})", name)),
+        PrimitiveType::Bool => (
+            "1".into(),
+            format!("data.appendBool({})", name),
+            format!("bytes.appendBool({})", name),
+        ),
+        PrimitiveType::I8 => (
+            "1".into(),
+            format!("data.appendI8({})", name),
+            format!("bytes.appendI8({})", name),
+        ),
+        PrimitiveType::U8 => (
+            "1".into(),
+            format!("data.appendU8({})", name),
+            format!("bytes.appendU8({})", name),
+        ),
+        PrimitiveType::I16 => (
+            "2".into(),
+            format!("data.appendI16({})", name),
+            format!("bytes.appendI16({})", name),
+        ),
+        PrimitiveType::U16 => (
+            "2".into(),
+            format!("data.appendU16({})", name),
+            format!("bytes.appendU16({})", name),
+        ),
+        PrimitiveType::I32 => (
+            "4".into(),
+            format!("data.appendI32({})", name),
+            format!("bytes.appendI32({})", name),
+        ),
+        PrimitiveType::U32 => (
+            "4".into(),
+            format!("data.appendU32({})", name),
+            format!("bytes.appendU32({})", name),
+        ),
+        PrimitiveType::I64 => (
+            "8".into(),
+            format!("data.appendI64({})", name),
+            format!("bytes.appendI64({})", name),
+        ),
+        PrimitiveType::U64 => (
+            "8".into(),
+            format!("data.appendU64({})", name),
+            format!("bytes.appendU64({})", name),
+        ),
+        PrimitiveType::ISize => (
+            "8".into(),
+            format!("data.appendI64(Int64({}))", name),
+            format!("bytes.appendI64(Int64({}))", name),
+        ),
+        PrimitiveType::USize => (
+            "8".into(),
+            format!("data.appendU64(UInt64({}))", name),
+            format!("bytes.appendU64(UInt64({}))", name),
+        ),
+        PrimitiveType::F32 => (
+            "4".into(),
+            format!("data.appendF32({})", name),
+            format!("bytes.appendF32({})", name),
+        ),
+        PrimitiveType::F64 => (
+            "8".into(),
+            format!("data.appendF64({})", name),
+            format!("bytes.appendF64({})", name),
+        ),
     }
 }
 
@@ -478,9 +593,19 @@ fn encode_vec(element: &CodecPlan, layout: &VecLayout, name: &str) -> (String, S
             format!("bytes.appendBlittableArray({})", name),
         ),
         VecLayout::Encoded => (
-            format!("(4 + {}.reduce(0) {{ $0 + {} }})", name, inner_size.replace("item", "$1")),
-            format!("data.appendU32(UInt32({}.count)); for item in {} {{ {} }}", name, name, inner_data),
-            format!("bytes.appendU32(UInt32({}.count)); for item in {} {{ {} }}", name, name, inner_bytes),
+            format!(
+                "(4 + {}.reduce(0) {{ $0 + {} }})",
+                name,
+                inner_size.replace("item", "$1")
+            ),
+            format!(
+                "data.appendU32(UInt32({}.count)); for item in {} {{ {} }}",
+                name, name, inner_data
+            ),
+            format!(
+                "bytes.appendU32(UInt32({}.count)); for item in {} {{ {} }}",
+                name, name, inner_bytes
+            ),
         ),
     }
 }
@@ -489,8 +614,14 @@ fn encode_option(inner: &CodecPlan, name: &str) -> (String, String, String) {
     let (inner_size, inner_data, inner_bytes) = encode_info(inner, "v");
     (
         format!("({}.map {{ v in 1 + {} }} ?? 1)", name, inner_size),
-        format!("if let v = {} {{ data.appendU8(1); {} }} else {{ data.appendU8(0) }}", name, inner_data),
-        format!("if let v = {} {{ bytes.appendU8(1); {} }} else {{ bytes.appendU8(0) }}", name, inner_bytes),
+        format!(
+            "if let v = {} {{ data.appendU8(1); {} }} else {{ data.appendU8(0) }}",
+            name, inner_data
+        ),
+        format!(
+            "if let v = {} {{ bytes.appendU8(1); {} }} else {{ bytes.appendU8(0) }}",
+            name, inner_bytes
+        ),
     )
 }
 
@@ -540,13 +671,17 @@ mod tests {
             (PrimitiveType::ISize, 8),
             (PrimitiveType::USize, 8),
         ];
-        
+
         for (prim, expected_size) in cases {
             let codec = CodecPlan::Primitive(prim);
             let (_, decode_return) = decode_expr(&codec);
             match decode_return {
                 DecodeReturn::BareValue(size) => {
-                    assert_eq!(size, expected_size, "Primitive {:?} should have size {}", prim, expected_size);
+                    assert_eq!(
+                        size, expected_size,
+                        "Primitive {:?} should have size {}",
+                        prim, expected_size
+                    );
                 }
                 DecodeReturn::WithSize => {
                     panic!("Primitive {:?} should return BareValue, not WithSize", prim);
@@ -605,8 +740,16 @@ mod tests {
             layout: RecordLayout::Blittable {
                 size: 16,
                 fields: vec![
-                    BlittableField { name: FieldName::new("x"), offset: 0, primitive: PrimitiveType::F64 },
-                    BlittableField { name: FieldName::new("y"), offset: 8, primitive: PrimitiveType::F64 },
+                    BlittableField {
+                        name: FieldName::new("x"),
+                        offset: 0,
+                        primitive: PrimitiveType::F64,
+                    },
+                    BlittableField {
+                        name: FieldName::new("y"),
+                        offset: 8,
+                        primitive: PrimitiveType::F64,
+                    },
                 ],
             },
         };
@@ -668,19 +811,55 @@ mod tests {
 
     #[test]
     fn swift_type_maps_primitives_correctly() {
-        assert_eq!(swift_type(&CodecPlan::Primitive(PrimitiveType::Bool)), "Bool");
+        assert_eq!(
+            swift_type(&CodecPlan::Primitive(PrimitiveType::Bool)),
+            "Bool"
+        );
         assert_eq!(swift_type(&CodecPlan::Primitive(PrimitiveType::I8)), "Int8");
-        assert_eq!(swift_type(&CodecPlan::Primitive(PrimitiveType::U8)), "UInt8");
-        assert_eq!(swift_type(&CodecPlan::Primitive(PrimitiveType::I16)), "Int16");
-        assert_eq!(swift_type(&CodecPlan::Primitive(PrimitiveType::U16)), "UInt16");
-        assert_eq!(swift_type(&CodecPlan::Primitive(PrimitiveType::I32)), "Int32");
-        assert_eq!(swift_type(&CodecPlan::Primitive(PrimitiveType::U32)), "UInt32");
-        assert_eq!(swift_type(&CodecPlan::Primitive(PrimitiveType::I64)), "Int64");
-        assert_eq!(swift_type(&CodecPlan::Primitive(PrimitiveType::U64)), "UInt64");
-        assert_eq!(swift_type(&CodecPlan::Primitive(PrimitiveType::F32)), "Float");
-        assert_eq!(swift_type(&CodecPlan::Primitive(PrimitiveType::F64)), "Double");
-        assert_eq!(swift_type(&CodecPlan::Primitive(PrimitiveType::ISize)), "Int");
-        assert_eq!(swift_type(&CodecPlan::Primitive(PrimitiveType::USize)), "UInt");
+        assert_eq!(
+            swift_type(&CodecPlan::Primitive(PrimitiveType::U8)),
+            "UInt8"
+        );
+        assert_eq!(
+            swift_type(&CodecPlan::Primitive(PrimitiveType::I16)),
+            "Int16"
+        );
+        assert_eq!(
+            swift_type(&CodecPlan::Primitive(PrimitiveType::U16)),
+            "UInt16"
+        );
+        assert_eq!(
+            swift_type(&CodecPlan::Primitive(PrimitiveType::I32)),
+            "Int32"
+        );
+        assert_eq!(
+            swift_type(&CodecPlan::Primitive(PrimitiveType::U32)),
+            "UInt32"
+        );
+        assert_eq!(
+            swift_type(&CodecPlan::Primitive(PrimitiveType::I64)),
+            "Int64"
+        );
+        assert_eq!(
+            swift_type(&CodecPlan::Primitive(PrimitiveType::U64)),
+            "UInt64"
+        );
+        assert_eq!(
+            swift_type(&CodecPlan::Primitive(PrimitiveType::F32)),
+            "Float"
+        );
+        assert_eq!(
+            swift_type(&CodecPlan::Primitive(PrimitiveType::F64)),
+            "Double"
+        );
+        assert_eq!(
+            swift_type(&CodecPlan::Primitive(PrimitiveType::ISize)),
+            "Int"
+        );
+        assert_eq!(
+            swift_type(&CodecPlan::Primitive(PrimitiveType::USize)),
+            "UInt"
+        );
     }
 
     #[test]
@@ -699,7 +878,11 @@ mod tests {
             element: Box::new(CodecPlan::Primitive(PrimitiveType::U8)),
             layout: VecLayout::Blittable { element_size: 1 },
         };
-        assert_eq!(swift_type(&codec), "Data", "Vec<u8> should map to Data in Swift");
+        assert_eq!(
+            swift_type(&codec),
+            "Data",
+            "Vec<u8> should map to Data in Swift"
+        );
     }
 
     #[test]

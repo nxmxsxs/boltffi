@@ -100,9 +100,9 @@ impl SwiftAsyncResult {
                     Some(codec::decode_value_at(codec_plan, "0"))
                 }
             }
-            Self::Encoded { codec: codec_plan, .. } => {
-                Some(codec::decode_value_at(codec_plan, "0"))
-            }
+            Self::Encoded {
+                codec: codec_plan, ..
+            } => Some(codec::decode_value_at(codec_plan, "0")),
             _ => None,
         }
     }
@@ -128,7 +128,8 @@ pub struct SwiftModule {
 impl SwiftModule {
     pub fn has_async(&self) -> bool {
         self.functions.iter().any(|f| f.mode.is_async())
-            || self.classes
+            || self
+                .classes
                 .iter()
                 .any(|c| c.methods.iter().any(|m| m.mode.is_async()))
     }
@@ -308,8 +309,14 @@ pub struct SwiftStream {
 #[derive(Debug, Clone)]
 pub enum SwiftStreamMode {
     Async,
-    Batch { class_name: String, method_name_pascal: String },
-    Callback { class_name: String, method_name_pascal: String },
+    Batch {
+        class_name: String,
+        method_name_pascal: String,
+    },
+    Callback {
+        class_name: String,
+        method_name_pascal: String,
+    },
 }
 
 #[derive(Debug, Clone)]
@@ -507,7 +514,10 @@ impl SwiftParam {
         };
         match &self.label {
             Some(label) if label != &self.name => {
-                format!("{} {}: {}{}", label, self.name, inout_prefix, self.swift_type)
+                format!(
+                    "{} {}: {}{}",
+                    label, self.name, inout_prefix, self.swift_type
+                )
             }
             _ => format!("{}: {}{}", self.name, inout_prefix, self.swift_type),
         }
@@ -582,10 +592,9 @@ impl SwiftParam {
 
     pub fn closure_wrap_open(&self) -> Option<String> {
         match &self.conversion {
-            SwiftConversion::ToString => Some(format!(
-                "{}.withCString {{ {}Ptr in",
-                self.name, self.name
-            )),
+            SwiftConversion::ToString => {
+                Some(format!("{}.withCString {{ {}Ptr in", self.name, self.name))
+            }
             SwiftConversion::ToWireBuffer { codec } => {
                 if matches!(codec, CodecPlan::Vec { .. }) {
                     Some(format!(
@@ -777,9 +786,9 @@ impl SwiftReturn {
 
     pub fn decode_expr(&self) -> Option<String> {
         match self {
-            SwiftReturn::FromWireBuffer { codec: codec_plan, .. } => {
-                Some(codec::decode_value_at(codec_plan, "0"))
-            }
+            SwiftReturn::FromWireBuffer {
+                codec: codec_plan, ..
+            } => Some(codec::decode_value_at(codec_plan, "0")),
             SwiftReturn::Throws { ok, .. } => ok.decode_expr(),
             _ => None,
         }

@@ -244,7 +244,12 @@ fn build_android_targets(config: &Config, release: bool) -> Result<()> {
     Err(CliError::BuildFailed { targets: failed })
 }
 
-fn generate_apple_bindings(config: &Config, layout: SpmLayout, package_root: &Path, use_ir: bool) -> Result<()> {
+fn generate_apple_bindings(
+    config: &Config,
+    layout: SpmLayout,
+    package_root: &Path,
+    use_ir: bool,
+) -> Result<()> {
     let swift_output_dir = match layout {
         SpmLayout::Bundled => config
             .apple_spm_wrapper_sources()

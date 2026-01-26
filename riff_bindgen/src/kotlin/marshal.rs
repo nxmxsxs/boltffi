@@ -389,8 +389,7 @@ impl ResultView {
             Type::Vec(inner) => match inner.as_ref() {
                 Type::Primitive(p) => ResultOkKind::VecPrimitive {
                     primitive: *p,
-                    len_fn: riff_ffi_rules::naming::function_ffi_vec_len(func_name)
-                        .into_string(),
+                    len_fn: riff_ffi_rules::naming::function_ffi_vec_len(func_name).into_string(),
                     copy_fn: riff_ffi_rules::naming::function_ffi_vec_copy_into(func_name)
                         .into_string(),
                 },
@@ -937,13 +936,13 @@ impl JniParamInfo {
                 Type::BoxedTrait(name) => module
                     .and_then(|module| {
                         module
-                        .callback_traits
-                        .iter()
-                        .any(|t| t.name == *name)
-                        .then(|| HandleKind::Callback {
-                            create_fn: naming::callback_create_fn(name).into_string(),
-                        })
-                })
+                            .callback_traits
+                            .iter()
+                            .any(|t| t.name == *name)
+                            .then(|| HandleKind::Callback {
+                                create_fn: naming::callback_create_fn(name).into_string(),
+                            })
+                    })
                     .unwrap_or(HandleKind::Opaque),
                 _ => HandleKind::None,
             },

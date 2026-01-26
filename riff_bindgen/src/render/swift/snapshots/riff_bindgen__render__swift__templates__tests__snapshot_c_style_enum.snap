@@ -1,0 +1,23 @@
+---
+source: riff_bindgen/src/render/swift/templates.rs
+expression: render_enum(&e)
+---
+public enum Status: Int32, Hashable, Sendable, CaseIterable {
+    case active = 0
+    case inactive = 1
+    case pending = 2
+
+    @usableFromInline init(fromC c: Int32) { self = Status(rawValue: c)! }
+    @usableFromInline var cValue: Int32 { rawValue }
+
+    @inlinable static func decode(wireBuffer wire: WireBuffer, at offset: Int) -> (value: Status, size: Int) {
+        (Status(rawValue: wire.readI32(at: offset))!, 4)
+    }
+}
+
+extension Status: WireEncodable {
+    @usableFromInline static var isBlittable: Bool { true }
+    @inlinable func wireEncodedSize() -> Int { 4 }
+    @inlinable func wireEncodeTo(_ data: inout Data) { data.appendI32(rawValue) }
+    @inlinable func wireEncodeToBytes(_ bytes: inout [UInt8]) { bytes.appendI32(rawValue) }
+}

@@ -42,8 +42,14 @@ pub struct AbiStream {
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
 pub enum CallId {
     Function(FunctionId),
-    Method { class_id: ClassId, method_id: MethodId },
-    Constructor { class_id: ClassId, index: usize },
+    Method {
+        class_id: ClassId,
+        method_id: MethodId,
+    },
+    Constructor {
+        class_id: ClassId,
+        index: usize,
+    },
 }
 
 #[derive(Debug, Clone)]
@@ -76,9 +82,17 @@ pub struct AsyncCall {
 pub enum AsyncResultTransport {
     Void,
     Direct(AbiType),
-    Encoded { codec: CodecPlan },
-    Handle { class_id: ClassId, nullable: bool },
-    Callback { callback_id: CallbackId, nullable: bool },
+    Encoded {
+        codec: CodecPlan,
+    },
+    Handle {
+        class_id: ClassId,
+        nullable: bool,
+    },
+    Callback {
+        callback_id: CallbackId,
+        nullable: bool,
+    },
 }
 
 #[derive(Debug, Clone)]
@@ -127,9 +141,17 @@ pub enum ParamRole {
 pub enum ReturnTransport {
     Void,
     Direct(AbiType),
-    Encoded { codec: CodecPlan },
-    Handle { class_id: ClassId, nullable: bool },
-    Callback { callback_id: CallbackId, nullable: bool },
+    Encoded {
+        codec: CodecPlan,
+    },
+    Handle {
+        class_id: ClassId,
+        nullable: bool,
+    },
+    Callback {
+        callback_id: CallbackId,
+        nullable: bool,
+    },
 }
 
 #[derive(Debug, Clone)]

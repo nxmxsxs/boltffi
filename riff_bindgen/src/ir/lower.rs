@@ -4,9 +4,9 @@ use std::collections::{HashMap, HashSet};
 use riff_ffi_rules::naming;
 
 use crate::ir::abi::{
-    AbiCall, AbiCallbackInvocation, AbiCallbackMethod, AbiContract, AbiParam, AbiStream,
-    AsyncCall, AsyncResultTransport, CallId, CallMode, ErrorTransport, ParamRole,
-    ReturnTransport, StreamItemTransport,
+    AbiCall, AbiCallbackInvocation, AbiCallbackMethod, AbiContract, AbiParam, AbiStream, AsyncCall,
+    AsyncResultTransport, CallId, CallMode, ErrorTransport, ParamRole, ReturnTransport,
+    StreamItemTransport,
 };
 use crate::ir::callback_plan::{
     CallbackInvocationPlan, CallbackMethodPlan, CallbackParamPlan, CallbackParamStrategy,
@@ -254,7 +254,8 @@ impl<'c> Lowerer<'c> {
                 (CallMode::Sync, return_, error)
             }
             CallPlanKind::Async { async_plan } => {
-                let mode = CallMode::Async(Box::new(self.async_call_for_function(func, async_plan)));
+                let mode =
+                    CallMode::Async(Box::new(self.async_call_for_function(func, async_plan)));
                 (
                     mode,
                     ReturnTransport::Direct(AbiType::Pointer),
@@ -276,7 +277,9 @@ impl<'c> Lowerer<'c> {
                 (CallMode::Sync, return_, error)
             }
             CallPlanKind::Async { async_plan } => {
-                let mode = CallMode::Async(Box::new(self.async_call_for_method(class, method, async_plan)));
+                let mode = CallMode::Async(Box::new(
+                    self.async_call_for_method(class, method, async_plan),
+                ));
                 (
                     mode,
                     ReturnTransport::Direct(AbiType::Pointer),
@@ -516,10 +519,7 @@ impl<'c> Lowerer<'c> {
         }
     }
 
-    fn callback_return_and_error(
-        &self,
-        returns: &ReturnDef,
-    ) -> (ReturnTransport, ErrorTransport) {
+    fn callback_return_and_error(&self, returns: &ReturnDef) -> (ReturnTransport, ErrorTransport) {
         match returns {
             ReturnDef::Void => (ReturnTransport::Void, ErrorTransport::None),
             ReturnDef::Value(ty) => {
@@ -685,13 +685,12 @@ impl<'c> Lowerer<'c> {
             .catalog
             .all_classes()
             .flat_map(|class| {
-                class
-                    .constructors
-                    .iter()
-                    .enumerate()
-                    .map(|(index, ctor)| {
-                        ((class.id.clone(), index), self.lower_constructor(class, ctor))
-                    })
+                class.constructors.iter().enumerate().map(|(index, ctor)| {
+                    (
+                        (class.id.clone(), index),
+                        self.lower_constructor(class, ctor),
+                    )
+                })
             })
             .collect();
 
@@ -706,7 +705,12 @@ impl<'c> Lowerer<'c> {
             .contract
             .catalog
             .all_callbacks()
-            .map(|callback| (callback.id.clone(), self.lower_callback_invocation(callback)))
+            .map(|callback| {
+                (
+                    callback.id.clone(),
+                    self.lower_callback_invocation(callback),
+                )
+            })
             .collect();
 
         let record_codecs = self
@@ -821,9 +825,7 @@ impl<'c> Lowerer<'c> {
         };
 
         CallPlan {
-            target: CallTarget::GlobalSymbol(
-                self.constructor_symbol(&class.id, ctor.name()),
-            ),
+            target: CallTarget::GlobalSymbol(self.constructor_symbol(&class.id, ctor.name())),
             params,
             kind: CallPlanKind::Sync { returns },
         }

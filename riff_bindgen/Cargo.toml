@@ -17,5 +17,8 @@ proc-macro2 = "1.0"
 walkdir = "2.4"
 indexmap = "2.7"
 
+[dev-dependencies]
+insta = "1.46"
+
 [lints]
 workspace = true

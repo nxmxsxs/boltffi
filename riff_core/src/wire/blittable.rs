@@ -74,11 +74,7 @@ pub fn decode_blittable_slice<T: Blittable>(buf: &[u8]) -> Option<Vec<T>> {
 pub fn encode_blittable<T: Blittable>(value: &T, buf: &mut [u8]) -> usize {
     let size = std::mem::size_of::<T>();
     unsafe {
-        std::ptr::copy_nonoverlapping(
-            value as *const T as *const u8,
-            buf.as_mut_ptr(),
-            size,
-        );
+        std::ptr::copy_nonoverlapping(value as *const T as *const u8, buf.as_mut_ptr(), size);
     }
     size
 }

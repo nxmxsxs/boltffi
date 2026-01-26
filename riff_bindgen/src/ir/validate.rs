@@ -1,14 +1,28 @@
 use crate::ir::contract::{FfiContract, TypeCatalog};
-use crate::ir::definitions::{EnumRepr, ParamDef, ParamPassing, ReturnDef, StreamDef, VariantPayload};
+use crate::ir::definitions::{
+    EnumRepr, ParamDef, ParamPassing, ReturnDef, StreamDef, VariantPayload,
+};
 use crate::ir::ids::{ClassId, EnumId, FieldName, FunctionId, ParamName, StreamId, VariantName};
 use crate::ir::types::TypeExpr;
 
 #[derive(Debug, Clone)]
 pub enum ValidationError {
-    UnresolvedType { context: String, error: String },
-    InvalidParamPassing { context: String, message: String },
-    InvalidPrimitive { context: String, message: String },
-    NonEncodableInData { context: String, message: String },
+    UnresolvedType {
+        context: String,
+        error: String,
+    },
+    InvalidParamPassing {
+        context: String,
+        message: String,
+    },
+    InvalidPrimitive {
+        context: String,
+        message: String,
+    },
+    NonEncodableInData {
+        context: String,
+        message: String,
+    },
     InvalidStreamItemType {
         class_id: ClassId,
         stream_id: StreamId,
