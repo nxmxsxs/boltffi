@@ -516,3 +516,204 @@ fn encode_result(ok: &CodecPlan, err: &CodecPlan, name: &str) -> (String, String
         ),
     )
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::ir::codec::BlittableField;
+    use crate::ir::ids::{EnumId, FieldName, RecordId};
+
+    #[test]
+    fn primitives_return_bare_value_with_correct_size() {
+        let cases = [
+            (PrimitiveType::Bool, 1),
+            (PrimitiveType::I8, 1),
+            (PrimitiveType::U8, 1),
+            (PrimitiveType::I16, 2),
+            (PrimitiveType::U16, 2),
+            (PrimitiveType::I32, 4),
+            (PrimitiveType::U32, 4),
+            (PrimitiveType::I64, 8),
+            (PrimitiveType::U64, 8),
+            (PrimitiveType::F32, 4),
+            (PrimitiveType::F64, 8),
+            (PrimitiveType::ISize, 8),
+            (PrimitiveType::USize, 8),
+        ];
+        
+        for (prim, expected_size) in cases {
+            let codec = CodecPlan::Primitive(prim);
+            let (_, decode_return) = decode_expr(&codec);
+            match decode_return {
+                DecodeReturn::BareValue(size) => {
+                    assert_eq!(size, expected_size, "Primitive {:?} should have size {}", prim, expected_size);
+                }
+                DecodeReturn::WithSize => {
+                    panic!("Primitive {:?} should return BareValue, not WithSize", prim);
+                }
+            }
+        }
+    }
+
+    #[test]
+    fn string_returns_with_size() {
+        let codec = CodecPlan::String;
+        let (_, decode_return) = decode_expr(&codec);
+        assert!(
+            matches!(decode_return, DecodeReturn::WithSize),
+            "String should return WithSize because it's length-prefixed variable data"
+        );
+    }
+
+    #[test]
+    fn bytes_returns_with_size() {
+        let codec = CodecPlan::Bytes;
+        let (_, decode_return) = decode_expr(&codec);
+        assert!(
+            matches!(decode_return, DecodeReturn::WithSize),
+            "Bytes should return WithSize because it's length-prefixed variable data"
+        );
+    }
+
+    #[test]
+    fn option_returns_with_size() {
+        let codec = CodecPlan::Option(Box::new(CodecPlan::Primitive(PrimitiveType::I32)));
+        let (_, decode_return) = decode_expr(&codec);
+        assert!(
+            matches!(decode_return, DecodeReturn::WithSize),
+            "Option should return WithSize because size depends on Some/None"
+        );
+    }
+
+    #[test]
+    fn vec_returns_with_size() {
+        let codec = CodecPlan::Vec {
+            element: Box::new(CodecPlan::Primitive(PrimitiveType::I32)),
+            layout: VecLayout::Blittable { element_size: 4 },
+        };
+        let (_, decode_return) = decode_expr(&codec);
+        assert!(
+            matches!(decode_return, DecodeReturn::WithSize),
+            "Vec should return WithSize because size depends on element count"
+        );
+    }
+
+    #[test]
+    fn record_returns_with_size() {
+        let codec = CodecPlan::Record {
+            id: RecordId::new("Point"),
+            layout: RecordLayout::Blittable {
+                size: 16,
+                fields: vec![
+                    BlittableField { name: FieldName::new("x"), offset: 0, primitive: PrimitiveType::F64 },
+                    BlittableField { name: FieldName::new("y"), offset: 8, primitive: PrimitiveType::F64 },
+                ],
+            },
+        };
+        let (_, decode_return) = decode_expr(&codec);
+        assert!(
+            matches!(decode_return, DecodeReturn::WithSize),
+            "Record.decode() returns (value, size) tuple, so DecodeReturn should be WithSize"
+        );
+    }
+
+    #[test]
+    fn c_style_enum_returns_bare_value() {
+        let codec = CodecPlan::Enum {
+            id: EnumId::new("Status"),
+            layout: EnumLayout::CStyle {
+                tag_type: PrimitiveType::I32,
+            },
+        };
+        let (_, decode_return) = decode_expr(&codec);
+        match decode_return {
+            DecodeReturn::BareValue(4) => {}
+            DecodeReturn::BareValue(other) => {
+                panic!("C-style enum should have size 4 (i32), got {}", other);
+            }
+            DecodeReturn::WithSize => {
+                panic!("C-style enum should return BareValue(4), not WithSize");
+            }
+        }
+    }
+
+    #[test]
+    fn data_enum_returns_with_size() {
+        let codec = CodecPlan::Enum {
+            id: EnumId::new("Value"),
+            layout: EnumLayout::Data {
+                tag_type: PrimitiveType::I32,
+                variants: vec![],
+            },
+        };
+        let (_, decode_return) = decode_expr(&codec);
+        assert!(
+            matches!(decode_return, DecodeReturn::WithSize),
+            "Data enum should return WithSize because payload size varies by variant"
+        );
+    }
+
+    #[test]
+    fn result_returns_with_size() {
+        let codec = CodecPlan::Result {
+            ok: Box::new(CodecPlan::Primitive(PrimitiveType::I32)),
+            err: Box::new(CodecPlan::String),
+        };
+        let (_, decode_return) = decode_expr(&codec);
+        assert!(
+            matches!(decode_return, DecodeReturn::WithSize),
+            "Result should return WithSize because size depends on Ok/Err"
+        );
+    }
+
+    #[test]
+    fn swift_type_maps_primitives_correctly() {
+        assert_eq!(swift_type(&CodecPlan::Primitive(PrimitiveType::Bool)), "Bool");
+        assert_eq!(swift_type(&CodecPlan::Primitive(PrimitiveType::I8)), "Int8");
+        assert_eq!(swift_type(&CodecPlan::Primitive(PrimitiveType::U8)), "UInt8");
+        assert_eq!(swift_type(&CodecPlan::Primitive(PrimitiveType::I16)), "Int16");
+        assert_eq!(swift_type(&CodecPlan::Primitive(PrimitiveType::U16)), "UInt16");
+        assert_eq!(swift_type(&CodecPlan::Primitive(PrimitiveType::I32)), "Int32");
+        assert_eq!(swift_type(&CodecPlan::Primitive(PrimitiveType::U32)), "UInt32");
+        assert_eq!(swift_type(&CodecPlan::Primitive(PrimitiveType::I64)), "Int64");
+        assert_eq!(swift_type(&CodecPlan::Primitive(PrimitiveType::U64)), "UInt64");
+        assert_eq!(swift_type(&CodecPlan::Primitive(PrimitiveType::F32)), "Float");
+        assert_eq!(swift_type(&CodecPlan::Primitive(PrimitiveType::F64)), "Double");
+        assert_eq!(swift_type(&CodecPlan::Primitive(PrimitiveType::ISize)), "Int");
+        assert_eq!(swift_type(&CodecPlan::Primitive(PrimitiveType::USize)), "UInt");
+    }
+
+    #[test]
+    fn swift_type_maps_string_to_string() {
+        assert_eq!(swift_type(&CodecPlan::String), "String");
+    }
+
+    #[test]
+    fn swift_type_maps_bytes_to_data() {
+        assert_eq!(swift_type(&CodecPlan::Bytes), "Data");
+    }
+
+    #[test]
+    fn swift_type_maps_vec_u8_to_data() {
+        let codec = CodecPlan::Vec {
+            element: Box::new(CodecPlan::Primitive(PrimitiveType::U8)),
+            layout: VecLayout::Blittable { element_size: 1 },
+        };
+        assert_eq!(swift_type(&codec), "Data", "Vec<u8> should map to Data in Swift");
+    }
+
+    #[test]
+    fn swift_type_maps_vec_to_array() {
+        let codec = CodecPlan::Vec {
+            element: Box::new(CodecPlan::Primitive(PrimitiveType::I32)),
+            layout: VecLayout::Blittable { element_size: 4 },
+        };
+        assert_eq!(swift_type(&codec), "[Int32]");
+    }
+
+    #[test]
+    fn swift_type_maps_option_to_optional() {
+        let codec = CodecPlan::Option(Box::new(CodecPlan::String));
+        assert_eq!(swift_type(&codec), "String?");
+    }
+}

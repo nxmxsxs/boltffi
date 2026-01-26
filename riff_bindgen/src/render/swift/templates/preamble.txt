@@ -175,55 +175,37 @@ final class FfiFutureState<T>: @unchecked Sendable {
         return (result, pos - offset)
     }
     @inlinable func readBlittable<T>(at offset: Int, as type: T.Type) -> T {
-        let end = offset + MemoryLayout<T>.size
-        guard end <= data.count else { fatalError("WireBuffer out of bounds") }
-        return data.withUnsafeBytes { $0.loadUnaligned(fromByteOffset: offset, as: T.self) }
+        data.withUnsafeBytes { $0.loadUnaligned(fromByteOffset: offset, as: T.self) }
     }
     @inlinable func readBlittableArray<T>(at offset: Int, as type: T.Type) -> [T] {
         let count = Int(readU32(at: offset))
         guard count > 0 else { return [] }
-        let byteCount = count * MemoryLayout<T>.stride
-        let start = offset + 4
-        let end = start + byteCount
-        guard end <= data.count else { fatalError("WireBuffer out of bounds") }
-        return Array<T>(unsafeUninitializedCapacity: count) { buffer, initializedCount in
-            let dest = UnsafeMutableRawBufferPointer(
-                start: UnsafeMutableRawPointer(buffer.baseAddress!),
-                count: byteCount
-            )
-            data.copyBytes(to: dest, from: start..<end)
-            initializedCount = count
+        return data.withUnsafeBytes { rawBuffer in
+            let ptr = rawBuffer.baseAddress!.advanced(by: offset + 4).assumingMemoryBound(to: T.self)
+            return Array(UnsafeBufferPointer(start: ptr, count: count))
         }
     }
     @inlinable func readBlittableArrayWithSize<T>(at offset: Int, as type: T.Type) -> (value: [T], size: Int) {
         let count = Int(readU32(at: offset))
         guard count > 0 else { return ([], 4) }
-        let byteCount = count * MemoryLayout<T>.stride
-        let start = offset + 4
-        let size = 4 + byteCount
-        let end = start + byteCount
-        guard end <= data.count else { fatalError("WireBuffer out of bounds") }
-        let arr = Array<T>(unsafeUninitializedCapacity: count) { buffer, initializedCount in
-            let dest = UnsafeMutableRawBufferPointer(
-                start: UnsafeMutableRawPointer(buffer.baseAddress!),
-                count: byteCount
-            )
-            data.copyBytes(to: dest, from: start..<end)
-            initializedCount = count
+        let size = 4 + count * MemoryLayout<T>.stride
+        let arr = data.withUnsafeBytes { rawBuffer in
+            let ptr = rawBuffer.baseAddress!.advanced(by: offset + 4).assumingMemoryBound(to: T.self)
+            return Array(UnsafeBufferPointer(start: ptr, count: count))
         }
         return (arr, size)
     }
-    @inlinable func readBytes(at offset: Int) -> Data {
+    @inlinable func readBytes(at offset: Int) -> [UInt8] {
         let count = Int(readU32(at: offset))
-        guard count > 0 else { return Data() }
+        guard count > 0 else { return [] }
         let start = offset + 4
-        return data.subdata(in: start..<(start + count))
+        return Array(data[start..<(start + count)])
     }
-    @inlinable func readBytesWithSize(at offset: Int) -> (value: Data, size: Int) {
+    @inlinable func readBytesWithSize(at offset: Int) -> (value: [UInt8], size: Int) {
         let count = Int(readU32(at: offset))
-        guard count > 0 else { return (Data(), 4) }
+        guard count > 0 else { return ([], 4) }
         let start = offset + 4
-        return (data.subdata(in: start..<(start + count)), 4 + count)
+        return (Array(data[start..<(start + count)]), 4 + count)
     }
     @inlinable func readResultOrThrow<T, E: Error>(at offset: Int, ok: (Int) -> T, err: (Int) -> E) throws -> T {
         let tag = readU8(at: offset)

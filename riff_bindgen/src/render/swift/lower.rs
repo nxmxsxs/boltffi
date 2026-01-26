@@ -1077,3 +1077,356 @@ fn lower_first_char(name: &str) -> String {
         .map(|(index, ch)| if index == 0 { ch.to_ascii_lowercase() } else { ch })
         .collect()
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::ir::contract::{FfiContract, PackageInfo};
+    use crate::ir::definitions::{
+        CStyleVariant, DataVariant, EnumDef, EnumRepr, FieldDef, RecordDef, VariantPayload,
+    };
+    use crate::ir::ids::{FieldName, VariantName};
+    use crate::ir::Lowerer as IrLowerer;
+
+    fn empty_contract() -> FfiContract {
+        FfiContract {
+            package: PackageInfo {
+                name: "test".to_string(),
+                version: None,
+            },
+            functions: vec![],
+            catalog: Default::default(),
+        }
+    }
+
+    fn lower_contract(contract: &FfiContract) -> SwiftModule {
+        let abi = IrLowerer::new(contract).to_abi_contract();
+        SwiftLowerer::new(contract, &abi).lower()
+    }
+
+    #[test]
+    fn blittable_record_is_detected() {
+        let mut contract = empty_contract();
+        contract.catalog.insert_record(RecordDef {
+            id: RecordId::new("Point"),
+            fields: vec![
+                FieldDef {
+                    name: FieldName::new("x"),
+                    type_expr: TypeExpr::Primitive(PrimitiveType::F64),
+                    doc: None,
+                },
+                FieldDef {
+                    name: FieldName::new("y"),
+                    type_expr: TypeExpr::Primitive(PrimitiveType::F64),
+                    doc: None,
+                },
+            ],
+            doc: None,
+            deprecated: None,
+        });
+
+        let module = lower_contract(&contract);
+
+        assert_eq!(module.records.len(), 1);
+        let record = &module.records[0];
+        assert!(record.is_blittable, "Point should be blittable (primitives only)");
+        assert_eq!(record.blittable_size, Some(16));
+    }
+
+    #[test]
+    fn non_blittable_record_with_string() {
+        let mut contract = empty_contract();
+        contract.catalog.insert_record(RecordDef {
+            id: RecordId::new("User"),
+            fields: vec![
+                FieldDef {
+                    name: FieldName::new("id"),
+                    type_expr: TypeExpr::Primitive(PrimitiveType::I64),
+                    doc: None,
+                },
+                FieldDef {
+                    name: FieldName::new("name"),
+                    type_expr: TypeExpr::String,
+                    doc: None,
+                },
+            ],
+            doc: None,
+            deprecated: None,
+        });
+
+        let module = lower_contract(&contract);
+
+        assert_eq!(module.records.len(), 1);
+        let record = &module.records[0];
+        assert!(!record.is_blittable, "User should NOT be blittable (has String)");
+        assert_eq!(record.blittable_size, None);
+    }
+
+    #[test]
+    fn non_blittable_record_with_vec() {
+        let mut contract = empty_contract();
+        contract.catalog.insert_record(RecordDef {
+            id: RecordId::new("Scores"),
+            fields: vec![
+                FieldDef {
+                    name: FieldName::new("values"),
+                    type_expr: TypeExpr::Vec(Box::new(TypeExpr::Primitive(PrimitiveType::I32))),
+                    doc: None,
+                },
+            ],
+            doc: None,
+            deprecated: None,
+        });
+
+        let module = lower_contract(&contract);
+
+        assert_eq!(module.records.len(), 1);
+        let record = &module.records[0];
+        assert!(!record.is_blittable, "Scores should NOT be blittable (has Vec)");
+    }
+
+    #[test]
+    fn field_names_are_camel_case() {
+        let mut contract = empty_contract();
+        contract.catalog.insert_record(RecordDef {
+            id: RecordId::new("Config"),
+            fields: vec![
+                FieldDef {
+                    name: FieldName::new("max_connections"),
+                    type_expr: TypeExpr::Primitive(PrimitiveType::I32),
+                    doc: None,
+                },
+                FieldDef {
+                    name: FieldName::new("timeout_ms"),
+                    type_expr: TypeExpr::Primitive(PrimitiveType::U64),
+                    doc: None,
+                },
+            ],
+            doc: None,
+            deprecated: None,
+        });
+
+        let module = lower_contract(&contract);
+
+        let record = &module.records[0];
+        assert_eq!(record.fields[0].swift_name, "maxConnections");
+        assert_eq!(record.fields[1].swift_name, "timeoutMs");
+    }
+
+    #[test]
+    fn primitive_types_map_correctly() {
+        let mut contract = empty_contract();
+        contract.catalog.insert_record(RecordDef {
+            id: RecordId::new("AllPrimitives"),
+            fields: vec![
+                FieldDef { name: FieldName::new("a"), type_expr: TypeExpr::Primitive(PrimitiveType::Bool), doc: None },
+                FieldDef { name: FieldName::new("b"), type_expr: TypeExpr::Primitive(PrimitiveType::I8), doc: None },
+                FieldDef { name: FieldName::new("c"), type_expr: TypeExpr::Primitive(PrimitiveType::U8), doc: None },
+                FieldDef { name: FieldName::new("d"), type_expr: TypeExpr::Primitive(PrimitiveType::I16), doc: None },
+                FieldDef { name: FieldName::new("e"), type_expr: TypeExpr::Primitive(PrimitiveType::U16), doc: None },
+                FieldDef { name: FieldName::new("f"), type_expr: TypeExpr::Primitive(PrimitiveType::I32), doc: None },
+                FieldDef { name: FieldName::new("g"), type_expr: TypeExpr::Primitive(PrimitiveType::U32), doc: None },
+                FieldDef { name: FieldName::new("h"), type_expr: TypeExpr::Primitive(PrimitiveType::I64), doc: None },
+                FieldDef { name: FieldName::new("i"), type_expr: TypeExpr::Primitive(PrimitiveType::U64), doc: None },
+                FieldDef { name: FieldName::new("j"), type_expr: TypeExpr::Primitive(PrimitiveType::F32), doc: None },
+                FieldDef { name: FieldName::new("k"), type_expr: TypeExpr::Primitive(PrimitiveType::F64), doc: None },
+            ],
+            doc: None,
+            deprecated: None,
+        });
+
+        let module = lower_contract(&contract);
+        let record = &module.records[0];
+
+        assert_eq!(record.fields[0].swift_type, "Bool");
+        assert_eq!(record.fields[1].swift_type, "Int8");
+        assert_eq!(record.fields[2].swift_type, "UInt8");
+        assert_eq!(record.fields[3].swift_type, "Int16");
+        assert_eq!(record.fields[4].swift_type, "UInt16");
+        assert_eq!(record.fields[5].swift_type, "Int32");
+        assert_eq!(record.fields[6].swift_type, "UInt32");
+        assert_eq!(record.fields[7].swift_type, "Int64");
+        assert_eq!(record.fields[8].swift_type, "UInt64");
+        assert_eq!(record.fields[9].swift_type, "Float");
+        assert_eq!(record.fields[10].swift_type, "Double");
+    }
+
+    #[test]
+    fn c_style_enum_is_lowered() {
+        let mut contract = empty_contract();
+        contract.catalog.insert_enum(EnumDef {
+            id: EnumId::new("Status"),
+            repr: EnumRepr::CStyle {
+                tag_type: PrimitiveType::I32,
+                variants: vec![
+                    CStyleVariant { name: VariantName::new("Active"), discriminant: 0, doc: None },
+                    CStyleVariant { name: VariantName::new("Inactive"), discriminant: 1, doc: None },
+                    CStyleVariant { name: VariantName::new("Pending"), discriminant: 2, doc: None },
+                ],
+            },
+            is_error: false,
+            doc: None,
+            deprecated: None,
+        });
+
+        let module = lower_contract(&contract);
+
+        assert_eq!(module.enums.len(), 1);
+        let e = &module.enums[0];
+        assert_eq!(e.name, "Status");
+        assert!(e.is_c_style);
+        assert_eq!(e.variants.len(), 3);
+        assert_eq!(e.variants[0].swift_name, "active");
+        assert_eq!(e.variants[1].swift_name, "inactive");
+        assert_eq!(e.variants[2].swift_name, "pending");
+    }
+
+    #[test]
+    fn data_enum_is_lowered() {
+        let mut contract = empty_contract();
+        contract.catalog.insert_enum(EnumDef {
+            id: EnumId::new("Value"),
+            repr: EnumRepr::Data {
+                tag_type: PrimitiveType::I32,
+                variants: vec![
+                    DataVariant {
+                        name: VariantName::new("Int"),
+                        discriminant: 0,
+                        payload: VariantPayload::Tuple(vec![TypeExpr::Primitive(PrimitiveType::I64)]),
+                        doc: None,
+                    },
+                    DataVariant {
+                        name: VariantName::new("Text"),
+                        discriminant: 1,
+                        payload: VariantPayload::Tuple(vec![TypeExpr::String]),
+                        doc: None,
+                    },
+                ],
+            },
+            is_error: false,
+            doc: None,
+            deprecated: None,
+        });
+
+        let module = lower_contract(&contract);
+
+        assert_eq!(module.enums.len(), 1);
+        let e = &module.enums[0];
+        assert_eq!(e.name, "Value");
+        assert!(!e.is_c_style);
+        assert_eq!(e.variants.len(), 2);
+    }
+
+    #[test]
+    fn blittable_struct_has_c_offsets() {
+        let mut contract = empty_contract();
+        contract.catalog.insert_record(RecordDef {
+            id: RecordId::new("Aligned"),
+            fields: vec![
+                FieldDef {
+                    name: FieldName::new("a"),
+                    type_expr: TypeExpr::Primitive(PrimitiveType::U8),
+                    doc: None,
+                },
+                FieldDef {
+                    name: FieldName::new("b"),
+                    type_expr: TypeExpr::Primitive(PrimitiveType::U32),
+                    doc: None,
+                },
+                FieldDef {
+                    name: FieldName::new("c"),
+                    type_expr: TypeExpr::Primitive(PrimitiveType::U8),
+                    doc: None,
+                },
+            ],
+            doc: None,
+            deprecated: None,
+        });
+
+        let module = lower_contract(&contract);
+        let record = &module.records[0];
+
+        assert!(record.is_blittable);
+        assert_eq!(record.fields[0].c_offset, Some(0));
+        assert_eq!(record.fields[1].c_offset, Some(4));
+        assert_eq!(record.fields[2].c_offset, Some(8));
+    }
+
+    #[test]
+    fn option_type_maps_to_swift_optional() {
+        let mut contract = empty_contract();
+        contract.catalog.insert_record(RecordDef {
+            id: RecordId::new("MaybeValue"),
+            fields: vec![
+                FieldDef {
+                    name: FieldName::new("value"),
+                    type_expr: TypeExpr::Option(Box::new(TypeExpr::Primitive(PrimitiveType::I32))),
+                    doc: None,
+                },
+            ],
+            doc: None,
+            deprecated: None,
+        });
+
+        let module = lower_contract(&contract);
+        let record = &module.records[0];
+
+        assert_eq!(record.fields[0].swift_type, "Int32?");
+    }
+
+    #[test]
+    fn vec_type_maps_to_swift_array() {
+        let mut contract = empty_contract();
+        contract.catalog.insert_record(RecordDef {
+            id: RecordId::new("Numbers"),
+            fields: vec![
+                FieldDef {
+                    name: FieldName::new("items"),
+                    type_expr: TypeExpr::Vec(Box::new(TypeExpr::Primitive(PrimitiveType::I32))),
+                    doc: None,
+                },
+            ],
+            doc: None,
+            deprecated: None,
+        });
+
+        let module = lower_contract(&contract);
+        let record = &module.records[0];
+
+        assert_eq!(record.fields[0].swift_type, "[Int32]");
+    }
+
+    #[test]
+    fn nested_record_type_maps_correctly() {
+        let mut contract = empty_contract();
+        contract.catalog.insert_record(RecordDef {
+            id: RecordId::new("Inner"),
+            fields: vec![
+                FieldDef {
+                    name: FieldName::new("value"),
+                    type_expr: TypeExpr::Primitive(PrimitiveType::I32),
+                    doc: None,
+                },
+            ],
+            doc: None,
+            deprecated: None,
+        });
+        contract.catalog.insert_record(RecordDef {
+            id: RecordId::new("Outer"),
+            fields: vec![
+                FieldDef {
+                    name: FieldName::new("inner"),
+                    type_expr: TypeExpr::Record(RecordId::new("Inner")),
+                    doc: None,
+                },
+            ],
+            doc: None,
+            deprecated: None,
+        });
+
+        let module = lower_contract(&contract);
+
+        let outer = module.records.iter().find(|r| r.class_name == "Outer").unwrap();
+        assert_eq!(outer.fields[0].swift_type, "Inner");
+    }
+}
