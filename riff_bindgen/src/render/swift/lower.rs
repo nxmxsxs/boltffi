@@ -9,9 +9,9 @@ use super::emit;
 use super::plan::{
     SwiftAsyncConversion, SwiftAsyncResult, SwiftCallMode, SwiftCallback, SwiftCallbackMethod,
     SwiftCallbackParam, SwiftClass, SwiftClosureTrampoline, SwiftClosureTrampolineParam,
-    SwiftConstructor, SwiftConversion, SwiftEnum, SwiftField, SwiftFunction, SwiftMethod,
-    SwiftModule, SwiftParam, SwiftRecord, SwiftReturn, SwiftStream, SwiftStreamMode, SwiftVariant,
-    SwiftVariantPayload,
+    SwiftConstructor, SwiftConversion, SwiftEnum, SwiftEnumStyle, SwiftField, SwiftFunction,
+    SwiftMethod, SwiftModule, SwiftParam, SwiftRecord, SwiftReturn, SwiftStream, SwiftStreamMode,
+    SwiftVariant, SwiftVariantPayload,
 };
 use crate::ir::abi::{
     AbiCall, AbiCallbackInvocation, AbiContract, AbiEnum, AbiEnumField, AbiEnumPayload,
@@ -220,10 +220,15 @@ impl<'a> SwiftLowerer<'a> {
                     })
                     .collect();
 
+                let style = if abi_enum.is_c_style {
+                    SwiftEnumStyle::CStyle
+                } else {
+                    SwiftEnumStyle::Data
+                };
                 SwiftEnum {
                     name: self.swift_name_for_enum(&def.id),
                     variants,
-                    is_c_style: abi_enum.is_c_style,
+                    style,
                     is_error: def.is_error,
                     doc: def.doc.clone(),
                 }
@@ -1686,7 +1691,7 @@ mod tests {
         assert_eq!(module.enums.len(), 1);
         let e = &module.enums[0];
         assert_eq!(e.name, "Status");
-        assert!(e.is_c_style);
+        assert!(e.is_c_style());
         assert_eq!(e.variants.len(), 3);
         assert_eq!(e.variants[0].swift_name, "active");
         assert_eq!(e.variants[1].swift_name, "inactive");
@@ -1727,7 +1732,7 @@ mod tests {
         assert_eq!(module.enums.len(), 1);
         let e = &module.enums[0];
         assert_eq!(e.name, "Value");
-        assert!(!e.is_c_style);
+        assert!(!e.is_c_style());
         assert_eq!(e.variants.len(), 2);
     }
 

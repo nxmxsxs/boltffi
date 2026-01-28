@@ -193,9 +193,21 @@ impl SwiftField {
 pub struct SwiftEnum {
     pub name: String,
     pub variants: Vec<SwiftVariant>,
-    pub is_c_style: bool,
+    pub style: SwiftEnumStyle,
     pub is_error: bool,
     pub doc: Option<String>,
+}
+
+#[derive(Debug, Clone, Copy)]
+pub enum SwiftEnumStyle {
+    CStyle,
+    Data,
+}
+
+impl SwiftEnum {
+    pub fn is_c_style(&self) -> bool {
+        matches!(self.style, SwiftEnumStyle::CStyle)
+    }
 }
 
 #[derive(Debug, Clone)]

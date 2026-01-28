@@ -102,7 +102,7 @@ pub fn render_record(record: &SwiftRecord) -> String {
 }
 
 pub fn render_enum(e: &SwiftEnum) -> String {
-    if e.is_c_style {
+    if e.is_c_style() {
         EnumCStyleTemplate::from_enum(e).render().unwrap()
     } else {
         EnumDataTemplate::from_enum(e).render().unwrap()
@@ -241,8 +241,8 @@ mod tests {
     use crate::ir::types::{PrimitiveType, TypeExpr};
     use crate::render::swift::plan::{
         SwiftAsyncResult, SwiftCallback, SwiftCallbackMethod, SwiftCallbackParam, SwiftClass,
-        SwiftConstructor, SwiftConversion, SwiftFunction, SwiftMethod, SwiftParam, SwiftReturn,
-        SwiftStream, SwiftStreamMode, SwiftVariantPayload,
+        SwiftConstructor, SwiftConversion, SwiftEnumStyle, SwiftFunction, SwiftMethod, SwiftParam,
+        SwiftReturn, SwiftStream, SwiftStreamMode, SwiftVariantPayload,
     };
 
     fn offset(base: &str) -> OffsetExpr {
@@ -572,7 +572,7 @@ mod tests {
     fn snapshot_c_style_enum() {
         let e = SwiftEnum {
             name: "Status".to_string(),
-            is_c_style: true,
+            style: SwiftEnumStyle::CStyle,
             is_error: false,
             variants: vec![
                 SwiftVariant {
@@ -600,7 +600,7 @@ mod tests {
     fn snapshot_c_style_error_enum() {
         let e = SwiftEnum {
             name: "ApiError".to_string(),
-            is_c_style: true,
+            style: SwiftEnumStyle::CStyle,
             is_error: true,
             variants: vec![
                 SwiftVariant {
@@ -628,7 +628,7 @@ mod tests {
     fn snapshot_data_enum_with_payloads() {
         let e = SwiftEnum {
             name: "Message".to_string(),
-            is_c_style: false,
+            style: SwiftEnumStyle::Data,
             is_error: false,
             variants: vec![
                 SwiftVariant {
@@ -670,7 +670,7 @@ mod tests {
     fn snapshot_data_enum_with_struct_payload() {
         let e = SwiftEnum {
             name: "Event".to_string(),
-            is_c_style: false,
+            style: SwiftEnumStyle::Data,
             is_error: false,
             variants: vec![
                 SwiftVariant {
@@ -1243,7 +1243,7 @@ mod tests {
                     payload: SwiftVariantPayload::Unit,
                 },
             ],
-            is_c_style: false,
+            style: SwiftEnumStyle::Data,
             is_error: false,
             doc: None,
         };
