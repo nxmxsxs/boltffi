@@ -1,5 +1,7 @@
 use crate::ir::codec::VecLayout;
 use crate::ir::ids::CallbackId;
+use crate::ir::ops::{OffsetExpr, ReadOp, ReadSeq};
+use crate::render::kotlin::emit;
 
 #[derive(Clone)]
 pub struct KotlinModule {
@@ -19,6 +21,7 @@ pub struct KotlinModule {
     pub native: KotlinNative,
     pub api_style: KotlinApiStyle,
     pub module_object_name: Option<String>,
+    pub has_streams: bool,
 }
 
 #[derive(Clone, Copy)]
@@ -177,6 +180,7 @@ pub struct KotlinClass {
     pub ffi_free: String,
     pub constructors: Vec<KotlinConstructor>,
     pub methods: Vec<KotlinMethod>,
+    pub streams: Vec<KotlinStream>,
     pub use_companion_methods: bool,
     pub has_factory_ctors: bool,
 }
@@ -213,6 +217,77 @@ pub struct KotlinCallbackTrait {
     pub doc: Option<String>,
     pub sync_methods: Vec<KotlinCallbackMethod>,
     pub async_methods: Vec<KotlinAsyncCallbackMethod>,
+}
+
+#[derive(Clone)]
+pub struct KotlinStream {
+    pub name: String,
+    pub mode: KotlinStreamMode,
+    pub item_type: String,
+    pub item_decode: ReadSeq,
+    pub subscribe: String,
+    pub poll: String,
+    pub pop_batch: String,
+    pub wait: String,
+    pub unsubscribe: String,
+    pub free: String,
+    pub free_buf: String,
+}
+
+impl KotlinStream {
+    pub fn item_decode_expr(&self) -> String {
+        emit::emit_read_value(&self.item_decode, "offset", "offset")
+    }
+
+    pub fn uses_offset(&self) -> bool {
+        uses_offset_in_read_seq(&self.item_decode)
+    }
+}
+
+fn uses_offset_in_read_seq(seq: &ReadSeq) -> bool {
+    seq.ops.iter().any(uses_offset_in_read_op)
+}
+
+fn uses_offset_in_read_op(op: &ReadOp) -> bool {
+    match op {
+        ReadOp::Primitive { offset, .. } => offset_uses(offset),
+        ReadOp::String { offset } => offset_uses(offset),
+        ReadOp::Bytes { offset } => offset_uses(offset),
+        ReadOp::Option { tag_offset, some } => {
+            offset_uses(tag_offset) || uses_offset_in_read_seq(some)
+        }
+        ReadOp::Vec {
+            len_offset,
+            element,
+            ..
+        } => offset_uses(len_offset) || uses_offset_in_read_seq(element),
+        ReadOp::Record { offset, .. } => offset_uses(offset),
+        ReadOp::Enum { offset, .. } => offset_uses(offset),
+        ReadOp::Result {
+            tag_offset,
+            ok,
+            err,
+        } => offset_uses(tag_offset) || uses_offset_in_read_seq(ok) || uses_offset_in_read_seq(err),
+        ReadOp::Builtin { offset, .. } => offset_uses(offset),
+        ReadOp::Custom { underlying, .. } => uses_offset_in_read_seq(underlying),
+    }
+}
+
+fn offset_uses(offset: &OffsetExpr) -> bool {
+    matches!(offset, OffsetExpr::Base | OffsetExpr::BasePlus(_))
+}
+
+#[derive(Clone)]
+pub enum KotlinStreamMode {
+    Async,
+    Batch {
+        class_name: String,
+        method_name_pascal: String,
+    },
+    Callback {
+        class_name: String,
+        method_name_pascal: String,
+    },
 }
 
 #[derive(Clone)]
@@ -284,6 +359,7 @@ pub struct KotlinNativeClass {
     pub ctors: Vec<KotlinNativeCtor>,
     pub async_methods: Vec<KotlinNativeAsyncMethod>,
     pub sync_methods: Vec<KotlinNativeSyncMethod>,
+    pub streams: Vec<KotlinNativeStream>,
 }
 
 #[derive(Clone)]
@@ -310,6 +386,16 @@ pub struct KotlinNativeSyncMethod {
     pub include_handle: bool,
     pub params: Vec<KotlinNativeParam>,
     pub return_jni_type: String,
+}
+
+#[derive(Clone)]
+pub struct KotlinNativeStream {
+    pub subscribe: String,
+    pub poll: String,
+    pub pop_batch: String,
+    pub wait: String,
+    pub unsubscribe: String,
+    pub free: String,
 }
 
 #[derive(Clone)]

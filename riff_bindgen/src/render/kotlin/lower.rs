@@ -2,20 +2,20 @@ use std::collections::{HashMap, HashSet};
 
 use crate::ir::abi::{
     AbiCall, AbiCallbackInvocation, AbiCallbackMethod, AbiContract, AbiEnum, AbiEnumField,
-    AbiEnumPayload, AbiEnumVariant, AbiParam, AbiRecord, AsyncResultTransport, CallId, CallMode,
-    ErrorTransport, ParamRole, ReturnTransport,
+    AbiEnumPayload, AbiEnumVariant, AbiParam, AbiRecord, AbiStream, AsyncResultTransport, CallId,
+    CallMode, ErrorTransport, ParamRole, ReturnTransport, StreamItemTransport,
 };
 use crate::ir::codec::VecLayout;
 use crate::ir::contract::FfiContract;
 use crate::ir::definitions::{
     CallbackKind, CallbackMethodDef, CallbackTraitDef, ClassDef, ConstructorDef, CustomTypeDef,
     EnumDef, EnumRepr, FieldDef, FunctionDef, MethodDef, ParamDef, RecordDef, ReturnDef,
-    VariantPayload,
+    StreamDef, StreamMode, VariantPayload,
 };
 use crate::ir::ids::{
     BuiltinId, CallbackId, ClassId, CustomTypeId, EnumId, FieldName, MethodId, ParamName, RecordId,
 };
-use crate::ir::ops::{OffsetExpr, ReadOp, ReadSeq, SizeExpr, WriteOp, WriteSeq};
+use crate::ir::ops::{FieldReadOp, OffsetExpr, ReadOp, ReadSeq, SizeExpr, WriteOp, WriteSeq};
 use crate::ir::plan::AbiType;
 use crate::ir::types::{PrimitiveType, TypeExpr};
 use crate::kotlin::{
@@ -53,7 +53,12 @@ impl<'a> KotlinLowerer<'a> {
     }
 
     pub fn lower(&self) -> KotlinModule {
-        let preamble = self.lower_preamble();
+        let has_streams = self
+            .contract
+            .catalog
+            .all_classes()
+            .any(|class| !class.streams.is_empty());
+        let preamble = self.lower_preamble(has_streams);
         let enums = self
             .contract
             .catalog
@@ -116,11 +121,12 @@ impl<'a> KotlinLowerer<'a> {
                 KotlinInputApiStyle::ModuleObject => KotlinApiStyle::ModuleObject,
             },
             module_object_name: self.options.module_object_name.clone(),
+            has_streams,
         }
     }
 
-    fn lower_preamble(&self) -> KotlinPreamble {
-        let extra_imports = self.collect_extra_imports();
+    fn lower_preamble(&self, has_streams: bool) -> KotlinPreamble {
+        let extra_imports = self.collect_extra_imports(has_streams);
         let custom_types = self
             .contract
             .catalog
@@ -132,11 +138,12 @@ impl<'a> KotlinLowerer<'a> {
             prefix: naming::ffi_prefix().to_string(),
             extra_imports,
             custom_types,
+            has_streams,
         }
     }
 
-    fn collect_extra_imports(&self) -> Vec<String> {
-        let builtin_imports = self
+    fn collect_extra_imports(&self, has_streams: bool) -> Vec<String> {
+        let mut imports = self
             .collect_builtin_ids()
             .into_iter()
             .filter_map(|id| self.builtin_import(&id))
@@ -146,7 +153,7 @@ impl<'a> KotlinLowerer<'a> {
             .catalog
             .all_callbacks()
             .any(|callback| callback.methods.iter().any(|method| method.is_async));
-        let coroutine_imports = if has_async_callbacks {
+        let coroutine_imports = if has_async_callbacks || has_streams {
             vec![
                 "kotlinx.coroutines.DelicateCoroutinesApi".to_string(),
                 "kotlinx.coroutines.GlobalScope".to_string(),
@@ -155,10 +162,26 @@ impl<'a> KotlinLowerer<'a> {
         } else {
             Vec::new()
         };
-        builtin_imports
+        let stream_imports = if has_streams {
+            vec![
+                "java.util.concurrent.atomic.AtomicInteger".to_string(),
+                "kotlinx.coroutines.CoroutineScope".to_string(),
+                "kotlinx.coroutines.channels.awaitClose".to_string(),
+                "kotlinx.coroutines.flow.Flow".to_string(),
+                "kotlinx.coroutines.flow.callbackFlow".to_string(),
+            ]
+        } else {
+            Vec::new()
+        };
+        coroutine_imports
             .into_iter()
-            .chain(coroutine_imports)
-            .collect()
+            .chain(stream_imports)
+            .for_each(|import| {
+                if !imports.iter().any(|item| item == &import) {
+                    imports.push(import);
+                }
+            });
+        imports
     }
 
     fn collect_builtin_ids(&self) -> HashSet<BuiltinId> {
@@ -606,6 +629,14 @@ impl<'a> KotlinLowerer<'a> {
             .iter()
             .map(|method| self.lower_method(class, method))
             .collect::<Vec<_>>();
+        let streams = class
+            .streams
+            .iter()
+            .map(|stream| {
+                let abi_stream = self.abi_stream(class, stream);
+                self.lower_stream(stream, abi_stream, &class_name)
+            })
+            .collect::<Vec<_>>();
         let has_factory_ctors = constructors.iter().any(|c| c.is_factory);
         KotlinClass {
             class_name,
@@ -614,6 +645,7 @@ impl<'a> KotlinLowerer<'a> {
             ffi_free: naming::class_ffi_free(class.id.as_str()).into_string(),
             constructors,
             methods,
+            streams,
             use_companion_methods: matches!(
                 self.options.factory_style,
                 FactoryStyle::CompanionMethods
@@ -733,6 +765,153 @@ impl<'a> KotlinLowerer<'a> {
             } else {
                 KotlinMethodImpl::SyncMethod(rendered)
             },
+        }
+    }
+
+    fn lower_stream(
+        &self,
+        stream_def: &StreamDef,
+        stream: &AbiStream,
+        class_name: &str,
+    ) -> KotlinStream {
+        let StreamItemTransport::WireEncoded { decode_ops } = &stream.item;
+        let method_name_pascal = NamingConvention::class_name(stream.stream_id.as_str());
+        let mode = match stream.mode {
+            StreamMode::Async => KotlinStreamMode::Async,
+            StreamMode::Batch => KotlinStreamMode::Batch {
+                class_name: class_name.to_string(),
+                method_name_pascal: method_name_pascal.clone(),
+            },
+            StreamMode::Callback => KotlinStreamMode::Callback {
+                class_name: class_name.to_string(),
+                method_name_pascal: method_name_pascal.clone(),
+            },
+        };
+        KotlinStream {
+            name: NamingConvention::method_name(stream.stream_id.as_str()),
+            mode,
+            item_type: self.kotlin_type(&stream_def.item_type),
+            item_decode: self.rebase_read_seq(decode_ops, "pos", "0"),
+            subscribe: stream.subscribe.to_string(),
+            poll: stream.poll.to_string(),
+            pop_batch: stream.pop_batch.to_string(),
+            wait: stream.wait.to_string(),
+            unsubscribe: stream.unsubscribe.to_string(),
+            free: stream.free.to_string(),
+            free_buf: format!("{}_free_native_buffer", naming::ffi_prefix()),
+        }
+    }
+
+    fn abi_stream<'b>(&'b self, class: &ClassDef, stream: &StreamDef) -> &'b AbiStream {
+        self.abi
+            .streams
+            .iter()
+            .find(|item| item.class_id == class.id && item.stream_id == stream.id)
+            .expect("abi stream")
+    }
+
+    fn rebase_read_seq(&self, seq: &ReadSeq, old_base: &str, new_base: &str) -> ReadSeq {
+        ReadSeq {
+            size: seq.size.clone(),
+            ops: seq
+                .ops
+                .iter()
+                .map(|op| self.rebase_read_op(op, old_base, new_base))
+                .collect(),
+            shape: seq.shape,
+        }
+    }
+
+    fn rebase_read_op(&self, op: &ReadOp, old_base: &str, new_base: &str) -> ReadOp {
+        match op {
+            ReadOp::Primitive { primitive, offset } => ReadOp::Primitive {
+                primitive: *primitive,
+                offset: self.rebase_offset_expr(offset, old_base, new_base),
+            },
+            ReadOp::String { offset } => ReadOp::String {
+                offset: self.rebase_offset_expr(offset, old_base, new_base),
+            },
+            ReadOp::Bytes { offset } => ReadOp::Bytes {
+                offset: self.rebase_offset_expr(offset, old_base, new_base),
+            },
+            ReadOp::Option { tag_offset, some } => ReadOp::Option {
+                tag_offset: self.rebase_offset_expr(tag_offset, old_base, new_base),
+                some: Box::new(self.rebase_read_seq(some, old_base, new_base)),
+            },
+            ReadOp::Vec {
+                len_offset,
+                element_type,
+                element,
+                layout,
+            } => ReadOp::Vec {
+                len_offset: self.rebase_offset_expr(len_offset, old_base, new_base),
+                element_type: element_type.clone(),
+                element: Box::new(self.rebase_read_seq(element, old_base, new_base)),
+                layout: layout.clone(),
+            },
+            ReadOp::Record { id, offset, fields } => ReadOp::Record {
+                id: id.clone(),
+                offset: self.rebase_offset_expr(offset, old_base, new_base),
+                fields: fields
+                    .iter()
+                    .map(|field| {
+                        let seq = self.rebase_read_seq(&field.seq, old_base, new_base);
+                        FieldReadOp {
+                            name: field.name.clone(),
+                            seq,
+                        }
+                    })
+                    .collect(),
+            },
+            ReadOp::Enum { id, offset, layout } => ReadOp::Enum {
+                id: id.clone(),
+                offset: self.rebase_offset_expr(offset, old_base, new_base),
+                layout: layout.clone(),
+            },
+            ReadOp::Result {
+                tag_offset,
+                ok,
+                err,
+            } => ReadOp::Result {
+                tag_offset: self.rebase_offset_expr(tag_offset, old_base, new_base),
+                ok: Box::new(self.rebase_read_seq(ok, old_base, new_base)),
+                err: Box::new(self.rebase_read_seq(err, old_base, new_base)),
+            },
+            ReadOp::Builtin { id, offset } => ReadOp::Builtin {
+                id: id.clone(),
+                offset: self.rebase_offset_expr(offset, old_base, new_base),
+            },
+            ReadOp::Custom { id, underlying } => ReadOp::Custom {
+                id: id.clone(),
+                underlying: Box::new(self.rebase_read_seq(underlying, old_base, new_base)),
+            },
+        }
+    }
+
+    fn rebase_offset_expr(
+        &self,
+        offset: &OffsetExpr,
+        old_base: &str,
+        new_base: &str,
+    ) -> OffsetExpr {
+        match offset {
+            OffsetExpr::Fixed(value) => OffsetExpr::Fixed(*value),
+            OffsetExpr::Base => OffsetExpr::Base,
+            OffsetExpr::BasePlus(add) => OffsetExpr::BasePlus(*add),
+            OffsetExpr::Var(name) => {
+                if name == old_base {
+                    OffsetExpr::Var(new_base.to_string())
+                } else {
+                    OffsetExpr::Var(name.clone())
+                }
+            }
+            OffsetExpr::VarPlus(name, add) => {
+                if name == old_base {
+                    OffsetExpr::VarPlus(new_base.to_string(), *add)
+                } else {
+                    OffsetExpr::VarPlus(name.clone(), *add)
+                }
+            }
         }
     }
 
@@ -1215,11 +1394,27 @@ impl<'a> KotlinLowerer<'a> {
                 }
             })
             .collect();
+        let streams = class
+            .streams
+            .iter()
+            .map(|stream| {
+                let abi_stream = self.abi_stream(class, stream);
+                KotlinNativeStream {
+                    subscribe: abi_stream.subscribe.as_str().to_string(),
+                    poll: abi_stream.poll.as_str().to_string(),
+                    pop_batch: abi_stream.pop_batch.as_str().to_string(),
+                    wait: abi_stream.wait.as_str().to_string(),
+                    unsubscribe: abi_stream.unsubscribe.as_str().to_string(),
+                    free: abi_stream.free.as_str().to_string(),
+                }
+            })
+            .collect();
         KotlinNativeClass {
             ffi_free: naming::class_ffi_free(class.id.as_str()).into_string(),
             ctors,
             async_methods,
             sync_methods,
+            streams,
         }
     }
 
@@ -2624,4 +2819,5 @@ struct KotlinPreamble {
     prefix: String,
     extra_imports: Vec<String>,
     custom_types: Vec<KotlinCustomType>,
+    has_streams: bool,
 }

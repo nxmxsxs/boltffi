@@ -56,6 +56,7 @@ pub struct JniClass {
     pub ctors: Vec<JniWireCtor>,
     pub wire_methods: Vec<JniWireMethod>,
     pub async_methods: Vec<JniAsyncFunction>,
+    pub streams: Vec<JniStream>,
 }
 
 #[derive(Clone)]
@@ -88,6 +89,22 @@ pub struct JniAsyncFunction {
     pub vec_new_array_fn: String,
     pub vec_set_array_fn: String,
     pub params: Vec<JniParam>,
+}
+
+#[derive(Clone)]
+pub struct JniStream {
+    pub subscribe_ffi: String,
+    pub subscribe_jni: String,
+    pub poll_ffi: String,
+    pub poll_jni: String,
+    pub pop_batch_ffi: String,
+    pub pop_batch_jni: String,
+    pub wait_ffi: String,
+    pub wait_jni: String,
+    pub unsubscribe_ffi: String,
+    pub unsubscribe_jni: String,
+    pub free_ffi: String,
+    pub free_jni: String,
 }
 
 #[derive(Clone)]

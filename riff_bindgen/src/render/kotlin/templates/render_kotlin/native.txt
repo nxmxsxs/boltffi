@@ -36,6 +36,14 @@ private object Native {
 {%- for method in class.sync_methods %}
     @JvmStatic external fun {{ method.ffi_name }}({% if method.include_handle %}handle: Long{% if !method.params.is_empty() %}, {% endif %}{% endif %}{% for param in method.params %}{{ param.name }}: {{ param.jni_type }}{% if !loop.last %}, {% endif %}{% endfor %}): {{ method.return_jni_type }}
 {%- endfor %}
+{%- for stream in class.streams %}
+    @JvmStatic external fun {{ stream.subscribe }}(handle: Long): Long
+    @JvmStatic external fun {{ stream.poll }}(subscription: Long, contHandle: Long)
+    @JvmStatic external fun {{ stream.pop_batch }}(subscription: Long, maxCount: Long): ByteBuffer?
+    @JvmStatic external fun {{ stream.wait }}(subscription: Long, timeout: Int): Int
+    @JvmStatic external fun {{ stream.unsubscribe }}(subscription: Long)
+    @JvmStatic external fun {{ stream.free }}(subscription: Long)
+{%- endfor %}
 {%- endfor %}
 {%- for invoker in async_callback_invokers %}
     @JvmStatic external fun {{ invoker.name }}(callbackPtr: Long, callbackData: Long{% if invoker.has_result %}, result: {{ invoker.jni_type }}{% endif %})

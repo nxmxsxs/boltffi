@@ -1,7 +1,7 @@
 use askama::Template;
 
 use super::plan::KotlinMethodImpl::{AsyncMethod, SyncMethod};
-use super::plan::KotlinModule;
+use super::plan::{KotlinModule, KotlinStreamMode};
 
 #[derive(Template)]
 #[template(path = "render_kotlin/preamble.txt", escape = "none")]
@@ -10,6 +10,7 @@ pub struct PreambleTemplate<'a> {
     pub prefix: &'a str,
     pub extra_imports: &'a [String],
     pub custom_types: &'a [super::plan::KotlinCustomType],
+    pub has_streams: bool,
 }
 
 #[derive(Template)]
@@ -121,6 +122,7 @@ pub struct ClassTemplate<'a> {
     pub doc: &'a Option<String>,
     pub constructors: &'a [super::plan::KotlinConstructor],
     pub methods: &'a [super::plan::KotlinMethod],
+    pub streams: &'a [super::plan::KotlinStream],
     pub use_companion_methods: bool,
     pub has_factory_ctors: bool,
     pub prefix: &'a str,
@@ -197,6 +199,7 @@ impl KotlinEmitter {
             prefix: &module.prefix,
             extra_imports: &module.extra_imports,
             custom_types: &module.custom_types,
+            has_streams: module.has_streams,
         }
         .render()
         .unwrap();
@@ -335,6 +338,7 @@ impl KotlinEmitter {
                 doc: &class.doc,
                 constructors: &class.constructors,
                 methods: &class.methods,
+                streams: &class.streams,
                 use_companion_methods: class.use_companion_methods,
                 has_factory_ctors: class.has_factory_ctors,
                 prefix: &class.prefix,

@@ -1367,6 +1367,45 @@ JNIEXPORT void JNICALL {{ func.jni_free_name }}(JNIEnv *env, jclass cls, jlong h
     {{ func.ffi_free }}((RustFutureHandle)future);
 }
 {%- endfor %}
+{%- for stream in class.streams %}
+
+JNIEXPORT jlong JNICALL {{ stream.subscribe_jni }}(JNIEnv *env, jclass cls, jlong handle) {
+    if (handle == 0) return 0;
+    SubscriptionHandle _subscription = {{ stream.subscribe_ffi }}((void*)handle);
+    return (jlong)_subscription;
+}
+
+JNIEXPORT void JNICALL {{ stream.poll_jni }}(JNIEnv *env, jclass cls, jlong subscription_handle, jlong contHandle) {
+    if (subscription_handle == 0) return;
+    {{ stream.poll_ffi }}((SubscriptionHandle)subscription_handle, (uint64_t)contHandle, riff_jni_continuation_callback);
+}
+
+JNIEXPORT jobject JNICALL {{ stream.pop_batch_jni }}(JNIEnv *env, jclass cls, jlong subscription_handle, jlong max_count) {
+    if (subscription_handle == 0) return NULL;
+    FfiBuf_u8 _buf = {{ stream.pop_batch_ffi }}((SubscriptionHandle)subscription_handle, (uintptr_t)max_count);
+    if (_buf.ptr == NULL || _buf.len == 0) {
+        if (_buf.ptr != NULL) {{ prefix }}_free_buf_u8(_buf);
+        return NULL;
+    }
+    return (*env)->NewDirectByteBuffer(env, (void*)_buf.ptr, (jlong)_buf.len);
+}
+
+JNIEXPORT jint JNICALL {{ stream.wait_jni }}(JNIEnv *env, jclass cls, jlong subscription_handle, jint timeout) {
+    if (subscription_handle == 0) return -1;
+    int32_t _result = {{ stream.wait_ffi }}((SubscriptionHandle)subscription_handle, (uint32_t)timeout);
+    return (jint)_result;
+}
+
+JNIEXPORT void JNICALL {{ stream.unsubscribe_jni }}(JNIEnv *env, jclass cls, jlong subscription_handle) {
+    if (subscription_handle == 0) return;
+    {{ stream.unsubscribe_ffi }}((SubscriptionHandle)subscription_handle);
+}
+
+JNIEXPORT void JNICALL {{ stream.free_jni }}(JNIEnv *env, jclass cls, jlong subscription_handle) {
+    if (subscription_handle == 0) return;
+    {{ stream.free_ffi }}((SubscriptionHandle)subscription_handle);
+}
+{%- endfor %}
 {%- endfor %}
 
 {%- for func in async_functions %}

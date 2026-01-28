@@ -103,6 +103,95 @@ internal suspend inline fun <T> riffCallAsync(
     }
 }
 
+{%- if has_streams %}
+
+typealias SubscriptionHandle = Long
+
+private const val RIFF_STREAM_POLL_CLOSED: Byte = 1
+
+internal class RiffStreamContext(
+    private val scope: CoroutineScope,
+    private val subscription: SubscriptionHandle,
+    private val batchSize: Long,
+    private val popBatch: (SubscriptionHandle, Long) -> ByteBuffer?,
+    private val poll: (SubscriptionHandle, Long) -> Unit,
+    private val unsubscribe: (SubscriptionHandle) -> Unit,
+    private val freeFn: (SubscriptionHandle) -> Unit,
+    private val processItems: (WireBuffer) -> Unit,
+    private val finish: () -> Unit
+) {
+    private val lifecycleTag = AtomicInteger(0)
+    private val callbackTag = AtomicInteger(0)
+
+    fun start() {
+        registerPoll()
+    }
+
+    fun requestTermination() {
+        val started = lifecycleTag.compareAndSet(0, 1)
+        if (started) {
+            unsubscribe(subscription)
+            lifecycleTag.compareAndSet(1, 2)
+        }
+        attemptFinalize()
+    }
+
+    private fun attemptFinalize() {
+        if (!callbackTag.compareAndSet(0, 0)) return
+        if (!lifecycleTag.compareAndSet(2, 3)) return
+        freeFn(subscription)
+        finish()
+    }
+
+    private fun schedulePoll() {
+        scope.launch { registerPoll() }
+    }
+
+    private fun registerPoll() {
+        if (!lifecycleTag.compareAndSet(0, 0)) {
+            attemptFinalize()
+            return
+        }
+        scope.launch {
+            val pollResult = suspendCancellableCoroutine<Byte> { continuation ->
+                poll(subscription, riffContinuationMap.insert(continuation))
+            }
+            handlePoll(pollResult)
+        }
+    }
+
+    private fun handlePoll(pollResult: Byte) {
+        val isClosed = pollResult == RIFF_STREAM_POLL_CLOSED
+        if (!callbackTag.compareAndSet(0, 1)) {
+            attemptFinalize()
+            return
+        }
+        try {
+            if (!lifecycleTag.compareAndSet(0, 0)) return
+            while (true) {
+                val buf = popBatch(subscription, batchSize) ?: break
+                val hasData = useNativeBuffer(buf) { buffer ->
+                    if (!buffer.hasRemaining()) return@useNativeBuffer false
+                    val wire = WireBuffer.fromByteBuffer(buffer)
+                    processItems(wire)
+                    true
+                }
+                if (!hasData) break
+            }
+        } finally {
+            callbackTag.compareAndSet(1, 0)
+            attemptFinalize()
+        }
+        if (isClosed) {
+            requestTermination()
+            return
+        }
+        if (!lifecycleTag.compareAndSet(0, 0)) return
+        schedulePoll()
+    }
+}
+{%- endif %}
+
 class WireBuffer private constructor(private val buffer: ByteBuffer) {
     companion object {
         fun fromByteBuffer(buf: ByteBuffer): WireBuffer =

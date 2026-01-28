@@ -3,13 +3,13 @@ use std::collections::{HashMap, HashSet};
 use riff_ffi_rules::naming;
 
 use crate::ir::abi::{
-    AbiCall, AbiCallbackInvocation, AbiContract, AbiParam, AsyncCall, AsyncResultTransport,
-    CallMode, ErrorTransport, ParamRole, ReturnTransport,
+    AbiCall, AbiCallbackInvocation, AbiContract, AbiParam, AbiStream, AsyncCall,
+    AsyncResultTransport, CallMode, ErrorTransport, ParamRole, ReturnTransport,
 };
 use crate::ir::contract::FfiContract;
 use crate::ir::definitions::{
     CallbackKind, CallbackMethodDef, CallbackTraitDef, ClassDef, ConstructorDef, EnumRepr,
-    FunctionDef, MethodDef, ParamDef, ParamPassing, Receiver, ReturnDef,
+    FunctionDef, MethodDef, ParamDef, ParamPassing, Receiver, ReturnDef, StreamDef,
 };
 use crate::ir::ids::{CallbackId, EnumId, ParamName, RecordId};
 use crate::ir::ops::SizeExpr;
@@ -21,7 +21,8 @@ use super::plan::{
     JniAsyncCallbackInvoker, JniAsyncCallbackMethod, JniAsyncFunction, JniCallbackCParam,
     JniCallbackMethod, JniCallbackTrait, JniClass, JniClosureRecordParam, JniClosureTrampoline,
     JniFunction, JniModule, JniOptionInnerKind, JniOptionView, JniParam, JniResultVariant,
-    JniResultView, JniReturnAbi, JniReturnKind, JniWireCtor, JniWireFunction, JniWireMethod,
+    JniResultView, JniReturnAbi, JniReturnKind, JniStream, JniWireCtor, JniWireFunction,
+    JniWireMethod,
 };
 
 pub struct JniLowerer<'a> {
@@ -114,6 +115,7 @@ impl<'a> JniLowerer<'a> {
 
         let has_async = !async_functions.is_empty()
             || classes.iter().any(|class| !class.async_methods.is_empty())
+            || classes.iter().any(|class| !class.streams.is_empty())
             || !callback_traits.is_empty();
 
         JniModule {
@@ -339,6 +341,11 @@ impl<'a> JniLowerer<'a> {
             .filter(|method| self.is_supported_async_method(method))
             .map(|method| self.lower_async_method(class, method, jni_prefix))
             .collect();
+        let streams = class
+            .streams
+            .iter()
+            .map(|stream| self.lower_stream(class, stream, jni_prefix))
+            .collect();
 
         JniClass {
             ffi_prefix: ffi_prefix.clone(),
@@ -347,7 +354,70 @@ impl<'a> JniLowerer<'a> {
             ctors,
             wire_methods,
             async_methods,
+            streams,
         }
+    }
+
+    fn lower_stream(&self, class: &ClassDef, stream: &StreamDef, jni_prefix: &str) -> JniStream {
+        let abi_stream = self.abi_stream(class, stream);
+        let subscribe_ffi = abi_stream.subscribe.as_str().to_string();
+        let poll_ffi = abi_stream.poll.as_str().to_string();
+        let pop_batch_ffi = abi_stream.pop_batch.as_str().to_string();
+        let wait_ffi = abi_stream.wait.as_str().to_string();
+        let unsubscribe_ffi = abi_stream.unsubscribe.as_str().to_string();
+        let free_ffi = abi_stream.free.as_str().to_string();
+        let subscribe_jni = format!(
+            "Java_{}_Native_{}",
+            jni_prefix,
+            subscribe_ffi.replace('_', "_1")
+        );
+        let poll_jni = format!(
+            "Java_{}_Native_{}",
+            jni_prefix,
+            poll_ffi.replace('_', "_1")
+        );
+        let pop_batch_jni = format!(
+            "Java_{}_Native_{}",
+            jni_prefix,
+            pop_batch_ffi.replace('_', "_1")
+        );
+        let wait_jni = format!(
+            "Java_{}_Native_{}",
+            jni_prefix,
+            wait_ffi.replace('_', "_1")
+        );
+        let unsubscribe_jni = format!(
+            "Java_{}_Native_{}",
+            jni_prefix,
+            unsubscribe_ffi.replace('_', "_1")
+        );
+        let free_jni = format!(
+            "Java_{}_Native_{}",
+            jni_prefix,
+            free_ffi.replace('_', "_1")
+        );
+        JniStream {
+            subscribe_ffi,
+            subscribe_jni,
+            poll_ffi,
+            poll_jni,
+            pop_batch_ffi,
+            pop_batch_jni,
+            wait_ffi,
+            wait_jni,
+            unsubscribe_ffi,
+            unsubscribe_jni,
+            free_ffi,
+            free_jni,
+        }
+    }
+
+    fn abi_stream<'b>(&'b self, class: &ClassDef, stream: &StreamDef) -> &'b AbiStream {
+        self.abi
+            .streams
+            .iter()
+            .find(|item| item.class_id == class.id && item.stream_id == stream.id)
+            .expect("abi stream")
     }
 
     fn constructor_supported(&self, ctor: &ConstructorDef) -> bool {
