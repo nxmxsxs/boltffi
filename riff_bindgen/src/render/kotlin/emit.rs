@@ -607,7 +607,8 @@ fn emit_read_builtin_size(
         "Duration" => "12".to_string(),
         "SystemTime" => "12".to_string(),
         "Uuid" => "16".to_string(),
-        "Url" | _ => format!("wire.stringSize({})", offset_expr),
+        "Url" => format!("wire.stringSize({})", offset_expr),
+        other => panic!("unhandled custom type size: {other}"),
     }
 }
 

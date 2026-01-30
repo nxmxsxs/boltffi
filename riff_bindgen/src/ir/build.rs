@@ -178,11 +178,21 @@ impl<'m> ContractBuilder<'m> {
     fn convert_class(&self, class: &model::Class) -> ClassDef {
         ClassDef {
             id: ClassId::new(&class.name),
-            constructors: class
-                .constructors
-                .iter()
-                .map(|ctor| self.convert_constructor(ctor))
-                .collect(),
+            constructors: {
+                let has_default_init = class.constructors.iter().any(|c| c.name == "new");
+                let mut promoted_no_param = has_default_init;
+                class
+                    .constructors
+                    .iter()
+                    .map(|ctor| {
+                        let result = self.convert_constructor(ctor, promoted_no_param);
+                        if ctor.name != "new" && ctor.inputs.is_empty() && !promoted_no_param {
+                            promoted_no_param = true;
+                        }
+                        result
+                    })
+                    .collect()
+            },
             methods: class
                 .methods
                 .iter()
@@ -212,14 +222,23 @@ impl<'m> ContractBuilder<'m> {
         }
     }
 
-    fn convert_constructor(&self, ctor: &model::Constructor) -> ConstructorDef {
+    fn convert_constructor(
+        &self,
+        ctor: &model::Constructor,
+        has_default_init: bool,
+    ) -> ConstructorDef {
         let params: Vec<_> = ctor
             .inputs
             .iter()
             .map(|p| self.convert_param(&p.name, &p.param_type))
             .collect();
 
-        if ctor.name == "new" {
+        // When there's no `new()`, a no-param named ctor like `with_defaults()`
+        // would normally become a static factory (`static func withDefaults()`).
+        // But if nothing else claims the default init slot, there's no reason
+        // not to give it `public init()` — it's cleaner for the caller.
+        // We only promote the first one to avoid duplicate init() signatures.
+        if ctor.name == "new" || (!has_default_init && params.is_empty()) {
             ConstructorDef::Default {
                 params,
                 is_fallible: ctor.is_fallible,
@@ -470,4 +489,419 @@ fn convert_builtin_id(id: model::BuiltinId) -> BuiltinDef {
 pub fn build_contract(module: &mut Module) -> FfiContract {
     module.collect_derived_types();
     ContractBuilder::new(module).build()
+}
+
+#[cfg(test)]
+mod tests {
+    use crate::ir::definitions::{
+        CallbackKind, ConstructorDef, EnumRepr, ParamPassing, Receiver as IrReceiver, ReturnDef,
+        VariantPayload,
+    };
+    use crate::ir::types::{PrimitiveType, TypeExpr};
+    use crate::model::{
+        self, CallbackTrait, Enumeration, Function, Method, Module, Parameter, Primitive, Receiver,
+        Record, RecordField, ReturnType, TraitMethod, TraitMethodParam, Type, Variant,
+    };
+
+    use super::ContractBuilder;
+
+    fn empty_module() -> Module {
+        Module {
+            name: "test".to_string(),
+            records: vec![],
+            enums: vec![],
+            classes: vec![],
+            callback_traits: vec![],
+            functions: vec![],
+            custom_types: vec![],
+            closures: Default::default(),
+            used_builtins: Default::default(),
+        }
+    }
+
+    fn builder(module: &Module) -> ContractBuilder {
+        ContractBuilder::new(module)
+    }
+
+    #[test]
+    fn record_fields_and_docs_propagate() {
+        let mut module = empty_module();
+        module.records.push(
+            Record::new("Location")
+                .with_doc("A geographic point.")
+                .with_field(
+                    RecordField::new("lat", Type::Primitive(Primitive::F64))
+                        .with_doc("Latitude in degrees."),
+                )
+                .with_field(RecordField::new("lng", Type::Primitive(Primitive::F64))),
+        );
+
+        let def = builder(&module).convert_record(&module.records[0]);
+
+        assert_eq!(def.id.as_str(), "Location");
+        assert_eq!(def.doc.as_deref(), Some("A geographic point."));
+        assert_eq!(def.fields.len(), 2);
+        assert_eq!(def.fields[0].name.as_str(), "lat");
+        assert_eq!(def.fields[0].doc.as_deref(), Some("Latitude in degrees."));
+        assert!(matches!(
+            def.fields[0].type_expr,
+            TypeExpr::Primitive(PrimitiveType::F64)
+        ));
+        assert_eq!(def.fields[1].name.as_str(), "lng");
+        assert!(def.fields[1].doc.is_none());
+    }
+
+    #[test]
+    fn record_without_doc_has_none() {
+        let mut module = empty_module();
+        module.records.push(Record::new("Bare"));
+
+        let def = builder(&module).convert_record(&module.records[0]);
+
+        assert!(def.doc.is_none());
+        assert!(def.fields.is_empty());
+    }
+
+    #[test]
+    fn c_style_enum_variants_and_docs() {
+        let mut module = empty_module();
+        module.enums.push(
+            Enumeration::new("Direction")
+                .with_doc("Cardinal direction.")
+                .with_variant(Variant::new("North").with_doc("Toward the north pole."))
+                .with_variant(Variant::new("South")),
+        );
+
+        let def = builder(&module).convert_enum(&module.enums[0]);
+
+        assert_eq!(def.id.as_str(), "Direction");
+        assert_eq!(def.doc.as_deref(), Some("Cardinal direction."));
+        assert!(!def.is_error);
+        let variants = match &def.repr {
+            EnumRepr::CStyle { variants, .. } => variants,
+            _ => panic!("expected c-style"),
+        };
+        assert_eq!(variants.len(), 2);
+        assert_eq!(variants[0].name.as_str(), "North");
+        assert_eq!(variants[0].doc.as_deref(), Some("Toward the north pole."));
+        assert_eq!(variants[0].discriminant, 0);
+        assert_eq!(variants[1].name.as_str(), "South");
+        assert!(variants[1].doc.is_none());
+        assert_eq!(variants[1].discriminant, 1);
+    }
+
+    #[test]
+    fn data_enum_with_variant_fields() {
+        let mut module = empty_module();
+        module.enums.push(
+            Enumeration::new("ApiResult")
+                .with_variant(Variant::new("Ok"))
+                .with_variant(
+                    Variant::new("Error")
+                        .with_field(RecordField::new("code", Type::Primitive(Primitive::I32)))
+                        .with_doc("Something went wrong."),
+                ),
+        );
+
+        let def = builder(&module).convert_enum(&module.enums[0]);
+
+        let variants = match &def.repr {
+            EnumRepr::Data { variants, .. } => variants,
+            _ => panic!("expected data enum"),
+        };
+        assert_eq!(variants.len(), 2);
+        assert!(matches!(variants[0].payload, VariantPayload::Unit));
+        match &variants[1].payload {
+            VariantPayload::Struct(fields) => {
+                assert_eq!(fields.len(), 1);
+                assert_eq!(fields[0].name.as_str(), "code");
+            }
+            _ => panic!("expected struct payload"),
+        }
+        assert_eq!(variants[1].doc.as_deref(), Some("Something went wrong."));
+    }
+
+    #[test]
+    fn error_enum_flag_propagates() {
+        let mut module = empty_module();
+        module.enums.push(
+            Enumeration::new("ParseError")
+                .as_error()
+                .with_variant(Variant::new("InvalidSyntax")),
+        );
+
+        let def = builder(&module).convert_enum(&module.enums[0]);
+
+        assert!(def.is_error);
+    }
+
+    #[test]
+    fn function_params_returns_and_doc() {
+        let mut module = empty_module();
+        module.functions.push(
+            model::Function::new("add")
+                .with_doc("Adds two numbers.")
+                .with_param(Parameter::new("a", Type::Primitive(Primitive::I32)))
+                .with_param(Parameter::new("b", Type::Primitive(Primitive::I32)))
+                .with_return(ReturnType::value(Type::Primitive(Primitive::I64))),
+        );
+
+        let def = builder(&module).convert_function(&module.functions[0]);
+
+        assert_eq!(def.id.as_str(), "add");
+        assert_eq!(def.doc.as_deref(), Some("Adds two numbers."));
+        assert!(!def.is_async);
+        assert_eq!(def.params.len(), 2);
+        assert_eq!(def.params[0].name.as_str(), "a");
+        assert!(matches!(
+            def.params[0].type_expr,
+            TypeExpr::Primitive(PrimitiveType::I32)
+        ));
+        assert!(matches!(def.params[0].passing, ParamPassing::Value));
+        assert!(matches!(
+            def.returns,
+            ReturnDef::Value(TypeExpr::Primitive(PrimitiveType::I64))
+        ));
+    }
+
+    #[test]
+    fn async_function_preserves_flag() {
+        let mut module = empty_module();
+        module
+            .functions
+            .push(model::Function::new("fetch").make_async());
+
+        let def = builder(&module).convert_function(&module.functions[0]);
+
+        assert!(def.is_async);
+    }
+
+    #[test]
+    fn void_function_returns_void() {
+        let mut module = empty_module();
+        module.functions.push(model::Function::new("noop"));
+
+        let def = builder(&module).convert_function(&module.functions[0]);
+
+        assert!(matches!(def.returns, ReturnDef::Void));
+    }
+
+    #[test]
+    fn class_method_with_receiver_and_doc() {
+        let mut module = empty_module();
+        module.classes.push(
+            model::Class::new("Counter")
+                .with_constructor(model::Constructor::new())
+                .with_method(
+                    model::Method::new("increment", Receiver::RefMut)
+                        .with_doc("Bumps the counter by one.")
+                        .with_param(Parameter::new("amount", Type::Primitive(Primitive::I32)))
+                        .with_return(ReturnType::value(Type::Primitive(Primitive::I64))),
+                ),
+        );
+
+        let b = builder(&module);
+        let def = b.convert_class(&module.classes[0]);
+
+        assert_eq!(def.methods.len(), 1);
+        let method = &def.methods[0];
+        assert_eq!(method.id.as_str(), "increment");
+        assert_eq!(method.doc.as_deref(), Some("Bumps the counter by one."));
+        assert!(matches!(method.receiver, IrReceiver::RefMutSelf));
+        assert_eq!(method.params.len(), 1);
+        assert!(matches!(
+            method.returns,
+            ReturnDef::Value(TypeExpr::Primitive(PrimitiveType::I64))
+        ));
+    }
+
+    #[test]
+    fn class_doc_propagates() {
+        let mut module = empty_module();
+        module
+            .classes
+            .push(model::Class::new("Store").with_doc("A persistent store."));
+
+        let def = builder(&module).convert_class(&module.classes[0]);
+
+        assert_eq!(def.doc.as_deref(), Some("A persistent store."));
+    }
+
+    #[test]
+    fn named_ctor_with_params_becomes_named_init() {
+        let mut module = empty_module();
+        module.classes.push(
+            model::Class::new("Buffer").with_constructor(
+                model::Constructor::new()
+                    .with_name("with_capacity")
+                    .with_param(model::ConstructorParam {
+                        name: "size".to_string(),
+                        param_type: Type::Primitive(Primitive::U32),
+                    }),
+            ),
+        );
+
+        let def = builder(&module).convert_class(&module.classes[0]);
+
+        assert_eq!(def.constructors.len(), 1);
+        assert!(
+            matches!(&def.constructors[0], ConstructorDef::NamedInit { name, .. } if name.as_str() == "with_capacity")
+        );
+    }
+
+    #[test]
+    fn constructor_doc_propagates() {
+        let mut module = empty_module();
+        module
+            .classes
+            .push(model::Class::new("Db").with_constructor(
+                model::Constructor::new().with_doc("Opens a new database connection."),
+            ));
+
+        let def = builder(&module).convert_class(&module.classes[0]);
+
+        assert_eq!(
+            def.constructors[0].doc().as_deref(),
+            Some("Opens a new database connection.")
+        );
+    }
+
+    #[test]
+    fn named_no_param_ctor_promoted_to_default_when_no_new() {
+        let mut module = empty_module();
+        module.classes.push(
+            model::Class::new("Store")
+                .with_constructor(model::Constructor::new().with_name("with_defaults")),
+        );
+
+        let def = builder(&module).convert_class(&module.classes[0]);
+
+        assert_eq!(def.constructors.len(), 1);
+        assert!(
+            matches!(&def.constructors[0], ConstructorDef::Default { params, .. } if params.is_empty())
+        );
+    }
+
+    #[test]
+    fn named_no_param_ctor_stays_factory_when_new_exists() {
+        let mut module = empty_module();
+        module.classes.push(
+            model::Class::new("Store")
+                .with_constructor(model::Constructor::new())
+                .with_constructor(model::Constructor::new().with_name("with_defaults")),
+        );
+
+        let def = builder(&module).convert_class(&module.classes[0]);
+
+        assert_eq!(def.constructors.len(), 2);
+        assert!(matches!(
+            &def.constructors[0],
+            ConstructorDef::Default { .. }
+        ));
+        assert!(matches!(
+            &def.constructors[1],
+            ConstructorDef::NamedFactory { .. }
+        ));
+    }
+
+    #[test]
+    fn only_first_no_param_ctor_promoted_when_no_new() {
+        let mut module = empty_module();
+        module.classes.push(
+            model::Class::new("Store")
+                .with_constructor(model::Constructor::new().with_name("with_defaults"))
+                .with_constructor(model::Constructor::new().with_name("empty")),
+        );
+
+        let def = builder(&module).convert_class(&module.classes[0]);
+
+        assert_eq!(def.constructors.len(), 2);
+        assert!(matches!(
+            &def.constructors[0],
+            ConstructorDef::Default { .. }
+        ));
+        assert!(matches!(
+            &def.constructors[1],
+            ConstructorDef::NamedFactory { .. }
+        ));
+    }
+
+    #[test]
+    fn callback_trait_methods_and_docs() {
+        let mut module = empty_module();
+        module.callback_traits.push(
+            CallbackTrait::new("DataProvider")
+                .with_doc("Supplies data to the engine.")
+                .with_method(
+                    TraitMethod::new("fetch")
+                        .with_doc("Fetches the next batch.")
+                        .with_param(TraitMethodParam::new(
+                            "count",
+                            Type::Primitive(Primitive::I32),
+                        ))
+                        .with_return(ReturnType::value(Type::Primitive(Primitive::Bool))),
+                )
+                .with_method(TraitMethod::new("reset").make_async()),
+        );
+
+        let def = builder(&module).convert_callback_trait(&module.callback_traits[0]);
+
+        assert_eq!(def.id.as_str(), "DataProvider");
+        assert_eq!(def.doc.as_deref(), Some("Supplies data to the engine."));
+        assert!(matches!(def.kind, CallbackKind::Trait));
+        assert_eq!(def.methods.len(), 2);
+
+        let fetch = &def.methods[0];
+        assert_eq!(fetch.id.as_str(), "fetch");
+        assert_eq!(fetch.doc.as_deref(), Some("Fetches the next batch."));
+        assert!(!fetch.is_async);
+        assert_eq!(fetch.params.len(), 1);
+        assert!(matches!(
+            fetch.returns,
+            ReturnDef::Value(TypeExpr::Primitive(PrimitiveType::Bool))
+        ));
+
+        let reset = &def.methods[1];
+        assert_eq!(reset.id.as_str(), "reset");
+        assert!(reset.is_async);
+        assert!(matches!(reset.returns, ReturnDef::Void));
+    }
+
+    #[test]
+    fn full_contract_build_integrates_all_types() {
+        let mut module = empty_module();
+        module.records.push(
+            Record::new("Point")
+                .with_field(RecordField::new("x", Type::Primitive(Primitive::F64)))
+                .with_field(RecordField::new("y", Type::Primitive(Primitive::F64))),
+        );
+        module.enums.push(
+            Enumeration::new("Color")
+                .with_variant(Variant::new("Red"))
+                .with_variant(Variant::new("Green"))
+                .with_variant(Variant::new("Blue")),
+        );
+        module.classes.push(
+            model::Class::new("Canvas")
+                .with_constructor(model::Constructor::new())
+                .with_method(model::Method::new("draw", Receiver::RefMut)),
+        );
+        module.functions.push(
+            model::Function::new("distance")
+                .with_param(Parameter::new("a", Type::Record("Point".into())))
+                .with_param(Parameter::new("b", Type::Record("Point".into())))
+                .with_return(ReturnType::value(Type::Primitive(Primitive::F64))),
+        );
+        module
+            .callback_traits
+            .push(CallbackTrait::new("Renderer").with_method(TraitMethod::new("render")));
+
+        let contract = builder(&module).build();
+
+        assert!(contract.catalog.resolve_record(&"Point".into()).is_some());
+        assert!(contract.catalog.resolve_enum(&"Color".into()).is_some());
+        assert!(contract.catalog.resolve_class(&"Canvas".into()).is_some());
+        assert_eq!(contract.functions.len(), 1);
+        assert_eq!(contract.catalog.all_callbacks().count(), 1);
+    }
 }

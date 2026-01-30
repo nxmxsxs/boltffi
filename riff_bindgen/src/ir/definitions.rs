@@ -45,12 +45,8 @@ pub struct EnumDef {
 impl EnumDef {
     pub fn variant_docs(&self) -> Vec<Option<String>> {
         match &self.repr {
-            EnumRepr::CStyle { variants, .. } => {
-                variants.iter().map(|v| v.doc.clone()).collect()
-            }
-            EnumRepr::Data { variants, .. } => {
-                variants.iter().map(|v| v.doc.clone()).collect()
-            }
+            EnumRepr::CStyle { variants, .. } => variants.iter().map(|v| v.doc.clone()).collect(),
+            EnumRepr::Data { variants, .. } => variants.iter().map(|v| v.doc.clone()).collect(),
         }
     }
 }

@@ -447,11 +447,11 @@ impl KotlinEmitter {
 mod tests {
     use askama::Template;
 
-    use super::*;
     use super::super::plan::{
         KotlinClass, KotlinConstructor, KotlinEnumVariant, KotlinMethod, KotlinMethodImpl,
         KotlinRecordField, KotlinSignatureParam,
     };
+    use super::*;
 
     #[test]
     fn snapshot_record_with_field_docs() {
