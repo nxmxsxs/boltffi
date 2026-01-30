@@ -715,7 +715,7 @@ impl<'a> JniLowerer<'a> {
 
     fn primitive_c_type(&self, primitive: PrimitiveType) -> String {
         match primitive {
-            PrimitiveType::Bool => "uint8_t".to_string(),
+            PrimitiveType::Bool => "bool".to_string(),
             PrimitiveType::I8 => "int8_t".to_string(),
             PrimitiveType::U8 => "uint8_t".to_string(),
             PrimitiveType::I16 => "int16_t".to_string(),
@@ -947,7 +947,7 @@ impl<'a> JniLowerer<'a> {
                 TypeExpr::Void => JniReturnAbi::Unit,
                 TypeExpr::Primitive(p) => JniReturnAbi::Direct {
                     jni_return_type: self.primitive_return_jni_type(*p),
-                    jni_c_return_type: self.primitive_c_return_type(*p),
+                    jni_c_return_type: self.primitive_c_type(*p),
                     jni_result_cast: self.primitive_return_cast(*p),
                 },
                 TypeExpr::String
@@ -995,21 +995,7 @@ impl<'a> JniLowerer<'a> {
         }
     }
 
-    fn primitive_c_return_type(&self, primitive: PrimitiveType) -> String {
-        match primitive {
-            PrimitiveType::Bool => "bool".to_string(),
-            PrimitiveType::I8 => "int8_t".to_string(),
-            PrimitiveType::U8 => "uint8_t".to_string(),
-            PrimitiveType::I16 => "int16_t".to_string(),
-            PrimitiveType::U16 => "uint16_t".to_string(),
-            PrimitiveType::I32 => "int32_t".to_string(),
-            PrimitiveType::U32 => "uint32_t".to_string(),
-            PrimitiveType::I64 | PrimitiveType::ISize => "int64_t".to_string(),
-            PrimitiveType::U64 | PrimitiveType::USize => "uint64_t".to_string(),
-            PrimitiveType::F32 => "float".to_string(),
-            PrimitiveType::F64 => "double".to_string(),
-        }
-    }
+
 
     fn primitive_return_cast(&self, primitive: PrimitiveType) -> String {
         match primitive {
@@ -1039,7 +1025,7 @@ impl<'a> JniLowerer<'a> {
         match ty {
             TypeExpr::Void => JniResultVariant::Void,
             TypeExpr::Primitive(p) => JniResultVariant::Primitive {
-                c_type: self.primitive_c_return_type(*p),
+                c_type: self.primitive_c_type(*p),
                 jni_type: self.primitive_return_jni_type(*p),
             },
             TypeExpr::String => JniResultVariant::String,
@@ -1715,18 +1701,18 @@ impl<'a> JniLowerer<'a> {
 
     fn c_return_type_for_abi(&self, abi_type: &AbiType) -> String {
         match abi_type {
-            AbiType::Bool => "uint8_t".to_string(),
+            AbiType::Bool => "bool".to_string(),
             AbiType::I8 => "int8_t".to_string(),
             AbiType::U8 => "uint8_t".to_string(),
             AbiType::I16 => "int16_t".to_string(),
             AbiType::U16 => "uint16_t".to_string(),
             AbiType::I32 => "int32_t".to_string(),
             AbiType::U32 => "uint32_t".to_string(),
-            AbiType::I64 => "int64_t".to_string(),
-            AbiType::U64 => "uint64_t".to_string(),
+            AbiType::I64 | AbiType::ISize => "int64_t".to_string(),
+            AbiType::U64 | AbiType::USize => "uint64_t".to_string(),
             AbiType::F32 => "float".to_string(),
             AbiType::F64 => "double".to_string(),
-            _ => "void".to_string(),
+            AbiType::Void | AbiType::Pointer => "void".to_string(),
         }
     }
 
@@ -1780,7 +1766,7 @@ impl<'a> JniLowerer<'a> {
         match suffix {
             "Void" => None,
             "Bool" => Some(JniInvokerResult {
-                c_type: "uint8_t".to_string(),
+                c_type: "bool".to_string(),
                 jni_type: "jboolean".to_string(),
             }),
             "I8" => Some(JniInvokerResult {
@@ -1933,7 +1919,7 @@ impl<'a> JniLowerer<'a> {
             .iter()
             .enumerate()
             .map(|(index, param)| match param.type_expr {
-                TypeExpr::Primitive(p) => format!("{} p{}", self.primitive_c_return_type(p), index),
+                TypeExpr::Primitive(p) => format!("{} p{}", self.primitive_c_type(p), index),
                 TypeExpr::Record(_) | TypeExpr::String => {
                     format!("const uint8_t* p{}_ptr, uintptr_t p{}_len", index, index)
                 }
@@ -2006,4 +1992,90 @@ struct LoweredCallbackParam {
     c_params: Vec<JniCallbackCParam>,
     setup_lines: Vec<String>,
     jni_arg: String,
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::ir::abi::AbiContract;
+    use crate::ir::contract::{FfiContract, PackageInfo, TypeCatalog};
+    use crate::ir::types::PrimitiveType;
+
+    fn test_lowerer() -> JniLowerer<'static> {
+        static CONTRACT: std::sync::LazyLock<FfiContract> = std::sync::LazyLock::new(|| {
+            FfiContract {
+                package: PackageInfo {
+                    name: "test".to_string(),
+                    version: None,
+                },
+                catalog: TypeCatalog::default(),
+                functions: vec![],
+            }
+        });
+        static ABI: std::sync::LazyLock<AbiContract> =
+            std::sync::LazyLock::new(|| crate::ir::Lowerer::new(&CONTRACT).to_abi_contract());
+
+        JniLowerer::new(&CONTRACT, &ABI, "com.test".to_string(), "Native".to_string())
+    }
+
+    #[test]
+    fn primitive_c_type_bool_is_bool_not_uint8() {
+        let lowerer = test_lowerer();
+        assert_eq!(lowerer.primitive_c_type(PrimitiveType::Bool), "bool");
+    }
+
+    #[test]
+    fn primitive_c_type_matches_cbindgen_for_all_types() {
+        let lowerer = test_lowerer();
+        let cases = [
+            (PrimitiveType::Bool, "bool"),
+            (PrimitiveType::I8, "int8_t"),
+            (PrimitiveType::U8, "uint8_t"),
+            (PrimitiveType::I16, "int16_t"),
+            (PrimitiveType::U16, "uint16_t"),
+            (PrimitiveType::I32, "int32_t"),
+            (PrimitiveType::U32, "uint32_t"),
+            (PrimitiveType::I64, "int64_t"),
+            (PrimitiveType::U64, "uint64_t"),
+            (PrimitiveType::ISize, "int64_t"),
+            (PrimitiveType::USize, "uint64_t"),
+            (PrimitiveType::F32, "float"),
+            (PrimitiveType::F64, "double"),
+        ];
+        cases
+            .iter()
+            .for_each(|(prim, expected)| assert_eq!(lowerer.primitive_c_type(*prim), *expected));
+    }
+
+    #[test]
+    fn c_return_type_for_abi_bool_is_bool() {
+        let lowerer = test_lowerer();
+        assert_eq!(lowerer.c_return_type_for_abi(&AbiType::Bool), "bool");
+    }
+
+    #[test]
+    fn c_return_type_for_abi_matches_primitive_c_type() {
+        let lowerer = test_lowerer();
+        let abi_types = [
+            (AbiType::Bool, PrimitiveType::Bool),
+            (AbiType::I8, PrimitiveType::I8),
+            (AbiType::U8, PrimitiveType::U8),
+            (AbiType::I16, PrimitiveType::I16),
+            (AbiType::U16, PrimitiveType::U16),
+            (AbiType::I32, PrimitiveType::I32),
+            (AbiType::U32, PrimitiveType::U32),
+            (AbiType::I64, PrimitiveType::I64),
+            (AbiType::U64, PrimitiveType::U64),
+            (AbiType::F32, PrimitiveType::F32),
+            (AbiType::F64, PrimitiveType::F64),
+        ];
+        abi_types.iter().for_each(|(abi, prim)| {
+            assert_eq!(
+                lowerer.c_return_type_for_abi(abi),
+                lowerer.primitive_c_type(*prim),
+                "mismatch for {:?}",
+                abi
+            );
+        });
+    }
 }
