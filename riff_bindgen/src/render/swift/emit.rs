@@ -666,3 +666,172 @@ fn emit_offset_expr(offset: &OffsetExpr, base_name: &str, base_expr: &str) -> St
         }
     }
 }
+
+pub fn emit_reader_read(seq: &ReadSeq) -> String {
+    seq.ops
+        .first()
+        .map(emit_reader_read_op)
+        .unwrap_or_default()
+}
+
+fn emit_reader_read_op(op: &ReadOp) -> String {
+    match op {
+        ReadOp::Primitive { primitive, .. } => match primitive {
+            PrimitiveType::Bool => "reader.readBool()".into(),
+            PrimitiveType::I8 => "reader.readI8()".into(),
+            PrimitiveType::U8 => "reader.readU8()".into(),
+            PrimitiveType::I16 => "reader.readI16()".into(),
+            PrimitiveType::U16 => "reader.readU16()".into(),
+            PrimitiveType::I32 => "reader.readI32()".into(),
+            PrimitiveType::U32 => "reader.readU32()".into(),
+            PrimitiveType::I64 => "reader.readI64()".into(),
+            PrimitiveType::U64 => "reader.readU64()".into(),
+            PrimitiveType::ISize => "Int(reader.readI64())".into(),
+            PrimitiveType::USize => "UInt(reader.readU64())".into(),
+            PrimitiveType::F32 => "reader.readF32()".into(),
+            PrimitiveType::F64 => "reader.readF64()".into(),
+        },
+        ReadOp::String { .. } => "reader.readString()".into(),
+        ReadOp::Bytes { .. } => "reader.readBytes()".into(),
+        ReadOp::Builtin { id, .. } => match id.as_str() {
+            "Duration" => "reader.readDuration()".into(),
+            "SystemTime" => "reader.readTimestamp()".into(),
+            "Uuid" => "reader.readUuid()".into(),
+            "Url" => "reader.readUrl()".into(),
+            other => format!("{}.decode(from: &reader)", pascal_case(other)),
+        },
+        ReadOp::Option { some, .. } => {
+            let inner = emit_reader_read(some);
+            format!("reader.readOptional {{ reader in {} }}", inner)
+        }
+        ReadOp::Vec {
+            element_type,
+            element,
+            layout,
+            ..
+        } => {
+            if matches!(element_type, TypeExpr::Primitive(PrimitiveType::U8)) {
+                return "reader.readBytes()".into();
+            }
+            match layout {
+                VecLayout::Blittable { .. } => format!(
+                    "reader.readBlittableArray() as [{}]",
+                    swift_type(element_type)
+                ),
+                VecLayout::Encoded => {
+                    let inner = emit_reader_read(element);
+                    format!("reader.readArray {{ reader in {} }}", inner)
+                }
+            }
+        }
+        ReadOp::Record { id, .. } => {
+            format!("{}.decode(from: &reader)", pascal_case(id.as_str()))
+        }
+        ReadOp::Enum { id, layout, .. } => match layout {
+            EnumLayout::CStyle { .. } => {
+                format!("{}(fromC: reader.readI32())", pascal_case(id.as_str()))
+            }
+            EnumLayout::Data { .. } | EnumLayout::Recursive => {
+                format!("{}.decode(from: &reader)", pascal_case(id.as_str()))
+            }
+        },
+        ReadOp::Result { ok, err, .. } => {
+            let ok_read = emit_reader_read(ok);
+            let err_read = emit_reader_read(err);
+            format!(
+                "{{ let tag = reader.readU8(); if tag == 0 {{ return .success({}) }} else {{ return .failure({}) }} }}()",
+                ok_read, err_read
+            )
+        }
+        ReadOp::Custom { underlying, .. } => emit_reader_read(underlying),
+    }
+}
+
+pub fn emit_writer_write(seq: &WriteSeq) -> String {
+    seq.ops
+        .iter()
+        .map(emit_writer_write_op)
+        .collect::<Vec<_>>()
+        .join("; ")
+}
+
+fn emit_writer_write_op(op: &WriteOp) -> String {
+    match op {
+        WriteOp::Primitive { primitive, value } => {
+            let v = render_value(value);
+            match primitive {
+                PrimitiveType::Bool => format!("writer.writeBool({})", v),
+                PrimitiveType::I8 => format!("writer.writeI8({})", v),
+                PrimitiveType::U8 => format!("writer.writeU8({})", v),
+                PrimitiveType::I16 => format!("writer.writeI16({})", v),
+                PrimitiveType::U16 => format!("writer.writeU16({})", v),
+                PrimitiveType::I32 => format!("writer.writeI32({})", v),
+                PrimitiveType::U32 => format!("writer.writeU32({})", v),
+                PrimitiveType::I64 => format!("writer.writeI64({})", v),
+                PrimitiveType::U64 => format!("writer.writeU64({})", v),
+                PrimitiveType::ISize => format!("writer.writeI64(Int64({}))", v),
+                PrimitiveType::USize => format!("writer.writeU64(UInt64({}))", v),
+                PrimitiveType::F32 => format!("writer.writeF32({})", v),
+                PrimitiveType::F64 => format!("writer.writeF64({})", v),
+            }
+        }
+        WriteOp::String { value } => format!("writer.writeString({})", render_value(value)),
+        WriteOp::Bytes { value } => format!("writer.writeBytes({})", render_value(value)),
+        WriteOp::Builtin { id, value } => {
+            let v = render_value(value);
+            match id.as_str() {
+                "Duration" => format!("writer.writeDuration({})", v),
+                "SystemTime" => format!("writer.writeTimestamp({})", v),
+                "Uuid" => format!("writer.writeUuid({})", v),
+                "Url" => format!("writer.writeUrl({})", v),
+                _ => format!("{}.encode(to: &writer)", v),
+            }
+        }
+        WriteOp::Option { value, some } => {
+            let inner = emit_writer_write(some);
+            format!(
+                "writer.writeOptional({}) {{ writer, v in {} }}",
+                render_value(value),
+                inner
+            )
+        }
+        WriteOp::Vec {
+            value,
+            element_type,
+            element,
+            layout,
+        } => {
+            let v = render_value(value);
+            if matches!(element_type, TypeExpr::Primitive(PrimitiveType::U8)) {
+                return format!("writer.writeBytes({})", v);
+            }
+            match layout {
+                VecLayout::Blittable { .. } => format!("writer.writeBlittableArray({})", v),
+                VecLayout::Encoded => {
+                    let inner = emit_writer_write(element);
+                    format!("writer.writeArray({}) {{ writer, item in {} }}", v, inner)
+                }
+            }
+        }
+        WriteOp::Record { value, .. } => format!("{}.encode(to: &writer)", render_value(value)),
+        WriteOp::Enum { value, layout, .. } => {
+            let v = render_value(value);
+            match layout {
+                EnumLayout::CStyle { .. } => format!("writer.writeI32({}.rawValue)", v),
+                EnumLayout::Data { .. } | EnumLayout::Recursive => {
+                    format!("{}.encode(to: &writer)", v)
+                }
+            }
+        }
+        WriteOp::Result { value, ok, err } => {
+            let v = render_value(value);
+            let ok_write = emit_writer_write(ok);
+            let err_write = emit_writer_write(err);
+            format!(
+                "switch {} {{ case .success(let okVal): writer.writeU8(0); {}; case .failure(let errVal): writer.writeU8(1); {} }}",
+                v, ok_write, err_write
+            )
+        }
+        WriteOp::Custom { underlying, .. } => emit_writer_write(underlying),
+    }
+}

@@ -25,39 +25,31 @@ pub fn swift_doc_block(doc: &Option<String>, indent: &str) -> String {
 }
 
 #[derive(Template)]
-#[template(path = "preamble.txt", escape = "none")]
-pub struct PreambleTemplate<'a> {
-    pub prefix: &'a str,
+#[template(path = "preamble_header.txt", escape = "none")]
+pub struct PreambleHeaderTemplate<'a> {
     pub ffi_module_name: Option<&'a str>,
+}
+
+#[derive(Template)]
+#[template(path = "preamble_footer.txt", escape = "none")]
+pub struct PreambleFooterTemplate<'a> {
+    pub prefix: &'a str,
     pub has_async: bool,
     pub has_streams: bool,
 }
 
-impl<'a> PreambleTemplate<'a> {
-    pub fn new(
-        prefix: &'a str,
-        ffi_module_name: Option<&'a str>,
-        has_async: bool,
-        has_streams: bool,
-    ) -> Self {
-        Self {
-            prefix,
-            ffi_module_name,
-            has_async,
-            has_streams,
-        }
-    }
+pub fn render_preamble_header(ffi_module_name: Option<&str>) -> String {
+    PreambleHeaderTemplate { ffi_module_name }.render().unwrap()
 }
 
-pub fn render_preamble(
-    prefix: &str,
-    ffi_module_name: Option<&str>,
-    has_async: bool,
-    has_streams: bool,
-) -> String {
-    PreambleTemplate::new(prefix, ffi_module_name, has_async, has_streams)
-        .render()
-        .unwrap()
+pub fn render_preamble_footer(prefix: &str, has_async: bool, has_streams: bool) -> String {
+    PreambleFooterTemplate {
+        prefix,
+        has_async,
+        has_streams,
+    }
+    .render()
+    .unwrap()
 }
 
 #[derive(Template)]
@@ -214,12 +206,7 @@ impl SwiftEmitter {
     pub fn emit(&self, module: &SwiftModule) -> String {
         let mut output = String::new();
 
-        output.push_str(&render_preamble(
-            &self.prefix,
-            self.ffi_module_name.as_deref(),
-            module.has_async(),
-            module.has_streams(),
-        ));
+        output.push_str(&render_preamble_header(self.ffi_module_name.as_deref()));
         output.push_str("\n\n");
 
         module.custom_types.iter().for_each(|ct| {
@@ -256,6 +243,13 @@ impl SwiftEmitter {
             output.push_str(&render_class(class_def, &self.prefix));
             output.push_str("\n\n");
         });
+
+        output.push_str(&render_preamble_footer(
+            &self.prefix,
+            module.has_async(),
+            module.has_streams(),
+        ));
+        output.push('\n');
 
         output
     }

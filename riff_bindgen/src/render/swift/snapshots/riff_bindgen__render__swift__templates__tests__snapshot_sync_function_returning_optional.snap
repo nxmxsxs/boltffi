@@ -5,6 +5,5 @@ expression: "render_function(&func, \"riff\")"
 public func findUser(id: Int64) -> String? {
     let buf = riff_find_user(id)
     defer { riff_free_buf_u8(buf) }
-    let wire = WireBuffer(ptr: buf.ptr!, len: Int(buf.len))
-    return wire.readOptional(at: 0, reader: { wire.readString(at: $0) }).value
+    return riffDecodeOwnedBuf(buf.ptr, Int(buf.len)) { reader in reader.readOptional { reader in reader.readString() } }
 }

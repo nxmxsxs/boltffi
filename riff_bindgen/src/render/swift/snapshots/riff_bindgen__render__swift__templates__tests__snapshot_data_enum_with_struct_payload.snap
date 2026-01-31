@@ -6,56 +6,30 @@ public enum Event: Hashable, Equatable, Sendable {
     case click(x: Int32, y: Int32)
     case keyPress(code: UInt32)
 
-    @inlinable static func decode(wireBuffer wire: WireBuffer, at offset: Int) -> (value: Event, size: Int) {
-        let tag = wire.readI32(at: offset)
-        var pos = offset + 4
+}
+
+extension Event: WireCodable {
+    @inlinable static func decode(from reader: inout WireReader) -> Event {
+        let tag = reader.readI32()
         switch tag {
         case 0:
-            let x = { let v = wire.readI32(at: pos); pos += 4; return v }()
-            let y = { let v = wire.readI32(at: pos); pos += 4; return v }()
-            return (.click(x: x, y: y), pos - offset)
+            return .click(x: reader.readI32(), y: reader.readI32())
         case 1:
-            let code = { let v = wire.readU32(at: pos); pos += 4; return v }()
-            return (.keyPress(code: code), pos - offset)
+            return .keyPress(code: reader.readU32())
         default:
             fatalError("Invalid Event tag: \(tag)")
         }
     }
-}
 
-extension Event: WireEncodable {
-    @usableFromInline static var isBlittable: Bool { false }
-
-    @inlinable func wireEncodedSize() -> Int {
-        switch self {
-        case .click:
-            return 4 + 4 + 4
-        case .keyPress:
-            return 4 + 4
-        }
-    }
-
-    @inlinable func wireEncodeTo(_ data: inout Data) {
+    @inlinable func encode(to writer: inout WireWriter) {
         switch self {
         case let .click(x, y):
-            data.appendI32(0)
-            data.appendI32(x)
-            data.appendI32(y)
+            writer.writeI32(0)
+            writer.writeI32(x)
+            writer.writeI32(y)
         case let .keyPress(code):
-            data.appendI32(1)
-            data.appendU32(code)
-        }
-    }
-
-    @inlinable func wireEncodeToBytes(_ bytes: inout [UInt8]) {
-        switch self {
-        case let .click(x, y):
-            bytes.appendI32(0)
-            bytes.appendI32(x)
-            bytes.appendI32(y)
-        case let .keyPress(code):
-            bytes.appendI32(1)
-            bytes.appendU32(code)
+            writer.writeI32(1)
+            writer.writeU32(code)
         }
     }
 }

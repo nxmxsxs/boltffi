@@ -9,56 +9,19 @@
 {%- endfor %}
     }
 
-    @inlinable static func decode(wireBuffer wire: WireBuffer, at offset: Int) -> (value: {{ class_name }}, size: Int) {
-{%- if is_blittable %}
-{%- if let Some(size) = blittable_size %}
-        return ({{ class_name }}({% for field in fields %}{{ field.swift_name }}: {{ field.decode_at_offset("offset") }}{% if !loop.last %}, {% endif %}{% endfor %}), {{ size }})
-{%- endif %}
-{%- else %}
-        var pos = offset
-{%- for field in fields %}
-        let {{ field.swift_name }}_v = {{ field.wire_decode_inline() }}
-{%- endfor %}
-        return ({{ class_name }}({% for field in fields %}{{ field.swift_name }}: {{ field.swift_name }}_v{% if !loop.last %}, {% endif %}{% endfor %}), pos - offset)
-{%- endif %}
-    }
 }
 
-extension {{ class_name }}: WireEncodable {
+extension {{ class_name }}: WireCodable {
 {%- if is_blittable %}
-{%- if let Some(size) = blittable_size %}
-    @usableFromInline static var isBlittable: Bool { true }
-    @inlinable func wireEncodedSize() -> Int { {{ size }} }
-    @inlinable func wireEncodeTo(_ data: inout Data) {
-        var copy = self
-        withUnsafePointer(to: &copy) { ptr in
-            data.append(UnsafeRawPointer(ptr).assumingMemoryBound(to: UInt8.self), count: {{ size }})
-        }
-    }
-    @inlinable func wireEncodeToBytes(_ bytes: inout [UInt8]) {
-        var copy = self
-        withUnsafePointer(to: &copy) { ptr in
-            bytes.append(contentsOf: UnsafeBufferPointer(start: UnsafeRawPointer(ptr).assumingMemoryBound(to: UInt8.self), count: {{ size }}))
-        }
-    }
-{%- endif %}
+    @inlinable static func decode(from reader: inout WireReader) -> {{ class_name }} { reader.readBlittable() }
+    @inlinable func encode(to writer: inout WireWriter) { writer.writeBlittable(self) }
 {%- else %}
-    @usableFromInline static var isBlittable: Bool { false }
-    @inlinable func wireEncodedSize() -> Int {
-        var size = 0
-{%- for field in fields %}
-        size += {{ field.wire_size_expr() }}
-{%- endfor %}
-        return size
+    @inlinable static func decode(from reader: inout WireReader) -> {{ class_name }} {
+        {{ class_name }}({% for field in fields %}{{ field.swift_name }}: {{ field.wire_reader_decode() }}{% if !loop.last %}, {% endif %}{% endfor %})
     }
-    @inlinable func wireEncodeTo(_ data: inout Data) {
+    @inlinable func encode(to writer: inout WireWriter) {
 {%- for field in fields %}
-        {{ field.wire_encode() }}
-{%- endfor %}
-    }
-    @inlinable func wireEncodeToBytes(_ bytes: inout [UInt8]) {
-{%- for field in fields %}
-        {{ field.wire_encode_bytes() }}
+        {{ field.wire_writer_encode() }}
 {%- endfor %}
     }
 {%- endif %}

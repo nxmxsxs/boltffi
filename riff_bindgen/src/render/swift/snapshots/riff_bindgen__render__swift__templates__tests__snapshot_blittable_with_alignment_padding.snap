@@ -13,24 +13,9 @@ public struct Padded: Hashable, Equatable, Sendable {
         self.c = c
     }
 
-    @inlinable static func decode(wireBuffer wire: WireBuffer, at offset: Int) -> (value: Padded, size: Int) {
-        return (Padded(a: wire.readU8(at: offset), b: wire.readU32(at: offset + 4), c: wire.readU8(at: offset + 8)), 12)
-    }
 }
 
-extension Padded: WireEncodable {
-    @usableFromInline static var isBlittable: Bool { true }
-    @inlinable func wireEncodedSize() -> Int { 12 }
-    @inlinable func wireEncodeTo(_ data: inout Data) {
-        var copy = self
-        withUnsafePointer(to: &copy) { ptr in
-            data.append(UnsafeRawPointer(ptr).assumingMemoryBound(to: UInt8.self), count: 12)
-        }
-    }
-    @inlinable func wireEncodeToBytes(_ bytes: inout [UInt8]) {
-        var copy = self
-        withUnsafePointer(to: &copy) { ptr in
-            bytes.append(contentsOf: UnsafeBufferPointer(start: UnsafeRawPointer(ptr).assumingMemoryBound(to: UInt8.self), count: 12))
-        }
-    }
+extension Padded: WireCodable {
+    @inlinable static func decode(from reader: inout WireReader) -> Padded { reader.readBlittable() }
+    @inlinable func encode(to writer: inout WireWriter) { writer.writeBlittable(self) }
 }

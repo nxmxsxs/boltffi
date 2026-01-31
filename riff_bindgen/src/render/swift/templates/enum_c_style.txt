@@ -6,14 +6,9 @@
     @usableFromInline init(fromC c: Int32) { self = {{ class_name }}(rawValue: c)! }
     @usableFromInline var cValue: Int32 { rawValue }
 
-    @inlinable static func decode(wireBuffer wire: WireBuffer, at offset: Int) -> (value: {{ class_name }}, size: Int) {
-        ({{ class_name }}(rawValue: wire.readI32(at: offset))!, 4)
-    }
 }
 
-extension {{ class_name }}: WireEncodable {
-    @usableFromInline static var isBlittable: Bool { true }
-    @inlinable func wireEncodedSize() -> Int { 4 }
-    @inlinable func wireEncodeTo(_ data: inout Data) { data.appendI32(rawValue) }
-    @inlinable func wireEncodeToBytes(_ bytes: inout [UInt8]) { bytes.appendI32(rawValue) }
+extension {{ class_name }}: WireCodable {
+    @inlinable static func decode(from reader: inout WireReader) -> {{ class_name }} { {{ class_name }}(rawValue: reader.readI32())! }
+    @inlinable func encode(to writer: inout WireWriter) { writer.writeI32(rawValue) }
 }

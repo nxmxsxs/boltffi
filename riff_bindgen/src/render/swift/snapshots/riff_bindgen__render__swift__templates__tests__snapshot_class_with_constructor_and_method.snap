@@ -22,8 +22,7 @@ public final class Database {
         return sql.withCString { sqlPtr in
             let buf = riff_database_query(handle, UnsafeRawPointer(sqlPtr).assumingMemoryBound(to: UInt8.self), UInt(sql.utf8.count))
             defer { riff_free_buf_u8(buf) }
-            let wire = WireBuffer(ptr: buf.ptr!, len: Int(buf.len))
-            return wire.readString(at: 0).value
+            return riffDecodeOwnedBuf(buf.ptr, Int(buf.len)) { reader in reader.readString() }
         }
     }
 

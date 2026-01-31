@@ -21,9 +21,7 @@ private func _{{ callback.vtable_var }}_{{ method.swift_name }}(_ wrapper: {{ ca
 {%- if let Some(encoded) = method.wire_return_encode() %}
             {{ encoded }}
 {%- endif %}
-            _ = encoded.withUnsafeBytes { (bytes: UnsafeRawBufferPointer) -> Void in
-                callback?(callbackData, bytes.baseAddress?.assumingMemoryBound(to: UInt8.self), UInt(bytes.count), FfiStatus(code: 0))
-            }
+            riffInvokeWireCallback(callback, callbackData, encoded, FfiStatus(code: 0))
 {%- else %}
             callback?(callbackData, result, FfiStatus(code: 0))
 {%- endif %}
@@ -38,9 +36,7 @@ private func _{{ callback.vtable_var }}_{{ method.swift_name }}(_ wrapper: {{ ca
                 return
             }
             {{ err_encoded }}
-            _ = encoded.withUnsafeBytes { (bytes: UnsafeRawBufferPointer) -> Void in
-                callback?(callbackData, bytes.baseAddress?.assumingMemoryBound(to: UInt8.self), UInt(bytes.count), FfiStatus(code: 0))
-            }
+            riffInvokeWireCallback(callback, callbackData, encoded, FfiStatus(code: 0))
 {%- else %}
             callback?(callbackData,{% if method.wire_encoded_return() %} nil, 0,{% endif %} FfiStatus(code: 1))
 {%- endif %}
@@ -55,9 +51,7 @@ private func _{{ callback.vtable_var }}_{{ method.swift_name }}(_ wrapper: {{ ca
 {%- if let Some(encoded) = method.wire_return_encode() %}
         {{ encoded }}
 {%- endif %}
-        _ = encoded.withUnsafeBytes { (bytes: UnsafeRawBufferPointer) -> Void in
-            callback?(callbackData, bytes.baseAddress?.assumingMemoryBound(to: UInt8.self), UInt(bytes.count), FfiStatus(code: 0))
-        }
+        riffInvokeWireCallback(callback, callbackData, encoded, FfiStatus(code: 0))
 {%- else %}
         callback?(callbackData, result, FfiStatus(code: 0))
 {%- endif %}

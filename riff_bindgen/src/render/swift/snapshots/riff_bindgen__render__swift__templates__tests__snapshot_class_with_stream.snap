@@ -1,6 +1,5 @@
 ---
 source: riff_bindgen/src/render/swift/templates.rs
-assertion_line: 944
 expression: "render_class(&cls, \"riff\")"
 ---
 public final class EventSource {
@@ -28,10 +27,10 @@ public final class EventSource {
                 freeFn: riff_event_source_events_free,
                 freeBuf: riff_free_buf_u8,
                 atomicCas: riff_atomic_u8_cas,
-                processItems: { wire in
-                    let count = Int(wire.readU32(at: 0))
+                processItems: { reader in
+                    let count = Int(reader.readU32())
                     for _ in 0..<count {
-                        let item = wire.readString(at: 0).value
+                        let item = reader.readString()
                         _ = continuation.yield(item)
                     }
                 },

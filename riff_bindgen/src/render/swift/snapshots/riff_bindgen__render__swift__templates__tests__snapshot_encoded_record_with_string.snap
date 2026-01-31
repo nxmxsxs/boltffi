@@ -11,28 +11,14 @@ public struct User: Hashable, Equatable, Sendable {
         self.name = name
     }
 
-    @inlinable static func decode(wireBuffer wire: WireBuffer, at offset: Int) -> (value: User, size: Int) {
-        var pos = offset
-        let id_v = { let v = wire.readI64(at: pos); pos += 8; return v }()
-        let name_v = { let (v, s) = wire.readString(at: pos); pos += s; return v }()
-        return (User(id: id_v, name: name_v), pos - offset)
-    }
 }
 
-extension User: WireEncodable {
-    @usableFromInline static var isBlittable: Bool { false }
-    @inlinable func wireEncodedSize() -> Int {
-        var size = 0
-        size += 8
-        size += (4 + name.utf8.count)
-        return size
+extension User: WireCodable {
+    @inlinable static func decode(from reader: inout WireReader) -> User {
+        User(id: reader.readI64(), name: reader.readString())
     }
-    @inlinable func wireEncodeTo(_ data: inout Data) {
-        data.appendI64(id)
-        data.appendString(name)
-    }
-    @inlinable func wireEncodeToBytes(_ bytes: inout [UInt8]) {
-        bytes.appendI64(id)
-        bytes.appendString(name)
+    @inlinable func encode(to writer: inout WireWriter) {
+        writer.writeI64(id)
+        writer.writeString(name)
     }
 }

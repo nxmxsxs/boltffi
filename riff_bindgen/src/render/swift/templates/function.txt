@@ -61,17 +61,19 @@
                                 {{ prefix }}_free_buf_u8(buf)
                                 continuation.resume(throwing: FfiError(message: "ffi call failed"))
                             } else {
-                                let wire = WireBuffer(ptr: buf.ptr!, len: Int(buf.len))
-                                {{ prefix }}_free_buf_u8(buf)
 {%- if result.throws() %}
                                 do {
-                                    let value = {{ result.decode_expr().unwrap() }}
+                                    let value = try riffDecodeOwnedBuf(buf.ptr, Int(buf.len)) { reader in {{ result.reader_decode_expr().unwrap() }} }
+                                    {{ prefix }}_free_buf_u8(buf)
                                     continuation.resume(returning: value)
                                 } catch {
+                                    {{ prefix }}_free_buf_u8(buf)
                                     continuation.resume(throwing: error)
                                 }
 {%- else %}
-                                continuation.resume(returning: {{ result.decode_expr().unwrap() }})
+                                let value = riffDecodeOwnedBuf(buf.ptr, Int(buf.len)) { reader in {{ result.reader_decode_expr().unwrap() }} }
+                                {{ prefix }}_free_buf_u8(buf)
+                                continuation.resume(returning: value)
 {%- endif %}
                             }
                         case .finishWithoutContinuation:
@@ -119,8 +121,14 @@
 {%- elif func.returns.is_wire_encoded() %}
 {{ func.body_indent() }}let buf = {{ symbol }}({% for p in func.params %}{{ p.ffi_arg() }}{% if !loop.last %}, {% endif %}{% endfor %})
 {{ func.body_indent() }}defer { {{ prefix }}_free_buf_u8(buf) }
+{%- if let Some(reader_expr) = func.returns.reader_decode_expr() %}
+{%- if func.returns.is_throws() %}
+{{ func.body_indent() }}return try riffDecodeOwnedBuf(buf.ptr, Int(buf.len)) { reader in {{ reader_expr }} }
+{%- else %}
+{{ func.body_indent() }}return riffDecodeOwnedBuf(buf.ptr, Int(buf.len)) { reader in {{ reader_expr }} }
+{%- endif %}
+{%- elif let Some(decode_expr) = func.returns.decode_expr() %}
 {{ func.body_indent() }}let wire = WireBuffer(ptr: buf.ptr!, len: Int(buf.len))
-{%- if let Some(decode_expr) = func.returns.decode_expr() %}
 {{ func.body_indent() }}return {{ decode_expr }}
 {%- endif %}
 {%- elif func.returns.is_throws() %}

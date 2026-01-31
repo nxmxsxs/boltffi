@@ -122,17 +122,19 @@
                                     {{ prefix }}_free_buf_u8(buf)
                                     continuation.resume(throwing: FfiError(message: "ffi call failed"))
                                 } else {
-                                    let wire = WireBuffer(ptr: buf.ptr!, len: Int(buf.len))
-                                    {{ prefix }}_free_buf_u8(buf)
 {%- if result.throws() %}
                                     do {
-                                        let value = {{ result.decode_expr().unwrap() }}
+                                        let value = try riffDecodeOwnedBuf(buf.ptr, Int(buf.len)) { reader in {{ result.reader_decode_expr().unwrap() }} }
+                                        {{ prefix }}_free_buf_u8(buf)
                                         continuation.resume(returning: value)
                                     } catch {
+                                        {{ prefix }}_free_buf_u8(buf)
                                         continuation.resume(throwing: error)
                                     }
 {%- else %}
-                                    continuation.resume(returning: {{ result.decode_expr().unwrap() }})
+                                    let value = riffDecodeOwnedBuf(buf.ptr, Int(buf.len)) { reader in {{ result.reader_decode_expr().unwrap() }} }
+                                    {{ prefix }}_free_buf_u8(buf)
+                                    continuation.resume(returning: value)
 {%- endif %}
                                 }
                             case .finishWithoutContinuation:
@@ -188,8 +190,14 @@
 {{ method.method_body_indent() }}let buf = {{ symbol }}({% for p in method.params %}{{ p.ffi_arg() }}{% if !loop.last %}, {% endif %}{% endfor %})
 {%- endif %}
 {{ method.method_body_indent() }}defer { {{ prefix }}_free_buf_u8(buf) }
+{%- if let Some(reader_expr) = method.returns.reader_decode_expr() %}
+{%- if method.returns.is_throws() %}
+{{ method.method_body_indent() }}return try riffDecodeOwnedBuf(buf.ptr, Int(buf.len)) { reader in {{ reader_expr }} }
+{%- else %}
+{{ method.method_body_indent() }}return riffDecodeOwnedBuf(buf.ptr, Int(buf.len)) { reader in {{ reader_expr }} }
+{%- endif %}
+{%- elif let Some(decode_expr) = method.returns.decode_expr() %}
 {{ method.method_body_indent() }}let wire = WireBuffer(ptr: buf.ptr!, len: Int(buf.len))
-{%- if let Some(decode_expr) = method.returns.decode_expr() %}
 {{ method.method_body_indent() }}return {{ decode_expr }}
 {%- endif %}
 {%- elif method.returns.is_throws() %}
@@ -241,13 +249,10 @@
                 freeFn: {{ stream.free }},
                 freeBuf: {{ stream.free_buf }},
                 atomicCas: {{ stream.atomic_cas }},
-                processItems: { wire in
-                    let count = Int(wire.readU32(at: 0))
-{%- if stream.uses_offset() %}
-                    var offset = 4
-{%- endif %}
+                processItems: { reader in
+                    let count = Int(reader.readU32())
                     for _ in 0..<count {
-                        let item = {{ stream.item_decode_expr() }}
+                        let item = {{ stream.item_reader_decode_expr() }}
                         _ = continuation.yield(item)
                     }
                 },
@@ -334,14 +339,11 @@
                 while true {
                     let buf = popBatch(subscription, batchSize)
                     guard buf.len > 0, let ptr = buf.ptr else { freeBuf(buf); break }
-                    let wire = WireBuffer(ptr: ptr, len: Int(buf.len))
+                    var reader = WireReader(ptr: ptr, len: Int(buf.len))
                     freeBuf(buf)
-                    let count = Int(wire.readU32(at: 0))
-{%- if stream.uses_offset() %}
-                    var offset = 4
-{%- endif %}
+                    let count = Int(reader.readU32())
                     for _ in 0..<count {
-                        let item = {{ stream.item_decode_expr() }}
+                        let item = {{ stream.item_reader_decode_expr() }}
                         callback(item)
                     }
                 }
@@ -404,16 +406,13 @@ public final class {{ class_name }}{{ method_name_pascal }}Subscription {
         guard let h = handle else { return [] }
         let buf = popBatchFn(h, maxCount)
         guard buf.len > 0, let ptr = buf.ptr else { freeBuf(buf); return [] }
-        let wire = WireBuffer(ptr: ptr, len: Int(buf.len))
+        var reader = WireReader(ptr: ptr, len: Int(buf.len))
         freeBuf(buf)
-        let count = Int(wire.readU32(at: 0))
-{%- if stream.uses_offset() %}
-        var offset = 4
-{%- endif %}
+        let count = Int(reader.readU32())
         var result: [{{ stream.item_type }}] = []
         result.reserveCapacity(count)
         for _ in 0..<count {
-            let item = {{ stream.item_decode_expr() }}
+            let item = {{ stream.item_reader_decode_expr() }}
             result.append(item)
         }
         return result

@@ -10,14 +10,9 @@ public enum Status: Int32, Hashable, Sendable, CaseIterable {
     @usableFromInline init(fromC c: Int32) { self = Status(rawValue: c)! }
     @usableFromInline var cValue: Int32 { rawValue }
 
-    @inlinable static func decode(wireBuffer wire: WireBuffer, at offset: Int) -> (value: Status, size: Int) {
-        (Status(rawValue: wire.readI32(at: offset))!, 4)
-    }
 }
 
-extension Status: WireEncodable {
-    @usableFromInline static var isBlittable: Bool { true }
-    @inlinable func wireEncodedSize() -> Int { 4 }
-    @inlinable func wireEncodeTo(_ data: inout Data) { data.appendI32(rawValue) }
-    @inlinable func wireEncodeToBytes(_ bytes: inout [UInt8]) { bytes.appendI32(rawValue) }
+extension Status: WireCodable {
+    @inlinable static func decode(from reader: inout WireReader) -> Status { Status(rawValue: reader.readI32())! }
+    @inlinable func encode(to writer: inout WireWriter) { writer.writeI32(rawValue) }
 }

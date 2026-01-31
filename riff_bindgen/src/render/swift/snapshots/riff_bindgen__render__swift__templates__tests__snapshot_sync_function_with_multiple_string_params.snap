@@ -7,8 +7,7 @@ public func concat(a: String, b: String) -> String {
         return b.withCString { bPtr in
             let buf = riff_concat(UnsafeRawPointer(aPtr).assumingMemoryBound(to: UInt8.self), UInt(a.utf8.count), UnsafeRawPointer(bPtr).assumingMemoryBound(to: UInt8.self), UInt(b.utf8.count))
             defer { riff_free_buf_u8(buf) }
-            let wire = WireBuffer(ptr: buf.ptr!, len: Int(buf.len))
-            return wire.readString(at: 0).value
+            return riffDecodeOwnedBuf(buf.ptr, Int(buf.len)) { reader in reader.readString() }
         }
     }
 }

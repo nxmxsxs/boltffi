@@ -1,19 +1,3 @@
-import Foundation
-{%- if let Some(ffi_module) = ffi_module_name %}
-import {{ ffi_module }}
-typealias RiffCallbackHandle = {{ ffi_module }}.RiffCallbackHandle
-{%- endif %}
-
-public struct FfiError: Error {
-    public let message: String
-    public init(message: String) { self.message = message }
-{%- if let Some(ffi_module) = ffi_module_name %}
-    public init(fromC c: {{ ffi_module }}.FfiError) {
-        self.message = stringFromFfi(c.message)
-    }
-{%- endif %}
-}
-
 @inline(__always)
 private func stringFromFfi(_ ffiString: FfiString) -> String {
     guard ffiString.len > 0, let pointer = ffiString.ptr else { return "" }
@@ -102,10 +86,7 @@ final class FfiFutureState<T>: @unchecked Sendable {
 @usableFromInline struct WireReader {
     @usableFromInline let data: Data
     @usableFromInline var position: Int
-    @inlinable init(data: Data, position: Int = 0) { self.data = data; self.position = position }
     @inlinable init(ptr: UnsafePointer<UInt8>, len: Int) { self.data = Data(bytes: ptr, count: len); self.position = 0 }
-    @inlinable var remaining: Int { data.count - position }
-    @inlinable var bytesRead: Int { position }
 
     @inlinable mutating func readU8() -> UInt8 { let v = data[position]; position += 1; return v }
     @inlinable mutating func readI8() -> Int8 { Int8(bitPattern: readU8()) }
@@ -208,16 +189,16 @@ final class FfiFutureState<T>: @unchecked Sendable {
 }
 
 @usableFromInline struct WireWriter {
-    @usableFromInline var data: Data
-    @inlinable init(capacity: Int = 64) { self.data = Data(capacity: capacity) }
+    @usableFromInline var bytes: [UInt8]
+    @inlinable init() { self.bytes = [] }
 
-    @inlinable mutating func writeU8(_ v: UInt8) { data.append(v) }
+    @inlinable mutating func writeU8(_ v: UInt8) { bytes.append(v) }
     @inlinable mutating func writeI8(_ v: Int8) { writeU8(UInt8(bitPattern: v)) }
-    @inlinable mutating func writeU16(_ v: UInt16) { var val = v; Swift.withUnsafeBytes(of: &val) { data.append(contentsOf: $0) } }
+    @inlinable mutating func writeU16(_ v: UInt16) { var val = v; Swift.withUnsafeBytes(of: &val) { bytes.append(contentsOf: $0) } }
     @inlinable mutating func writeI16(_ v: Int16) { writeU16(UInt16(bitPattern: v)) }
-    @inlinable mutating func writeU32(_ v: UInt32) { var val = v; Swift.withUnsafeBytes(of: &val) { data.append(contentsOf: $0) } }
+    @inlinable mutating func writeU32(_ v: UInt32) { var val = v; Swift.withUnsafeBytes(of: &val) { bytes.append(contentsOf: $0) } }
     @inlinable mutating func writeI32(_ v: Int32) { writeU32(UInt32(bitPattern: v)) }
-    @inlinable mutating func writeU64(_ v: UInt64) { var val = v; Swift.withUnsafeBytes(of: &val) { data.append(contentsOf: $0) } }
+    @inlinable mutating func writeU64(_ v: UInt64) { var val = v; Swift.withUnsafeBytes(of: &val) { bytes.append(contentsOf: $0) } }
     @inlinable mutating func writeI64(_ v: Int64) { writeU64(UInt64(bitPattern: v)) }
     @inlinable mutating func writeF32(_ v: Float) { writeU32(v.bitPattern) }
     @inlinable mutating func writeF64(_ v: Double) { writeU64(v.bitPattern) }
@@ -227,13 +208,13 @@ final class FfiFutureState<T>: @unchecked Sendable {
         var s = v
         s.withUTF8 { utf8 in
             writeU32(UInt32(utf8.count))
-            data.append(contentsOf: utf8)
+            bytes.append(contentsOf: utf8)
         }
     }
 
     @inlinable mutating func writeBytes(_ v: Data) {
         writeU32(UInt32(v.count))
-        data.append(contentsOf: v)
+        bytes.append(contentsOf: v)
     }
 
     @inlinable mutating func writeDuration(_ v: TimeInterval) {
@@ -282,29 +263,27 @@ final class FfiFutureState<T>: @unchecked Sendable {
 
     @inlinable mutating func writeBlittable<T>(_ value: T) {
         var copy = value
-        withUnsafePointer(to: &copy) { ptr in
-            data.append(UnsafeRawPointer(ptr).assumingMemoryBound(to: UInt8.self), count: MemoryLayout<T>.stride)
-        }
+        Swift.withUnsafeBytes(of: &copy) { bytes.append(contentsOf: $0) }
     }
 
     @inlinable mutating func writeBlittableArray<T>(_ v: [T]) {
         writeU32(UInt32(v.count))
-        v.withUnsafeBytes { data.append(contentsOf: $0) }
+        v.withUnsafeBytes { bytes.append(contentsOf: $0) }
     }
 
     @inlinable mutating func write<T: WireCodable>(_ v: T) { v.encode(to: &self) }
 
-    @inlinable func finalize() -> Data { data }
+    @inlinable func finalize() -> [UInt8] { bytes }
 }
 
 @inlinable func riffInvokeWireCallback(
     _ callback: (@convention(c) (UInt64, UnsafePointer<UInt8>?, UInt, FfiStatus) -> Void)?,
     _ callbackData: UInt64,
-    _ encoded: Data,
+    _ encoded: [UInt8],
     _ status: FfiStatus
 ) {
-    encoded.withUnsafeBytes { buf in
-        callback?(callbackData, buf.baseAddress?.assumingMemoryBound(to: UInt8.self), UInt(buf.count), status)
+    encoded.withUnsafeBufferPointer { buf in
+        callback?(callbackData, buf.baseAddress, UInt(buf.count), status)
     }
 }
 
@@ -321,9 +300,8 @@ final class FfiFutureState<T>: @unchecked Sendable {
 @inlinable func riffEncode(_ body: (inout WireWriter) -> Void) -> [UInt8] {
     var writer = WireWriter()
     body(&writer)
-    return [UInt8](writer.finalize())
+    return writer.finalize()
 }
-
 {%- if has_streams %}
 
 private enum StreamPollResult: Int8 {

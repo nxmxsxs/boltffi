@@ -14,24 +14,9 @@ public struct Location: Hashable, Equatable, Sendable {
         self.lat = lat
     }
 
-    @inlinable static func decode(wireBuffer wire: WireBuffer, at offset: Int) -> (value: Location, size: Int) {
-        return (Location(id: wire.readI64(at: offset), lat: wire.readF64(at: offset + 8)), 16)
-    }
 }
 
-extension Location: WireEncodable {
-    @usableFromInline static var isBlittable: Bool { true }
-    @inlinable func wireEncodedSize() -> Int { 16 }
-    @inlinable func wireEncodeTo(_ data: inout Data) {
-        var copy = self
-        withUnsafePointer(to: &copy) { ptr in
-            data.append(UnsafeRawPointer(ptr).assumingMemoryBound(to: UInt8.self), count: 16)
-        }
-    }
-    @inlinable func wireEncodeToBytes(_ bytes: inout [UInt8]) {
-        var copy = self
-        withUnsafePointer(to: &copy) { ptr in
-            bytes.append(contentsOf: UnsafeBufferPointer(start: UnsafeRawPointer(ptr).assumingMemoryBound(to: UInt8.self), count: 16))
-        }
-    }
+extension Location: WireCodable {
+    @inlinable static func decode(from reader: inout WireReader) -> Location { reader.readBlittable() }
+    @inlinable func encode(to writer: inout WireWriter) { writer.writeBlittable(self) }
 }

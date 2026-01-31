@@ -11,28 +11,14 @@ public struct Team: Hashable, Equatable, Sendable {
         self.members = members
     }
 
-    @inlinable static func decode(wireBuffer wire: WireBuffer, at offset: Int) -> (value: Team, size: Int) {
-        var pos = offset
-        let name_v = { let (v, s) = wire.readString(at: pos); pos += s; return v }()
-        let members_v = { let (v, s) = wire.readArray(at: pos, reader: { wire.readString(at: $0) }); pos += s; return v }()
-        return (Team(name: name_v, members: members_v), pos - offset)
-    }
 }
 
-extension Team: WireEncodable {
-    @usableFromInline static var isBlittable: Bool { false }
-    @inlinable func wireEncodedSize() -> Int {
-        var size = 0
-        size += (4 + name.utf8.count)
-        size += (4 + members.reduce(0) { $0 + (4 + $1.utf8.count) })
-        return size
+extension Team: WireCodable {
+    @inlinable static func decode(from reader: inout WireReader) -> Team {
+        Team(name: reader.readString(), members: reader.readArray { reader in reader.readString() })
     }
-    @inlinable func wireEncodeTo(_ data: inout Data) {
-        data.appendString(name)
-        data.appendU32(UInt32(members.count)); for item in members { data.appendString(item) }
-    }
-    @inlinable func wireEncodeToBytes(_ bytes: inout [UInt8]) {
-        bytes.appendString(name)
-        bytes.appendU32(UInt32(members.count)); for item in members { bytes.appendString(item) }
+    @inlinable func encode(to writer: inout WireWriter) {
+        writer.writeString(name)
+        writer.writeArray(members) { writer, item in writer.writeString(item) }
     }
 }

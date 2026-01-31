@@ -592,13 +592,13 @@ impl<'a> SwiftLowerer<'a> {
             ParamRole::InDirect => (emit::swift_type(&def.type_expr), vec![label.clone()], None),
             ParamRole::InEncoded { decode_ops, .. } => {
                 let len_name = format!("{}Len", label);
-                let decode = emit::emit_read_inline(decode_ops, "pos");
+                let reader_decode = emit::emit_reader_read(decode_ops);
                 (
                     emit::swift_type(&def.type_expr),
                     vec![label.clone(), len_name.clone()],
                     Some(format!(
-                        "let {} = {{ let wire = WireBuffer(ptr: {}!, len: Int({})); var pos = 0; return {} }}()",
-                        label, label, len_name, decode
+                        "let {} = {{ var reader = WireReader(ptr: {}!, len: Int({})); return {} }}()",
+                        label, label, len_name, reader_decode
                     )),
                 )
             }
@@ -1186,9 +1186,11 @@ impl<'a> SwiftLowerer<'a> {
             ParamRole::InEncoded { decode_ops, .. } => {
                 let ptr_name = format!("ptr{}", idx);
                 let len_name = format!("len{}", idx);
-                let wire_buffer = format!("WireBuffer(ptr: {}!, len: Int({}))", ptr_name, len_name);
-                let decode = emit::emit_read_value_at(decode_ops, "0");
-                let decode_expr = format!("{{ let wire = {}; return {} }}()", wire_buffer, decode);
+                let reader_decode = emit::emit_reader_read(decode_ops);
+                let decode_expr = format!(
+                    "{{ var reader = WireReader(ptr: {}!, len: Int({})); return {} }}()",
+                    ptr_name, len_name, reader_decode
+                );
                 SwiftClosureTrampolineParam {
                     name: format!("{}, {}", ptr_name, len_name),
                     c_type: "UnsafePointer<UInt8>?, UInt".to_string(),

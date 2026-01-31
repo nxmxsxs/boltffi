@@ -42,9 +42,9 @@ public final class HttpClient {
                                     riff_free_buf_u8(buf)
                                     continuation.resume(throwing: FfiError(message: "ffi call failed"))
                                 } else {
-                                    let wire = WireBuffer(ptr: buf.ptr!, len: Int(buf.len))
+                                    let value = riffDecodeOwnedBuf(buf.ptr, Int(buf.len)) { reader in reader.readBytes() }
                                     riff_free_buf_u8(buf)
-                                    continuation.resume(returning: wire.readDataWithSize(at: 0).value)
+                                    continuation.resume(returning: value)
                                 }
                             case .finishWithoutContinuation:
                                 riff_free_buf_u8(buf)

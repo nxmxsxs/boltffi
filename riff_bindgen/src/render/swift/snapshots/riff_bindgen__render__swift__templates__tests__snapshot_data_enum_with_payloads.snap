@@ -7,61 +7,33 @@ public enum Message: Hashable, Equatable, Sendable {
     case text(String)
     case number(Int64)
 
-    @inlinable static func decode(wireBuffer wire: WireBuffer, at offset: Int) -> (value: Message, size: Int) {
-        let tag = wire.readI32(at: offset)
-        var pos = offset + 4
+}
+
+extension Message: WireCodable {
+    @inlinable static func decode(from reader: inout WireReader) -> Message {
+        let tag = reader.readI32()
         switch tag {
         case 0:
-            return (.empty, pos - offset)
+            return .empty
         case 1:
-            let v = { let (v, s) = wire.readString(at: pos); pos += s; return v }()
-            return (.text(v), pos - offset)
+            return .text(reader.readString())
         case 2:
-            let v = { let v = wire.readI64(at: pos); pos += 8; return v }()
-            return (.number(v), pos - offset)
+            return .number(reader.readI64())
         default:
             fatalError("Invalid Message tag: \(tag)")
         }
     }
-}
 
-extension Message: WireEncodable {
-    @usableFromInline static var isBlittable: Bool { false }
-
-    @inlinable func wireEncodedSize() -> Int {
+    @inlinable func encode(to writer: inout WireWriter) {
         switch self {
         case .empty:
-            return 4
+            writer.writeI32(0)
         case let .text(value):
-            return 4 + (4 + value.utf8.count)
-        case .number:
-            return 4 + 8
-        }
-    }
-
-    @inlinable func wireEncodeTo(_ data: inout Data) {
-        switch self {
-        case .empty:
-            data.appendI32(0)
-        case let .text(value):
-            data.appendI32(1)
-            data.appendString(value)
+            writer.writeI32(1)
+            writer.writeString(value)
         case let .number(value):
-            data.appendI32(2)
-            data.appendI64(value)
-        }
-    }
-
-    @inlinable func wireEncodeToBytes(_ bytes: inout [UInt8]) {
-        switch self {
-        case .empty:
-            bytes.appendI32(0)
-        case let .text(value):
-            bytes.appendI32(1)
-            bytes.appendString(value)
-        case let .number(value):
-            bytes.appendI32(2)
-            bytes.appendI64(value)
+            writer.writeI32(2)
+            writer.writeI64(value)
         }
     }
 }

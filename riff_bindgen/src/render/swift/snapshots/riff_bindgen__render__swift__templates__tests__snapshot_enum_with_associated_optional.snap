@@ -6,50 +6,28 @@ public enum SearchResult: Hashable, Equatable, Sendable {
     case found(String)
     case notFound
 
-    @inlinable static func decode(wireBuffer wire: WireBuffer, at offset: Int) -> (value: SearchResult, size: Int) {
-        let tag = wire.readI32(at: offset)
-        var pos = offset + 4
+}
+
+extension SearchResult: WireCodable {
+    @inlinable static func decode(from reader: inout WireReader) -> SearchResult {
+        let tag = reader.readI32()
         switch tag {
         case 0:
-            let v = { let (v, s) = wire.readString(at: pos); pos += s; return v }()
-            return (.found(v), pos - offset)
+            return .found(reader.readString())
         case 1:
-            return (.notFound, pos - offset)
+            return .notFound
         default:
             fatalError("Invalid SearchResult tag: \(tag)")
         }
     }
-}
 
-extension SearchResult: WireEncodable {
-    @usableFromInline static var isBlittable: Bool { false }
-
-    @inlinable func wireEncodedSize() -> Int {
+    @inlinable func encode(to writer: inout WireWriter) {
         switch self {
         case let .found(value):
-            return 4 + (4 + 0.utf8.count)
+            writer.writeI32(0)
+            writer.writeString(0)
         case .notFound:
-            return 4
-        }
-    }
-
-    @inlinable func wireEncodeTo(_ data: inout Data) {
-        switch self {
-        case let .found(value):
-            data.appendI32(0)
-            data.appendString(0)
-        case .notFound:
-            data.appendI32(1)
-        }
-    }
-
-    @inlinable func wireEncodeToBytes(_ bytes: inout [UInt8]) {
-        switch self {
-        case let .found(value):
-            bytes.appendI32(0)
-            bytes.appendString(0)
-        case .notFound:
-            bytes.appendI32(1)
+            writer.writeI32(1)
         }
     }
 }

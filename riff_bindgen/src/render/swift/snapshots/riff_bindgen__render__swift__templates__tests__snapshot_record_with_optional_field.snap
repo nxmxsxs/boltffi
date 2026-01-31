@@ -11,28 +11,14 @@ public struct UserProfile: Hashable, Equatable, Sendable {
         self.bio = bio
     }
 
-    @inlinable static func decode(wireBuffer wire: WireBuffer, at offset: Int) -> (value: UserProfile, size: Int) {
-        var pos = offset
-        let name_v = { let (v, s) = wire.readString(at: pos); pos += s; return v }()
-        let bio_v = { let (v, s) = wire.readOptional(at: pos, reader: { wire.readString(at: $0) }); pos += s; return v }()
-        return (UserProfile(name: name_v, bio: bio_v), pos - offset)
-    }
 }
 
-extension UserProfile: WireEncodable {
-    @usableFromInline static var isBlittable: Bool { false }
-    @inlinable func wireEncodedSize() -> Int {
-        var size = 0
-        size += (4 + name.utf8.count)
-        size += (bio.map { v in 1 + (4 + v.utf8.count) } ?? 1)
-        return size
+extension UserProfile: WireCodable {
+    @inlinable static func decode(from reader: inout WireReader) -> UserProfile {
+        UserProfile(name: reader.readString(), bio: reader.readOptional { reader in reader.readString() })
     }
-    @inlinable func wireEncodeTo(_ data: inout Data) {
-        data.appendString(name)
-        if let v = bio { data.appendU8(1); data.appendString(v) } else { data.appendU8(0) }
-    }
-    @inlinable func wireEncodeToBytes(_ bytes: inout [UInt8]) {
-        bytes.appendString(name)
-        if let v = bio { bytes.appendU8(1); bytes.appendString(v) } else { bytes.appendU8(0) }
+    @inlinable func encode(to writer: inout WireWriter) {
+        writer.writeString(name)
+        writer.writeOptional(bio) { writer, v in writer.writeString(v) }
     }
 }

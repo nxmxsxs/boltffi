@@ -9,94 +9,42 @@
 {%- endif %}
 {%- endfor %}
 
-    @inlinable static func decode(wireBuffer wire: WireBuffer, at offset: Int) -> (value: {{ class_name }}, size: Int) {
-        let tag = wire.readI32(at: offset)
-        var pos = offset + 4
+}
+
+extension {{ class_name }}: WireCodable {
+    @inlinable static func decode(from reader: inout WireReader) -> {{ class_name }} {
+        let tag = reader.readI32()
         switch tag {
 {%- for variant in variants %}
         case {{ variant.discriminant }}:
 {%- if variant.is_unit() %}
-            return (.{{ variant.swift_name }}, pos - offset)
+            return .{{ variant.swift_name }}
 {%- elif variant.is_single_tuple() %}
-            let v = {{ variant.fields()[0].wire_decode_inline() }}
-            return (.{{ variant.swift_name }}(v), pos - offset)
+            return .{{ variant.swift_name }}({{ variant.tuple_value_reader_decode() }})
 {%- else %}
-{%- for field in variant.fields() %}
-            let {{ field.swift_name }} = {{ field.wire_decode_inline() }}
-{%- endfor %}
-            return (.{{ variant.swift_name }}({% for field in variant.fields() %}{{ field.swift_name }}: {{ field.swift_name }}{% if !loop.last %}, {% endif %}{% endfor %}), pos - offset)
+            return .{{ variant.swift_name }}({% for field in variant.fields() %}{{ field.swift_name }}: {{ field.wire_reader_decode() }}{% if !loop.last %}, {% endif %}{% endfor %})
 {%- endif %}
 {%- endfor %}
         default:
             fatalError("Invalid {{ class_name }} tag: \(tag)")
         }
     }
-}
 
-extension {{ class_name }}: WireEncodable {
-    @usableFromInline static var isBlittable: Bool { false }
-
-    @inlinable func wireEncodedSize() -> Int {
+    @inlinable func encode(to writer: inout WireWriter) {
         switch self {
 {%- for variant in variants %}
 {%- if variant.is_unit() %}
         case .{{ variant.swift_name }}:
-            return 4
-{%- elif variant.is_single_tuple() %}
-{%- if variant.tuple_value_fixed_size() %}
-        case .{{ variant.swift_name }}:
-{%- else %}
-        case let .{{ variant.swift_name }}(value):
-{%- endif %}
-            return 4 + {{ variant.tuple_value_size() }}
-{%- else %}
-{%- if variant.all_fields_fixed_size() %}
-        case .{{ variant.swift_name }}:
-{%- else %}
-        case let .{{ variant.swift_name }}({% for field in variant.fields() %}{% if field.has_fixed_size() %}_{% else %}{{ field.swift_name }}{% endif %}{% if !loop.last %}, {% endif %}{% endfor %}):
-{%- endif %}
-            return 4{% for field in variant.fields() %} + {{ field.wire_size_expr() }}{% endfor %}
-{%- endif %}
-{%- endfor %}
-        }
-    }
-
-    @inlinable func wireEncodeTo(_ data: inout Data) {
-        switch self {
-{%- for variant in variants %}
-{%- if variant.is_unit() %}
-        case .{{ variant.swift_name }}:
-            data.appendI32({{ variant.discriminant }})
+            writer.writeI32({{ variant.discriminant }})
 {%- elif variant.is_single_tuple() %}
         case let .{{ variant.swift_name }}(value):
-            data.appendI32({{ variant.discriminant }})
-            {{ variant.tuple_value_encode() }}
+            writer.writeI32({{ variant.discriminant }})
+            {{ variant.tuple_value_writer_encode() }}
 {%- else %}
         case let .{{ variant.swift_name }}({% for field in variant.fields() %}{{ field.swift_name }}{% if !loop.last %}, {% endif %}{% endfor %}):
-            data.appendI32({{ variant.discriminant }})
+            writer.writeI32({{ variant.discriminant }})
 {%- for field in variant.fields() %}
-            {{ field.wire_encode() }}
-{%- endfor %}
-{%- endif %}
-{%- endfor %}
-        }
-    }
-
-    @inlinable func wireEncodeToBytes(_ bytes: inout [UInt8]) {
-        switch self {
-{%- for variant in variants %}
-{%- if variant.is_unit() %}
-        case .{{ variant.swift_name }}:
-            bytes.appendI32({{ variant.discriminant }})
-{%- elif variant.is_single_tuple() %}
-        case let .{{ variant.swift_name }}(value):
-            bytes.appendI32({{ variant.discriminant }})
-            {{ variant.tuple_value_encode_bytes() }}
-{%- else %}
-        case let .{{ variant.swift_name }}({% for field in variant.fields() %}{{ field.swift_name }}{% if !loop.last %}, {% endif %}{% endfor %}):
-            bytes.appendI32({{ variant.discriminant }})
-{%- for field in variant.fields() %}
-            {{ field.wire_encode_bytes() }}
+            {{ field.wire_writer_encode() }}
 {%- endfor %}
 {%- endif %}
 {%- endfor %}

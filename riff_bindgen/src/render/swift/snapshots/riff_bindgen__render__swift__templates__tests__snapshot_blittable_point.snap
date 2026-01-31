@@ -11,24 +11,9 @@ public struct Point: Hashable, Equatable, Sendable {
         self.y = y
     }
 
-    @inlinable static func decode(wireBuffer wire: WireBuffer, at offset: Int) -> (value: Point, size: Int) {
-        return (Point(x: wire.readF64(at: offset), y: wire.readF64(at: offset + 8)), 16)
-    }
 }
 
-extension Point: WireEncodable {
-    @usableFromInline static var isBlittable: Bool { true }
-    @inlinable func wireEncodedSize() -> Int { 16 }
-    @inlinable func wireEncodeTo(_ data: inout Data) {
-        var copy = self
-        withUnsafePointer(to: &copy) { ptr in
-            data.append(UnsafeRawPointer(ptr).assumingMemoryBound(to: UInt8.self), count: 16)
-        }
-    }
-    @inlinable func wireEncodeToBytes(_ bytes: inout [UInt8]) {
-        var copy = self
-        withUnsafePointer(to: &copy) { ptr in
-            bytes.append(contentsOf: UnsafeBufferPointer(start: UnsafeRawPointer(ptr).assumingMemoryBound(to: UInt8.self), count: 16))
-        }
-    }
+extension Point: WireCodable {
+    @inlinable static func decode(from reader: inout WireReader) -> Point { reader.readBlittable() }
+    @inlinable func encode(to writer: inout WireWriter) { writer.writeBlittable(self) }
 }

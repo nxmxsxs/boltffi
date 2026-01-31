@@ -1,4 +1,4 @@
-use crate::ir::ops::{OffsetExpr, ReadOp, ReadSeq, WireShape, WriteSeq};
+use crate::ir::ops::{OffsetExpr, ReadOp, ReadSeq, WriteSeq};
 use crate::render::swift::emit;
 
 #[derive(Debug, Clone)]
@@ -107,6 +107,34 @@ impl SwiftAsyncResult {
             _ => None,
         }
     }
+
+    pub fn reader_decode_expr(&self) -> Option<String> {
+        match self {
+            Self::Encoded {
+                throws: true,
+                decode,
+                err_is_string,
+                ..
+            } => match decode.ops.first() {
+                Some(ReadOp::Result { ok, err, .. }) => {
+                    let ok_read = emit::emit_reader_read(ok);
+                    let err_read = emit::emit_reader_read(err);
+                    let err_body = if *err_is_string {
+                        format!("FfiError(message: {})", err_read)
+                    } else {
+                        err_read
+                    };
+                    Some(format!(
+                        "try {{ let tag = reader.readU8(); if tag == 0 {{ return {} }} else {{ throw {} }} }}()",
+                        ok_read, err_body
+                    ))
+                }
+                _ => Some(emit::emit_reader_read(decode)),
+            },
+            Self::Encoded { decode, .. } => Some(emit::emit_reader_read(decode)),
+            _ => None,
+        }
+    }
 }
 
 #[derive(Debug, Clone)]
@@ -195,6 +223,14 @@ impl SwiftField {
 
     pub fn encode_at_offset(&self) -> String {
         emit::emit_write_data(&self.encode)
+    }
+
+    pub fn wire_reader_decode(&self) -> String {
+        emit::emit_reader_read(&self.decode)
+    }
+
+    pub fn wire_writer_encode(&self) -> String {
+        emit::emit_writer_write(&self.encode)
     }
 }
 
@@ -286,6 +322,18 @@ impl SwiftVariant {
             .unwrap_or_default()
     }
 
+    pub fn tuple_value_reader_decode(&self) -> String {
+        self.single_tuple_field()
+            .map(|f| f.wire_reader_decode())
+            .unwrap_or_default()
+    }
+
+    pub fn tuple_value_writer_encode(&self) -> String {
+        self.single_tuple_field()
+            .map(|f| f.wire_writer_encode())
+            .unwrap_or_default()
+    }
+
     pub fn all_fields_fixed_size(&self) -> bool {
         self.fields().iter().all(|f| f.has_fixed_size())
     }
@@ -333,6 +381,10 @@ pub struct SwiftStream {
 impl SwiftStream {
     pub fn item_decode_expr(&self) -> String {
         emit::emit_read_value_at(&self.item_decode, "offset")
+    }
+
+    pub fn item_reader_decode_expr(&self) -> String {
+        emit::emit_reader_read(&self.item_decode)
     }
 
     pub fn uses_offset(&self) -> bool {
@@ -642,16 +694,15 @@ impl SwiftCallbackMethod {
 
     pub fn wire_return_encode(&self) -> Option<String> {
         self.encoded_return_encode().map(|encode| {
-            let size_expr = emit::emit_size_expr(&encode.size);
-            let encode_expr = emit::emit_write_data(encode);
-            let (capacity_expr, discriminant) = if self.throws() {
-                (add_one_to_capacity(&size_expr), "data.appendU8(0); ")
+            let writer_body = emit::emit_writer_write(encode);
+            let discriminant = if self.throws() {
+                "writer.writeU8(0); "
             } else {
-                (size_expr, "")
+                ""
             };
             format!(
-                "let encoded = ({{ var data = Data(capacity: {}); {}{}; return data }})()",
-                capacity_expr, discriminant, encode_expr
+                "let encoded = ({{ var writer = WireWriter(); {}{}; return writer.finalize() }})()",
+                discriminant, writer_body
             )
         })
     }
@@ -669,12 +720,10 @@ impl SwiftCallbackMethod {
                 err_encode: Some(encode),
                 ..
             } => {
-                let size_expr = emit::emit_size_expr(&encode.size);
-                let encode_expr = emit::emit_write_data(encode);
-                let capacity = add_one_to_capacity(&size_expr);
+                let writer_body = emit::emit_writer_write(encode);
                 Some(format!(
-                    "let encoded = ({{ var data = Data(capacity: {}); data.appendU8(1); {}; return data }})()",
-                    capacity, encode_expr
+                    "let encoded = ({{ var writer = WireWriter(); writer.writeU8(1); {}; return writer.finalize() }})()",
+                    writer_body
                 ))
             }
             _ => None,
@@ -820,17 +869,9 @@ impl SwiftParam {
             SwiftConversion::ToData => {
                 format!("{}Ptr.baseAddress, UInt({}Ptr.count)", self.name, self.name)
             }
-            SwiftConversion::ToWireBuffer { encode } => match encode.shape {
-                WireShape::Optional => format!(
-                    "{}Ptr?.baseAddress?.assumingMemoryBound(to: UInt8.self), UInt({}Ptr?.count ?? 0)",
-                    self.name, self.name
-                ),
-                WireShape::Value => format!("{}Bytes, UInt({}Bytes.count)", self.name, self.name),
-                WireShape::Sequence => format!(
-                    "{}Ptr.baseAddress?.assumingMemoryBound(to: UInt8.self), UInt({}Ptr.count)",
-                    self.name, self.name
-                ),
-            },
+            SwiftConversion::ToWireBuffer { .. } => {
+                format!("{}Bytes, UInt({}Bytes.count)", self.name, self.name)
+            }
             SwiftConversion::PrimitiveBuffer { .. } => {
                 format!("{}Ptr.baseAddress, UInt({}Ptr.count)", self.name, self.name)
             }
@@ -867,10 +908,12 @@ impl SwiftParam {
     pub fn wrapper_code(&self) -> Option<String> {
         match &self.conversion {
             SwiftConversion::InlineClosure { closure } => Some(closure.render()),
-            SwiftConversion::ToWireBuffer { encode } if encode.shape == WireShape::Value => {
+            SwiftConversion::ToWireBuffer { encode } => {
+                let writer_body = emit::emit_writer_write(encode);
                 Some(format!(
-                    "let {name}Encoded = {name}.wireEncode()\n        let {name}Bytes = [UInt8]({name}Encoded)",
-                    name = self.name
+                    "let {name}Bytes = riffEncode {{ writer in {body} }}",
+                    name = self.name,
+                    body = writer_body
                 ))
             }
             _ => None,
@@ -880,7 +923,6 @@ impl SwiftParam {
     pub fn needs_closure_wrap(&self) -> bool {
         match &self.conversion {
             SwiftConversion::ToString | SwiftConversion::ToData => true,
-            SwiftConversion::ToWireBuffer { encode } => encode.shape != WireShape::Value,
             SwiftConversion::PrimitiveBuffer { .. } | SwiftConversion::MutableBuffer { .. } => true,
             _ => false,
         }
@@ -895,17 +937,6 @@ impl SwiftParam {
                 "{}.withUnsafeBytes {{ {}Ptr in",
                 self.name, self.name
             )),
-            SwiftConversion::ToWireBuffer { encode } => match encode.shape {
-                WireShape::Sequence => Some(format!(
-                    "withWireEncodedArray({}) {{ {}Ptr in",
-                    self.name, self.name
-                )),
-                WireShape::Optional => Some(format!(
-                    "withWireEncodedOptional({}) {{ {}Ptr in",
-                    self.name, self.name
-                )),
-                WireShape::Value => None,
-            },
             SwiftConversion::PrimitiveBuffer { .. } => Some(format!(
                 "{}.withUnsafeBufferPointer {{ {}Ptr in",
                 self.name, self.name
@@ -921,9 +952,6 @@ impl SwiftParam {
     pub fn closure_wrap_close(&self) -> Option<&'static str> {
         match &self.conversion {
             SwiftConversion::ToString | SwiftConversion::ToData => Some("}"),
-            SwiftConversion::ToWireBuffer { encode } if encode.shape != WireShape::Value => {
-                Some("}")
-            }
             SwiftConversion::PrimitiveBuffer { .. } | SwiftConversion::MutableBuffer { .. } => {
                 Some("}")
             }
@@ -1106,11 +1134,38 @@ impl SwiftReturn {
             _ => None,
         }
     }
+
+    pub fn reader_decode_expr(&self) -> Option<String> {
+        match self {
+            SwiftReturn::FromWireBuffer { decode, .. } => {
+                Some(emit::emit_reader_read(decode))
+            }
+            SwiftReturn::Throws {
+                ok,
+                err_is_string,
+                ..
+            } => match ok.as_ref() {
+                SwiftReturn::FromWireBuffer { decode, .. } => match decode.ops.first() {
+                    Some(ReadOp::Result { ok, err, .. }) => {
+                        let ok_read = emit::emit_reader_read(ok);
+                        let err_read = emit::emit_reader_read(err);
+                        let err_body = if *err_is_string {
+                            format!("FfiError(message: {})", err_read)
+                        } else {
+                            err_read
+                        };
+                        Some(format!(
+                            "try {{ let tag = reader.readU8(); if tag == 0 {{ return {} }} else {{ throw {} }} }}()",
+                            ok_read, err_body
+                        ))
+                    }
+                    _ => ok.reader_decode_expr(),
+                },
+                _ => ok.reader_decode_expr(),
+            },
+            _ => None,
+        }
+    }
 }
 
-fn add_one_to_capacity(size_expr: &str) -> String {
-    size_expr
-        .parse::<usize>()
-        .map(|n| (n + 1).to_string())
-        .unwrap_or_else(|_| format!("1 + {}", size_expr))
-}
+

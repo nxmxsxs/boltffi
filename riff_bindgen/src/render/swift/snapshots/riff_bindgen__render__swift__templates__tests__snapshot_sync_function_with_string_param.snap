@@ -6,7 +6,6 @@ public func greet(name: String) -> String {
     return name.withCString { namePtr in
         let buf = riff_greet(UnsafeRawPointer(namePtr).assumingMemoryBound(to: UInt8.self), UInt(name.utf8.count))
         defer { riff_free_buf_u8(buf) }
-        let wire = WireBuffer(ptr: buf.ptr!, len: Int(buf.len))
-        return wire.readString(at: 0).value
+        return riffDecodeOwnedBuf(buf.ptr, Int(buf.len)) { reader in reader.readString() }
     }
 }
