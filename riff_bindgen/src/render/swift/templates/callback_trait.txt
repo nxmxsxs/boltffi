@@ -1,6 +1,6 @@
 {{ self::swift_doc_block(callback.doc, "") }}public protocol {{ callback.protocol_name }}: AnyObject {
 {%- for method in callback.methods %}
-{{ self::swift_doc_block(method.doc, "    ") }}    func {{ method.swift_name }}({% for param in method.params %}{{ param.label }}: {{ param.swift_type }}{% if !loop.last %}, {% endif %}{% endfor %}){% if method.is_async %} async{% endif %}{% if method.throws() %} throws{% endif %}{% if let Some(ret) = method.return_type() %} -> {{ ret }}{% endif %}
+{{ self::swift_doc_block(method.doc, "    ") }}    func {{ method.swift_name }}({% for param in method.params %}{{ param.label }}: {{ param.swift_type }}{% if !loop.last %}, {% endif %}{% endfor %}){% if method.is_async %} async{% endif %}{% if method.throws() %} throws{% if let Some(err_type) = method.err_type() %}({{ err_type }}){% endif %}{% endif %}{% if let Some(ret) = method.return_type() %} -> {{ ret }}{% endif %}
 {%- endfor %}
 }
 
@@ -50,9 +50,6 @@ private var {{ callback.vtable_var }}: {{ callback.vtable_type }} = {
 {%- endif %}
                 } catch {
 {%- if let Some(err_encoded) = method.wire_err_encode() %}
-{%- if let Some(err_type) = method.err_type() %}
-                    let error = error as! {{ err_type }}
-{%- endif %}
                     {{ err_encoded }}
                     _ = encoded.withUnsafeBytes { (bytes: UnsafeRawBufferPointer) -> Void in
                         callback?(callbackData, bytes.baseAddress?.assumingMemoryBound(to: UInt8.self), UInt(bytes.count), FfiStatus(code: 1))
