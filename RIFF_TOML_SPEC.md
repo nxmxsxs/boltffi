@@ -40,6 +40,22 @@ Everything else is optional with defaults.
 - `error_style` (`throwing` | `result`): error surface style in generated Swift.
   - Default: `throwing`
 
+### `[apple.swift.type_mappings]` (optional)
+
+Maps custom types to native Swift types. When a custom type has a mapping, the generated Swift code uses the native type instead of a typealias, with automatic conversion at the wire boundary.
+
+Each mapping is a table with:
+- `type` (string, required): The native Swift type to use (e.g., `UUID`, `URL`).
+- `conversion` (string, required): The conversion strategy. One of:
+  - `uuid_string`: String ↔ UUID (`UUID(uuidString:)` / `.uuidString`)
+  - `url_string`: String ↔ URL (`URL(string:)` / `.absoluteString`)
+
+Example:
+```toml
+[apple.swift.type_mappings]
+Uuid = { type = "UUID", conversion = "uuid_string" }
+```
+
 ### `[apple.header]` (optional)
 
 - `output` (path, optional): where the generated C header is written.
@@ -88,6 +104,18 @@ Everything else is optional with defaults.
   - Default: `throwing`
 - `factory_style` (`constructors` | `companion_methods`): how factory constructors are exposed.
   - Default: `constructors`
+
+### `[android.kotlin.type_mappings]` (optional)
+
+Maps custom types to native Kotlin/Java types. Same structure as `[apple.swift.type_mappings]`.
+
+Example:
+```toml
+[android.kotlin.type_mappings]
+Uuid = { type = "java.util.UUID", conversion = "uuid_string" }
+```
+
+Note: Kotlin type mappings are parsed but not yet implemented in codegen.
 
 ### `[android.header]` (optional)
 

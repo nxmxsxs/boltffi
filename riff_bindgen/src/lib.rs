@@ -14,7 +14,7 @@ pub use model::{
 };
 
 pub use render::kotlin::{FactoryStyle, KotlinApiStyle, KotlinOptions};
-pub use render::{Renderer, swift::SwiftLowerer};
+pub use render::{Renderer, TypeConversion, TypeMapping, TypeMappings, swift::SwiftLowerer};
 pub use riff_ffi_rules::naming::ffi_prefix;
 pub use scan::{SourceScanner, scan_crate};
 

@@ -20,7 +20,23 @@ pub mod jni;
 pub mod kotlin;
 pub mod swift;
 
+use std::collections::HashMap;
+
 use crate::ir::{AbiContract, FfiContract};
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum TypeConversion {
+    UuidString,
+    UrlString,
+}
+
+#[derive(Debug, Clone)]
+pub struct TypeMapping {
+    pub native_type: String,
+    pub conversion: TypeConversion,
+}
+
+pub type TypeMappings = HashMap<String, TypeMapping>;
 
 /// Shared interface for all target-language backends.
 ///

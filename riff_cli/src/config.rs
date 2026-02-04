@@ -1,4 +1,5 @@
 use serde::{Deserialize, Serialize};
+use std::collections::HashMap;
 use std::path::{Path, PathBuf};
 
 #[derive(Debug, Deserialize, Serialize)]
@@ -33,6 +34,20 @@ pub enum FactoryStyle {
     CompanionMethods,
 }
 
+#[derive(Debug, Deserialize, Serialize, Clone, Copy, PartialEq, Eq)]
+#[serde(rename_all = "snake_case")]
+pub enum TypeConversion {
+    UuidString,
+    UrlString,
+}
+
+#[derive(Debug, Deserialize, Serialize, Clone, PartialEq, Eq)]
+pub struct TypeMapping {
+    #[serde(rename = "type")]
+    pub native_type: String,
+    pub conversion: TypeConversion,
+}
+
 #[derive(Debug, Deserialize, Serialize, Default)]
 pub struct AppleSwiftConfig {
     pub module_name: Option<String>,
@@ -41,6 +56,8 @@ pub struct AppleSwiftConfig {
     pub tools_version: Option<String>,
     #[serde(default)]
     pub error_style: ErrorStyle,
+    #[serde(default)]
+    pub type_mappings: HashMap<String, TypeMapping>,
 }
 
 #[derive(Debug, Deserialize, Serialize, Default)]
@@ -55,6 +72,8 @@ pub struct AndroidKotlinConfig {
     pub error_style: ErrorStyle,
     #[serde(default)]
     pub factory_style: FactoryStyle,
+    #[serde(default)]
+    pub type_mappings: HashMap<String, TypeMapping>,
 }
 
 #[derive(Debug, Deserialize, Serialize, Clone, Copy, PartialEq, Eq, Default)]
@@ -352,6 +371,15 @@ impl Config {
 
     pub fn apple_spm_package_name(&self) -> Option<&str> {
         self.apple.spm.package_name.as_deref()
+    }
+
+    pub fn swift_type_mappings(&self) -> &HashMap<String, TypeMapping> {
+        &self.apple.swift.type_mappings
+    }
+
+    #[allow(dead_code)]
+    pub fn kotlin_type_mappings(&self) -> &HashMap<String, TypeMapping> {
+        &self.android.kotlin.type_mappings
     }
 }
 

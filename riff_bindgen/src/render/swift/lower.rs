@@ -10,8 +10,8 @@ use super::plan::{
     SwiftAsyncConversion, SwiftAsyncResult, SwiftCallMode, SwiftCallback, SwiftCallbackMethod,
     SwiftCallbackParam, SwiftClass, SwiftClosureTrampoline, SwiftClosureTrampolineParam,
     SwiftConstructor, SwiftConversion, SwiftCustomType, SwiftEnum, SwiftEnumStyle, SwiftField,
-    SwiftFunction, SwiftMethod, SwiftModule, SwiftParam, SwiftRecord, SwiftReturn, SwiftStream,
-    SwiftStreamMode, SwiftVariant, SwiftVariantPayload,
+    SwiftFunction, SwiftMethod, SwiftModule, SwiftNativeConversion, SwiftNativeMapping, SwiftParam,
+    SwiftRecord, SwiftReturn, SwiftStream, SwiftStreamMode, SwiftVariant, SwiftVariantPayload,
 };
 use crate::ir::abi::{
     AbiCall, AbiCallbackInvocation, AbiContract, AbiEnum, AbiEnumField, AbiEnumPayload,
@@ -31,6 +31,7 @@ use crate::ir::ops::{
 use crate::ir::plan::AbiType;
 use crate::ir::plan::{CallbackStyle, Mutability};
 use crate::ir::types::TypeExpr;
+use crate::render::{TypeConversion, TypeMappings};
 
 struct AbiIndex {
     calls: HashMap<CallId, usize>,
@@ -103,6 +104,7 @@ pub struct SwiftLowerer<'a> {
     contract: &'a FfiContract,
     abi: &'a AbiContract,
     abi_index: AbiIndex,
+    type_mappings: TypeMappings,
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -115,7 +117,13 @@ impl<'a> SwiftLowerer<'a> {
             contract,
             abi,
             abi_index: AbiIndex::new(abi),
+            type_mappings: TypeMappings::new(),
         }
+    }
+
+    pub fn with_type_mappings(mut self, mappings: TypeMappings) -> Self {
+        self.type_mappings = mappings;
+        self
     }
 
     pub fn lower(self) -> SwiftModule {
@@ -136,6 +144,28 @@ impl<'a> SwiftLowerer<'a> {
             functions,
         }
     }
+
+    fn resolve_swift_type(&self, type_expr: &TypeExpr) -> String {
+        match type_expr {
+            TypeExpr::Custom(id) => {
+                if let Some(mapping) = self.type_mappings.get(id.as_str()) {
+                    mapping.native_type.clone()
+                } else {
+                    pascal_case(id.as_str())
+                }
+            }
+            TypeExpr::Option(inner) => format!("{}?", self.resolve_swift_type(inner)),
+            TypeExpr::Vec(inner) => format!("[{}]", self.resolve_swift_type(inner)),
+            TypeExpr::Result { ok, err } => {
+                format!(
+                    "Result<{}, {}>",
+                    self.resolve_swift_type(ok),
+                    self.resolve_swift_type(err)
+                )
+            }
+            _ => emit::swift_type(type_expr),
+        }
+    }
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -150,12 +180,62 @@ impl<'a> SwiftLowerer<'a> {
             .map(|def| {
                 let alias_name = pascal_case(def.id.as_str());
                 let target_type = emit::swift_type(&def.repr);
+                let native_mapping = self
+                    .type_mappings
+                    .get(def.id.as_str())
+                    .map(|mapping| self.build_native_mapping(mapping, &target_type));
                 SwiftCustomType {
                     alias_name,
                     target_type,
+                    native_mapping,
                 }
             })
             .collect()
+    }
+
+    fn build_native_mapping(
+        &self,
+        mapping: &crate::render::TypeMapping,
+        _repr_type: &str,
+    ) -> SwiftNativeMapping {
+        let (decode_expr, encode_expr) = match mapping.conversion {
+            TypeConversion::UuidString => (
+                "UUID(uuidString: $0)!".to_string(),
+                "$0.uuidString".to_string(),
+            ),
+            TypeConversion::UrlString => (
+                "URL(string: $0)!".to_string(),
+                "$0.absoluteString".to_string(),
+            ),
+        };
+
+        SwiftNativeMapping {
+            native_type: mapping.native_type.clone(),
+            decode_expr,
+            encode_expr,
+        }
+    }
+
+    fn native_conversion_for_type(&self, type_expr: &TypeExpr) -> Option<SwiftNativeConversion> {
+        match type_expr {
+            TypeExpr::Custom(id) => self.type_mappings.get(id.as_str()).map(|mapping| {
+                let (decode_wrapper, encode_wrapper) = match mapping.conversion {
+                    TypeConversion::UuidString => (
+                        "UUID(uuidString: $0)!".to_string(),
+                        "$0.uuidString".to_string(),
+                    ),
+                    TypeConversion::UrlString => (
+                        "URL(string: $0)!".to_string(),
+                        "$0.absoluteString".to_string(),
+                    ),
+                };
+                SwiftNativeConversion {
+                    decode_wrapper,
+                    encode_wrapper,
+                }
+            }),
+            _ => None,
+        }
     }
 }
 
@@ -200,14 +280,17 @@ impl<'a> SwiftLowerer<'a> {
                             } else {
                                 None
                             };
+                            let native_conversion =
+                                self.native_conversion_for_type(&field.type_expr);
                             SwiftField {
                                 swift_name,
-                                swift_type: emit::swift_type(&field.type_expr),
+                                swift_type: self.swift_type(&field.type_expr),
                                 default_expr: field.default.as_ref().map(swift_default_literal),
                                 decode,
                                 encode,
                                 doc: field.doc.clone(),
                                 c_offset,
+                                native_conversion,
                             }
                         })
                         .collect();
@@ -306,14 +389,16 @@ impl<'a> SwiftLowerer<'a> {
     fn lower_enum_field(&self, field: &AbiEnumField) -> SwiftField {
         let swift_name = camel_case(field.name.as_str());
         let encode = field.encode.clone();
+        let native_conversion = self.native_conversion_for_type(&field.type_expr);
         SwiftField {
             swift_name,
-            swift_type: emit::swift_type(&field.type_expr),
+            swift_type: self.swift_type(&field.type_expr),
             default_expr: None,
             decode: field.decode.clone(),
             encode,
             doc: None,
             c_offset: None,
+            native_conversion,
         }
     }
 }
@@ -477,7 +562,7 @@ impl<'a> SwiftLowerer<'a> {
         SwiftStream {
             name: camel_case(stream.stream_id.as_str()),
             mode,
-            item_type: emit::swift_type(&stream_def.item_type),
+            item_type: self.swift_type(&stream_def.item_type),
             // remap_root_in_seq only works on writes (ValueExpr), reads
             // use OffsetExpr so we do our own variable rename here
             item_decode: self.rebase_read_seq(decode_ops, "pos", "0"),
@@ -589,12 +674,12 @@ impl<'a> SwiftLowerer<'a> {
     fn lower_callback_param(&self, def: &ParamDef, param: &AbiParam) -> SwiftCallbackParam {
         let label = camel_case(param.name.as_str());
         let (swift_type, ffi_args, decode_prelude) = match &param.role {
-            ParamRole::InDirect => (emit::swift_type(&def.type_expr), vec![label.clone()], None),
+            ParamRole::InDirect => (self.swift_type(&def.type_expr), vec![label.clone()], None),
             ParamRole::InEncoded { decode_ops, .. } => {
                 let len_name = format!("{}Len", label);
                 let reader_decode = emit::emit_reader_read(decode_ops);
                 (
-                    emit::swift_type(&def.type_expr),
+                    self.swift_type(&def.type_expr),
                     vec![label.clone(), len_name.clone()],
                     Some(format!(
                         "let {} = {{ var reader = WireReader(ptr: {}!, len: Int({})); return {} }}()",
@@ -701,7 +786,7 @@ impl<'a> SwiftLowerer<'a> {
             }
             ParamRole::InString { .. } => ("String".to_string(), SwiftConversion::ToString),
             ParamRole::InEncoded { encode_ops, .. } => (
-                emit::swift_type(&param.type_expr),
+                self.swift_type(&param.type_expr),
                 SwiftConversion::ToWireBuffer {
                     encode: encode_ops.clone(),
                 },
@@ -880,18 +965,32 @@ impl<'a> SwiftLowerer<'a> {
     }
 
     fn swift_type(&self, ty: &TypeExpr) -> String {
-        // handles and callbacks need the lowerer to resolve class/protocol
-        // names, emit::swift_type does not have that context so we handle
-        // them here. Option wrapping them also needs special casing because
-        // "any Protocol" requires parens to become "(any Protocol)?"
         match ty {
             TypeExpr::Handle(id) => self.swift_name_for_class(id),
             TypeExpr::Callback(id) => format!("any {}", pascal_case(id.as_str())),
+            TypeExpr::Custom(id) => {
+                if let Some(mapping) = self.type_mappings.get(id.as_str()) {
+                    mapping.native_type.clone()
+                } else {
+                    pascal_case(id.as_str())
+                }
+            }
             TypeExpr::Option(inner) => match inner.as_ref() {
                 TypeExpr::Handle(id) => format!("{}?", self.swift_name_for_class(id)),
                 TypeExpr::Callback(id) => format!("(any {})?", pascal_case(id.as_str())),
-                _ => emit::swift_type(ty),
+                TypeExpr::Custom(id) => {
+                    if let Some(mapping) = self.type_mappings.get(id.as_str()) {
+                        format!("{}?", mapping.native_type)
+                    } else {
+                        format!("{}?", pascal_case(id.as_str()))
+                    }
+                }
+                _ => self.resolve_swift_type(ty),
             },
+            TypeExpr::Vec(inner) => format!("[{}]", self.swift_type(inner)),
+            TypeExpr::Result { ok, err } => {
+                format!("Result<{}, {}>", self.swift_type(ok), self.swift_type(err))
+            }
             _ => emit::swift_type(ty),
         }
     }
@@ -1099,7 +1198,7 @@ impl<'a> SwiftLowerer<'a> {
 
     fn buffer_element_swift_type(&self, ty: &TypeExpr) -> String {
         match ty {
-            TypeExpr::Vec(inner) => emit::swift_type(inner),
+            TypeExpr::Vec(inner) => self.swift_type(inner),
             TypeExpr::Bytes => "UInt8".to_string(),
             _ => "UInt8".to_string(),
         }

@@ -210,12 +210,18 @@ impl SwiftEmitter {
         output.push_str("\n\n");
 
         module.custom_types.iter().for_each(|ct| {
-            output.push_str(&format!(
-                "public typealias {} = {}\n",
-                ct.alias_name, ct.target_type
-            ));
+            if ct.native_mapping.is_none() {
+                output.push_str(&format!(
+                    "public typealias {} = {}\n",
+                    ct.alias_name, ct.target_type
+                ));
+            }
         });
-        if !module.custom_types.is_empty() {
+        if module
+            .custom_types
+            .iter()
+            .any(|ct| ct.native_mapping.is_none())
+        {
             output.push('\n');
         }
 
@@ -468,6 +474,7 @@ mod tests {
             encode,
             doc: None,
             c_offset,
+            native_conversion: None,
         }
     }
 

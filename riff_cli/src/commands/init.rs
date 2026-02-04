@@ -78,6 +78,7 @@ fn create_default_config(package_name: &str) -> Config {
                 ffi_module_name: None,
                 tools_version: Some("5.9".to_string()),
                 error_style: ErrorStyle::default(),
+                type_mappings: Default::default(),
             },
             header: HeaderConfig { output: None },
             xcframework: XcframeworkConfig {
@@ -106,6 +107,7 @@ fn create_default_config(package_name: &str) -> Config {
                 api_style: Default::default(),
                 error_style: ErrorStyle::default(),
                 factory_style: FactoryStyle::default(),
+                type_mappings: Default::default(),
             },
             header: HeaderConfig { output: None },
             pack: AndroidPackConfig { output: None },

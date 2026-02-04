@@ -1,8 +1,14 @@
 use std::path::PathBuf;
 
-use riff_bindgen::{CHeaderGenerator, FactoryStyle, KotlinOptions, ir, render, scan_crate};
+use riff_bindgen::{
+    CHeaderGenerator, FactoryStyle, KotlinOptions, TypeConversion as BindgenTypeConversion,
+    TypeMapping as BindgenTypeMapping, TypeMappings, ir, render, scan_crate,
+};
 
-use crate::config::{Config, FactoryStyle as ConfigFactoryStyle, KotlinApiStyle};
+use crate::config::{
+    Config, FactoryStyle as ConfigFactoryStyle, KotlinApiStyle,
+    TypeConversion as ConfigTypeConversion,
+};
 use crate::error::{CliError, Result};
 
 pub enum GenerateTarget {
@@ -29,6 +35,27 @@ pub fn run_generate_with_output(config: &Config, options: GenerateOptions) -> Re
             Ok(())
         }
     }
+}
+
+fn convert_type_mappings(
+    config_mappings: &std::collections::HashMap<String, crate::config::TypeMapping>,
+) -> TypeMappings {
+    config_mappings
+        .iter()
+        .map(|(name, mapping)| {
+            let conversion = match mapping.conversion {
+                ConfigTypeConversion::UuidString => BindgenTypeConversion::UuidString,
+                ConfigTypeConversion::UrlString => BindgenTypeConversion::UrlString,
+            };
+            (
+                name.clone(),
+                BindgenTypeMapping {
+                    native_type: mapping.native_type.clone(),
+                    conversion,
+                },
+            )
+        })
+        .collect()
 }
 
 fn generate_swift(config: &Config, output: Option<PathBuf>) -> Result<()> {
@@ -62,9 +89,13 @@ fn generate_swift(config: &Config, output: Option<PathBuf>) -> Result<()> {
         .map(|name| name.to_string())
         .unwrap_or_else(|| format!("{}FFI", config.xcframework_name()));
 
+    let type_mappings = convert_type_mappings(config.swift_type_mappings());
+
     let contract = ir::build_contract(&mut module);
     let abi_contract = ir::Lowerer::new(&contract).to_abi_contract();
-    let swift_module = render::swift::SwiftLowerer::new(&contract, &abi_contract).lower();
+    let swift_module = render::swift::SwiftLowerer::new(&contract, &abi_contract)
+        .with_type_mappings(type_mappings)
+        .lower();
     let swift_code = render::swift::SwiftEmitter::with_prefix(riff_bindgen::ffi_prefix())
         .with_ffi_module(&ffi_module_name)
         .emit(&swift_module);

@@ -159,6 +159,14 @@ pub struct SwiftModule {
 pub struct SwiftCustomType {
     pub alias_name: String,
     pub target_type: String,
+    pub native_mapping: Option<SwiftNativeMapping>,
+}
+
+#[derive(Debug, Clone)]
+pub struct SwiftNativeMapping {
+    pub native_type: String,
+    pub decode_expr: String,
+    pub encode_expr: String,
 }
 
 impl SwiftModule {
@@ -193,6 +201,13 @@ pub struct SwiftField {
     pub encode: WriteSeq,
     pub doc: Option<String>,
     pub c_offset: Option<usize>,
+    pub native_conversion: Option<SwiftNativeConversion>,
+}
+
+#[derive(Debug, Clone)]
+pub struct SwiftNativeConversion {
+    pub decode_wrapper: String,
+    pub encode_wrapper: String,
 }
 
 impl SwiftField {
@@ -226,11 +241,24 @@ impl SwiftField {
     }
 
     pub fn wire_reader_decode(&self) -> String {
-        emit::emit_reader_read(&self.decode)
+        let base_decode = emit::emit_reader_read(&self.decode);
+        match &self.native_conversion {
+            Some(conv) => conv.decode_wrapper.replace("$0", &base_decode),
+            None => base_decode,
+        }
     }
 
     pub fn wire_writer_encode(&self) -> String {
-        emit::emit_writer_write(&self.encode)
+        match &self.native_conversion {
+            Some(conv) => {
+                let converted_value = conv
+                    .encode_wrapper
+                    .replace("$0", &format!("self.{}", self.swift_name));
+                let base_encode = emit::emit_writer_write(&self.encode);
+                base_encode.replace(&format!("self.{}", self.swift_name), &converted_value)
+            }
+            None => emit::emit_writer_write(&self.encode),
+        }
     }
 }
 
