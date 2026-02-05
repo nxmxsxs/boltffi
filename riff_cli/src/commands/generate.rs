@@ -153,6 +153,8 @@ fn generate_kotlin(config: &Config, output: Option<PathBuf>) -> Result<()> {
             .map(|name| name.to_string()),
     };
 
+    let type_mappings = convert_type_mappings(config.kotlin_type_mappings());
+
     let contract = ir::build_contract(&mut module);
     let abi_contract = ir::Lowerer::new(&contract).to_abi_contract();
 
@@ -163,6 +165,7 @@ fn generate_kotlin(config: &Config, output: Option<PathBuf>) -> Result<()> {
         module_name.clone(),
         kotlin_options,
     )
+    .with_type_mappings(type_mappings)
     .lower();
     let kotlin_code = render::kotlin::KotlinEmitter::emit(&kotlin_module);
     let kotlin_path = kotlin_dir.join(format!("{}.kt", module_name));

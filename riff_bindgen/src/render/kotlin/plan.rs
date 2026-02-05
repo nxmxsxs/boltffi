@@ -37,6 +37,7 @@ pub struct KotlinCustomType {
     pub repr_size_expr: String,
     pub repr_encode_expr: String,
     pub repr_decode_expr: String,
+    pub has_native_mapping: bool,
 }
 
 #[derive(Clone)]

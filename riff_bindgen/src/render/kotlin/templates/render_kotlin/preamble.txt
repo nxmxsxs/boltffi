@@ -16,6 +16,7 @@ import {{ import }}
 {%- endfor %}
 
 {%- for custom in custom_types %}
+{%- if !custom.has_native_mapping %}
 
 @JvmInline
 value class {{ custom.class_name }}(val value: {{ custom.repr_kotlin_type }}) {
@@ -28,6 +29,7 @@ value class {{ custom.class_name }}(val value: {{ custom.repr_kotlin_type }}) {
         }
     }
 }
+{%- endif %}
 {%- endfor %}
 
 class FfiException(val code: Int, message: String) : Exception(message)

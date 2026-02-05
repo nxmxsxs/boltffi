@@ -22,6 +22,7 @@ use crate::ir::ops::{
 };
 use crate::ir::plan::AbiType;
 use crate::ir::types::{PrimitiveType, TypeExpr};
+use crate::render::TypeMappings;
 use crate::render::kotlin::emit;
 use crate::render::kotlin::plan::*;
 use crate::render::kotlin::templates::{AsyncMethodTemplate, WireMethodTemplate};
@@ -37,6 +38,7 @@ pub struct KotlinLowerer<'a> {
     package_name: String,
     module_name: String,
     options: KotlinOptions,
+    type_mappings: TypeMappings,
 }
 
 impl<'a> KotlinLowerer<'a> {
@@ -53,7 +55,13 @@ impl<'a> KotlinLowerer<'a> {
             package_name,
             module_name,
             options,
+            type_mappings: TypeMappings::new(),
         }
+    }
+
+    pub fn with_type_mappings(mut self, mappings: TypeMappings) -> Self {
+        self.type_mappings = mappings;
+        self
     }
 
     pub fn lower(&self) -> KotlinModule {
@@ -320,6 +328,7 @@ impl<'a> KotlinLowerer<'a> {
         let custom_write_seq = self.custom_write_seq(custom);
         let repr_encode_expr = emit::emit_write_expr(&custom_write_seq);
         let repr_size_expr = emit::emit_size_expr_for_write_seq(&custom_write_seq);
+        let has_native_mapping = self.type_mappings.contains_key(custom.id.as_str());
 
         KotlinCustomType {
             class_name,
@@ -327,6 +336,7 @@ impl<'a> KotlinLowerer<'a> {
             repr_size_expr,
             repr_encode_expr,
             repr_decode_expr,
+            has_native_mapping,
         }
     }
 
@@ -1809,7 +1819,13 @@ impl<'a> KotlinLowerer<'a> {
             TypeExpr::Bytes => "ByteArray".to_string(),
             TypeExpr::Builtin(id) => self.builtin_kotlin_type(id),
             TypeExpr::Record(id) => NamingConvention::class_name(id.as_str()),
-            TypeExpr::Custom(id) => NamingConvention::class_name(id.as_str()),
+            TypeExpr::Custom(id) => {
+                if let Some(mapping) = self.type_mappings.get(id.as_str()) {
+                    mapping.native_type.clone()
+                } else {
+                    NamingConvention::class_name(id.as_str())
+                }
+            }
             TypeExpr::Enum(id) => NamingConvention::class_name(id.as_str()),
             TypeExpr::Vec(inner) => self.kotlin_vec_type(inner),
             TypeExpr::Option(inner) => format!("{}?", self.kotlin_type(inner)),
@@ -1833,7 +1849,13 @@ impl<'a> KotlinLowerer<'a> {
     ) -> (String, Option<String>) {
         match ty {
             TypeExpr::Record(id) => self.disambiguate_type_name(id.as_str(), reserved),
-            TypeExpr::Custom(id) => self.disambiguate_type_name(id.as_str(), reserved),
+            TypeExpr::Custom(id) => {
+                if self.type_mappings.contains_key(id.as_str()) {
+                    (self.kotlin_type(ty), None)
+                } else {
+                    self.disambiguate_type_name(id.as_str(), reserved)
+                }
+            }
             TypeExpr::Enum(id) => self.disambiguate_type_name(id.as_str(), reserved),
             _ => (self.kotlin_type(ty), None),
         }
