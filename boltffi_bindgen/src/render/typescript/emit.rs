@@ -188,10 +188,7 @@ fn emit_reader_read_op(op: &ReadOp) -> String {
         ReadOp::Result { ok, err, .. } => {
             let ok_read = emit_reader_read(ok);
             let err_read = emit_reader_read(err);
-            format!(
-                "reader.readResult(() => {}, () => {})",
-                ok_read, err_read
-            )
+            format!("reader.readResult(() => {}, () => {})", ok_read, err_read)
         }
         ReadOp::Custom { underlying, .. } => emit_reader_read(underlying),
     }
@@ -261,21 +258,24 @@ fn emit_writer_write_op(op: &WriteOp) -> String {
                 }
                 VecLayout::Encoded => {
                     let inner = emit_writer_write(element);
-                    format!(
-                        "writer.writeArray({}, (item) => {{ {} }})",
-                        val, inner
-                    )
+                    format!("writer.writeArray({}, (item) => {{ {} }})", val, inner)
                 }
             }
         }
         WriteOp::Record { id, value, .. } => {
-            format!("encode{}(writer, {})", to_pascal_case(id.as_str()), render_value(value))
+            format!(
+                "encode{}(writer, {})",
+                to_pascal_case(id.as_str()),
+                render_value(value)
+            )
         }
-        WriteOp::Enum { id, value, layout, .. } => {
+        WriteOp::Enum {
+            id, value, layout, ..
+        } => {
             let val = render_value(value);
             match layout {
                 EnumLayout::CStyle { .. } => {
-                    format!("writer.writeI32({}.value)", val)
+                    format!("writer.writeI32({})", val)
                 }
                 EnumLayout::Data { .. } | EnumLayout::Recursive => {
                     format!("encode{}(writer, {})", to_pascal_case(id.as_str()), val)
@@ -355,7 +355,10 @@ pub fn emit_size_expr(size: &SizeExpr) -> String {
             let val = render_value(value);
             let ok_size = emit_size_expr(ok);
             let err_size = emit_size_expr(err);
-            format!("(1 + ({} instanceof Error ? {} : {}))", val, err_size, ok_size)
+            format!(
+                "(1 + ({} instanceof Error ? {} : {}))",
+                val, err_size, ok_size
+            )
         }
     }
 }

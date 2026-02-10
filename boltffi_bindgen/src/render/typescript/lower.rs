@@ -3,13 +3,13 @@ use std::collections::HashMap;
 use boltffi_ffi_rules::naming::{self, snake_to_camel as camel_case};
 
 use crate::ir::abi::{
-    AbiCall, AbiContract, AbiEnum, AbiEnumPayload, AbiParam,
-    AbiRecord, CallId, CallMode, ErrorTransport, ParamRole, ReturnTransport,
+    AbiCall, AbiContract, AbiEnum, AbiEnumPayload, AbiParam, AbiRecord, CallId, CallMode,
+    ErrorTransport, ParamRole, ReturnTransport,
 };
 use crate::ir::contract::FfiContract;
 use crate::ir::definitions::{EnumDef, FunctionDef, RecordDef};
-use crate::ir::ids::{EnumId, RecordId};
-use crate::ir::ops::{ReadOp, ReadSeq};
+use crate::ir::ids::{EnumId, FieldName, RecordId};
+use crate::ir::ops::{ReadOp, ReadSeq, WriteOp, WriteSeq};
 use crate::ir::plan::AbiType;
 use crate::ir::types::{PrimitiveType, TypeExpr};
 use crate::render::typescript::emit;
@@ -69,11 +69,7 @@ pub struct TypeScriptLowerer<'a> {
 }
 
 impl<'a> TypeScriptLowerer<'a> {
-    pub fn new(
-        contract: &'a FfiContract,
-        abi: &'a AbiContract,
-        module_name: String,
-    ) -> Self {
+    pub fn new(contract: &'a FfiContract, abi: &'a AbiContract, module_name: String) -> Self {
         Self {
             contract,
             abi,
@@ -109,6 +105,7 @@ impl<'a> TypeScriptLowerer<'a> {
 
         TsModule {
             module_name: self.module_name.clone(),
+            abi_version: 1,
             records,
             enums,
             functions,
@@ -120,6 +117,9 @@ impl<'a> TypeScriptLowerer<'a> {
         let abi_record = index.record(self.abi, &def.id);
         let name = naming::to_upper_camel_case(def.id.as_str());
 
+        let decode_fields = record_decode_fields(abi_record);
+        let encode_fields = record_encode_fields(abi_record);
+
         let fields = def
             .fields
             .iter()
@@ -127,12 +127,27 @@ impl<'a> TypeScriptLowerer<'a> {
                 let ts_type_str = emit::ts_type(&field.type_expr);
                 let field_name = camel_case(field.name.as_str());
 
+                let decode_seq = decode_fields.get(&field.name).cloned().unwrap_or_else(|| {
+                    ReadSeq {
+                        size: crate::ir::ops::SizeExpr::Fixed(0),
+                        ops: vec![],
+                        shape: crate::ir::ops::WireShape::Value,
+                    }
+                });
+                let encode_seq = encode_fields.get(&field.name).cloned().unwrap_or_else(|| {
+                    WriteSeq {
+                        size: crate::ir::ops::SizeExpr::Fixed(0),
+                        ops: vec![],
+                        shape: crate::ir::ops::WireShape::Value,
+                    }
+                });
+
                 TsField {
                     name: emit::escape_ts_keyword(&field_name),
                     ts_type: ts_type_str,
-                    wire_decode_expr: emit::emit_reader_read(&abi_record.decode_ops),
-                    wire_encode_expr: emit::emit_writer_write(&abi_record.encode_ops),
-                    wire_size_expr: emit::emit_size_expr(&abi_record.encode_ops.size),
+                    wire_decode_expr: emit::emit_reader_read(&decode_seq),
+                    wire_encode_expr: emit::emit_writer_write(&encode_seq),
+                    wire_size_expr: emit::emit_size_expr(&encode_seq.size),
                     doc: field.doc.clone(),
                 }
             })
@@ -165,18 +180,16 @@ impl<'a> TypeScriptLowerer<'a> {
             .map(|(idx, abi_variant)| {
                 let fields = match &abi_variant.payload {
                     AbiEnumPayload::Unit => vec![],
-                    AbiEnumPayload::Tuple(fields) | AbiEnumPayload::Struct(fields) => {
-                        fields
-                            .iter()
-                            .map(|field| TsVariantField {
-                                name: camel_case(field.name.as_str()),
-                                ts_type: emit::ts_type(&field.type_expr),
-                                wire_decode_expr: emit::emit_reader_read(&field.decode),
-                                wire_encode_expr: emit::emit_writer_write(&field.encode),
-                                wire_size_expr: emit::emit_size_expr(&field.encode.size),
-                            })
-                            .collect()
-                    }
+                    AbiEnumPayload::Tuple(fields) | AbiEnumPayload::Struct(fields) => fields
+                        .iter()
+                        .map(|field| TsVariantField {
+                            name: camel_case(field.name.as_str()),
+                            ts_type: emit::ts_type(&field.type_expr),
+                            wire_decode_expr: emit::emit_reader_read(&field.decode),
+                            wire_encode_expr: emit::emit_writer_write(&field.encode),
+                            wire_size_expr: emit::emit_size_expr(&field.encode.size),
+                        })
+                        .collect(),
                 };
 
                 TsVariant {
@@ -210,7 +223,14 @@ impl<'a> TypeScriptLowerer<'a> {
         let params = abi_call
             .params
             .iter()
-            .filter(|p| !matches!(p.role, ParamRole::SyntheticLen { .. } | ParamRole::OutLen { .. } | ParamRole::StatusOut))
+            .filter(|p| {
+                !matches!(
+                    p.role,
+                    ParamRole::SyntheticLen { .. }
+                        | ParamRole::OutLen { .. }
+                        | ParamRole::StatusOut
+                )
+            })
             .map(|param| self.lower_param(param))
             .collect();
 
@@ -302,9 +322,11 @@ impl<'a> TypeScriptLowerer<'a> {
                     String::new(),
                 )
             }
-            ReturnTransport::Callback { .. } => {
-                (Some("unknown".to_string()), TsReturnAbi::Void, String::new())
-            }
+            ReturnTransport::Callback { .. } => (
+                Some("unknown".to_string()),
+                TsReturnAbi::Void,
+                String::new(),
+            ),
         }
     }
 
@@ -412,4 +434,40 @@ fn infer_ts_type_from_read_ops(seq: &ReadSeq) -> String {
             ReadOp::Custom { underlying, .. } => infer_ts_type_from_read_ops(underlying),
         })
         .unwrap_or_else(|| "void".to_string())
+}
+
+fn record_decode_fields(record: &AbiRecord) -> HashMap<FieldName, ReadSeq> {
+    record
+        .decode_ops
+        .ops
+        .iter()
+        .find_map(|op| match op {
+            ReadOp::Record { fields, .. } => Some(fields),
+            _ => None,
+        })
+        .into_iter()
+        .flat_map(|fields| {
+            fields
+                .iter()
+                .map(|field| (field.name.clone(), field.seq.clone()))
+        })
+        .collect()
+}
+
+fn record_encode_fields(record: &AbiRecord) -> HashMap<FieldName, WriteSeq> {
+    record
+        .encode_ops
+        .ops
+        .iter()
+        .find_map(|op| match op {
+            WriteOp::Record { fields, .. } => Some(fields),
+            _ => None,
+        })
+        .into_iter()
+        .flat_map(|fields| {
+            fields
+                .iter()
+                .map(|field| (field.name.clone(), field.seq.clone()))
+        })
+        .collect()
 }

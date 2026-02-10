@@ -1,6 +1,7 @@
 #[derive(Debug, Clone)]
 pub struct TsModule {
     pub module_name: String,
+    pub abi_version: u32,
     pub records: Vec<TsRecord>,
     pub enums: Vec<TsEnum>,
     pub functions: Vec<TsFunction>,
@@ -87,6 +88,52 @@ pub struct TsParam {
     pub name: String,
     pub ts_type: String,
     pub conversion: TsParamConversion,
+}
+
+impl TsParam {
+    pub fn wrapper_code(&self) -> Option<String> {
+        match &self.conversion {
+            TsParamConversion::Direct => None,
+            TsParamConversion::String => {
+                Some(format!("const {}_alloc = _module.allocString({});", self.name, self.name))
+            }
+            TsParamConversion::WireEncoded { encode_expr, size_expr } => {
+                Some(format!(
+                    "const {name}_writer = _module.allocWriter({size_expr});\n  {encode_expr};\n  const {name}_ptr = {name}_writer.ptr;",
+                    name = self.name,
+                    size_expr = size_expr,
+                    encode_expr = encode_expr.replace("writer", &format!("{}_writer", self.name)).replace("value", &self.name),
+                ))
+            }
+        }
+    }
+
+    pub fn ffi_args(&self) -> Vec<String> {
+        match &self.conversion {
+            TsParamConversion::Direct => vec![self.name.clone()],
+            TsParamConversion::String => {
+                vec![
+                    format!("{}_alloc.ptr", self.name),
+                    format!("{}_alloc.len", self.name),
+                ]
+            }
+            TsParamConversion::WireEncoded { .. } => {
+                vec![format!("{}_ptr", self.name)]
+            }
+        }
+    }
+
+    pub fn cleanup_code(&self) -> Option<String> {
+        match &self.conversion {
+            TsParamConversion::Direct => None,
+            TsParamConversion::String => {
+                Some(format!("_module.freeAlloc({}_alloc);", self.name))
+            }
+            TsParamConversion::WireEncoded { .. } => {
+                Some(format!("_module.freeWriter({}_writer);", self.name))
+            }
+        }
+    }
 }
 
 #[derive(Debug, Clone)]
