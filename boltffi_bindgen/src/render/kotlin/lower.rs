@@ -384,8 +384,9 @@ impl<'a> KotlinLowerer<'a> {
             SizeExpr::ValueSize(value) => {
                 SizeExpr::ValueSize(self.strip_field_access_in_value(value))
             }
-            SizeExpr::WireSize { value } => SizeExpr::WireSize {
+            SizeExpr::WireSize { value, record_id } => SizeExpr::WireSize {
                 value: self.strip_field_access_in_value(value),
+                record_id: record_id.clone(),
             },
             SizeExpr::BuiltinSize { id, value } => SizeExpr::BuiltinSize {
                 id: id.clone(),
@@ -1466,6 +1467,7 @@ impl<'a> KotlinLowerer<'a> {
         match seq.ops.first() {
             Some(WriteOp::Custom { value, .. }) => SizeExpr::WireSize {
                 value: value.clone(),
+                record_id: None,
             },
             _ => seq.size.clone(),
         }

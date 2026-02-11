@@ -4,16 +4,20 @@
 {%- endfor %}
 }
 
-function decode{{ name }}(reader: WireReader): {{ name }} {
-  return {
+const {{ name }}Codec: WireCodec<{{ name }}> = {
+{%- if let Some(size) = wire_size %}
+  size: (_v) => {{ size }},
+{%- else %}
+  size: (v) => {{ size_expr }},
+{%- endif %}
+  encode: (writer, v) => {
+{%- for field in fields %}
+    {{ field.wire_encode_expr("writer", "v") }};
+{%- endfor %}
+  },
+  decode: (reader) => ({
 {%- for field in fields %}
     {{ field.name }}: {{ field.wire_decode_expr() }},
 {%- endfor %}
-  };
-}
-
-function encode{{ name }}(writer: WireWriter, value: {{ name }}): void {
-{%- for field in fields %}
-  {{ field.wire_encode_expr("writer", "value") }};
-{%- endfor %}
-}
+  }),
+};

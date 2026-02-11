@@ -771,6 +771,7 @@ impl<'c> Lowerer<'c> {
                         } else {
                             SizeExpr::WireSize {
                                 value: value.clone(),
+                                record_id: None,
                             }
                         }
                     }),
@@ -867,6 +868,7 @@ impl<'c> Lowerer<'c> {
                     RecordLayout::Blittable { size, .. } => SizeExpr::Fixed(*size),
                     _ => SizeExpr::WireSize {
                         value: value.clone(),
+                        record_id: Some(id.clone()),
                     },
                 };
                 WriteSeq {
@@ -884,6 +886,7 @@ impl<'c> Lowerer<'c> {
                     EnumLayout::CStyle { .. } => SizeExpr::Fixed(4),
                     _ => SizeExpr::WireSize {
                         value: value.clone(),
+                        record_id: None,
                     },
                 };
                 WriteSeq {

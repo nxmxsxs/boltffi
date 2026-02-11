@@ -112,7 +112,7 @@ pub fn ts_builtin(id: &BuiltinId) -> String {
 
 fn render_value(expr: &ValueExpr, root_value: &str) -> String {
     match expr {
-        ValueExpr::Instance => "this".to_string(),
+        ValueExpr::Instance => root_value.to_string(),
         ValueExpr::Var(name) if name == "value" => root_value.to_string(),
         ValueExpr::Var(name) => name.clone(),
         ValueExpr::Named(name) => camel_case(name),
@@ -163,24 +163,16 @@ fn emit_reader_read_op(op: &ReadOp) -> String {
         ReadOp::Vec {
             element_type,
             element,
-            layout,
             ..
         } => {
             if matches!(element_type, TypeExpr::Primitive(PrimitiveType::U8)) {
                 return "reader.readBytes()".into();
             }
-            match layout {
-                VecLayout::Blittable { element_size } => {
-                    format!("reader.readBlittableArray({element_size})")
-                }
-                VecLayout::Encoded => {
-                    let inner = emit_reader_read(element);
-                    format!("reader.readArray(() => {inner})")
-                }
-            }
+            let inner = emit_reader_read(element);
+            format!("reader.readArray(() => {inner})")
         }
         ReadOp::Record { id, .. } => {
-            format!("decode{}(reader)", to_pascal_case(id.as_str()))
+            format!("{}Codec.decode(reader)", to_pascal_case(id.as_str()))
         }
         ReadOp::Enum { id, layout, .. } => match layout {
             EnumLayout::CStyle { .. } => {
@@ -254,25 +246,18 @@ fn emit_writer_write_op(op: &WriteOp, w: &str, root_value: &str) -> String {
             value,
             element_type,
             element,
-            layout,
+            ..
         } => {
             let val = render_value(value, root_value);
             if matches!(element_type, TypeExpr::Primitive(PrimitiveType::U8)) {
                 return format!("{w}.writeBytes({val})");
             }
-            match layout {
-                VecLayout::Blittable { element_size } => {
-                    format!("{w}.writeBlittableArray({val}, {element_size})")
-                }
-                VecLayout::Encoded => {
-                    let inner = emit_writer_write(element, w, "item");
-                    format!("{w}.writeArray({val}, (item) => {{ {inner} }})")
-                }
-            }
+            let inner = emit_writer_write(element, w, "item");
+            format!("{w}.writeArray({val}, (item) => {{ {inner} }})")
         }
         WriteOp::Record { id, value, .. } => {
             format!(
-                "encode{}({w}, {})",
+                "{}Codec.encode({w}, {})",
                 to_pascal_case(id.as_str()),
                 render_value(value, root_value)
             )
@@ -311,8 +296,12 @@ pub fn emit_size_expr(size: &SizeExpr, root_value: &str) -> String {
             format!("(4 + {}.byteLength)", render_value(value, root_value))
         }
         SizeExpr::ValueSize(expr) => render_value(expr, root_value),
-        SizeExpr::WireSize { value } => {
-            format!("wireSize({})", render_value(value, root_value))
+        SizeExpr::WireSize { value, record_id } => {
+            let val = render_value(value, root_value);
+            match record_id {
+                Some(id) => format!("{}Codec.size({})", to_pascal_case(id.as_str()), val),
+                None => format!("wireSize({})", val),
+            }
         }
         SizeExpr::BuiltinSize { id, value } => {
             let val = render_value(value, root_value);

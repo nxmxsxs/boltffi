@@ -7,7 +7,7 @@ use crate::ir::abi::{
     ErrorTransport, ParamRole, ReturnTransport,
 };
 use crate::ir::contract::FfiContract;
-use crate::ir::definitions::{EnumDef, FunctionDef, RecordDef};
+use crate::ir::definitions::{EnumDef, FunctionDef, ParamDef, RecordDef};
 use crate::ir::ids::{EnumId, FieldName, RecordId};
 use crate::ir::ops::{ReadOp, ReadSeq, SizeExpr, WireShape, WriteOp, WriteSeq};
 use crate::ir::plan::AbiType;
@@ -220,6 +220,9 @@ impl<'a> TypeScriptLowerer<'a> {
         let func_name = camel_case(def.id.as_str());
         let ffi_name = abi_call.symbol.as_str().to_string();
 
+        let param_defs: HashMap<&str, &ParamDef> =
+            def.params.iter().map(|p| (p.name.as_str(), p)).collect();
+
         let params = abi_call
             .params
             .iter()
@@ -231,7 +234,10 @@ impl<'a> TypeScriptLowerer<'a> {
                         | ParamRole::StatusOut
                 )
             })
-            .map(|param| self.lower_param(param))
+            .map(|abi_param| {
+                let param_def = param_defs.get(abi_param.name.as_str()).copied();
+                self.lower_param(param_def, abi_param)
+            })
             .collect();
 
         let (return_type, return_abi, decode_expr) = self.lower_return(&abi_call.return_);
@@ -250,12 +256,12 @@ impl<'a> TypeScriptLowerer<'a> {
         })
     }
 
-    fn lower_param(&self, param: &AbiParam) -> TsParam {
-        let name = camel_case(param.name.as_str());
-        match &param.role {
+    fn lower_param(&self, param_def: Option<&ParamDef>, abi_param: &AbiParam) -> TsParam {
+        let name = camel_case(abi_param.name.as_str());
+        match &abi_param.role {
             ParamRole::InDirect => TsParam {
                 name: emit::escape_ts_keyword(&name),
-                ts_type: ts_abi_type(&param.ffi_type),
+                ts_type: ts_abi_type(&abi_param.ffi_type),
                 conversion: TsParamConversion::Direct,
             },
             ParamRole::InString { .. } => TsParam {
@@ -263,17 +269,28 @@ impl<'a> TypeScriptLowerer<'a> {
                 ts_type: "string".to_string(),
                 conversion: TsParamConversion::String,
             },
-            ParamRole::InEncoded {
-                encode_ops,
-                decode_ops: _,
-                ..
-            } => TsParam {
-                name: emit::escape_ts_keyword(&name),
-                ts_type: "unknown".to_string(),
-                conversion: TsParamConversion::WireEncoded {
-                    encode: encode_ops.clone(),
-                },
-            },
+            ParamRole::InEncoded { encode_ops, .. } => {
+                let ts_type = param_def
+                    .map(|p| emit::ts_type(&p.type_expr))
+                    .unwrap_or_else(|| "unknown".to_string());
+                let is_record = param_def
+                    .map(|p| matches!(&p.type_expr, TypeExpr::Record(_)))
+                    .unwrap_or(false);
+                let conversion = if is_record {
+                    TsParamConversion::RecordEncoded {
+                        codec_name: ts_type.clone(),
+                    }
+                } else {
+                    TsParamConversion::OtherEncoded {
+                        encode: encode_ops.clone(),
+                    }
+                };
+                TsParam {
+                    name: emit::escape_ts_keyword(&name),
+                    ts_type,
+                    conversion,
+                }
+            }
             _ => TsParam {
                 name: emit::escape_ts_keyword(&name),
                 ts_type: "unknown".to_string(),
@@ -474,4 +491,132 @@ fn record_encode_fields(record: &AbiRecord) -> HashMap<FieldName, WriteSeq> {
                 .map(|field| (field.name.clone(), field.seq.clone()))
         })
         .collect()
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::ir::Lowerer as IrLowerer;
+    use crate::ir::contract::{FfiContract, PackageInfo};
+    use crate::ir::definitions::{FunctionDef, ParamDef, ParamPassing, ReturnDef};
+    use crate::ir::ids::{FunctionId, ParamName};
+
+    fn empty_contract() -> FfiContract {
+        FfiContract {
+            package: PackageInfo {
+                name: "test".to_string(),
+                version: None,
+            },
+            catalog: Default::default(),
+            functions: vec![],
+        }
+    }
+
+    fn primitive_param(name: &str, primitive: PrimitiveType) -> ParamDef {
+        ParamDef {
+            name: ParamName::new(name),
+            type_expr: TypeExpr::Primitive(primitive),
+            passing: ParamPassing::Value,
+            doc: None,
+        }
+    }
+
+    fn function(
+        name: &str,
+        params: Vec<ParamDef>,
+        returns: ReturnDef,
+        is_async: bool,
+    ) -> FunctionDef {
+        FunctionDef {
+            id: FunctionId::new(name),
+            params,
+            returns,
+            is_async,
+            doc: None,
+            deprecated: None,
+        }
+    }
+
+    fn lower_contract(contract: &FfiContract) -> TsModule {
+        let abi = IrLowerer::new(contract).to_abi_contract();
+        TypeScriptLowerer::new(contract, &abi, "Test".to_string()).lower()
+    }
+
+    #[test]
+    fn wasm_import_encoded_return_uses_sret_out_param() {
+        let mut contract = empty_contract();
+        contract.functions.push(function(
+            "echo_name",
+            vec![primitive_param("count", PrimitiveType::I32)],
+            ReturnDef::Value(TypeExpr::String),
+            false,
+        ));
+
+        let module = lower_contract(&contract);
+        let import = module
+            .wasm_imports
+            .iter()
+            .find(|import| import.ffi_name == "boltffi_echo_name")
+            .expect("wasm import for encoded return");
+
+        assert_eq!(import.return_wasm_type, None);
+        assert_eq!(import.params.len(), 2);
+        assert_eq!(import.params[0].name, "out");
+        assert_eq!(import.params[0].wasm_type, "number");
+        assert_eq!(import.params[1].name, "count");
+        assert_eq!(import.params[1].wasm_type, "number");
+    }
+
+    #[test]
+    fn wasm_import_direct_return_does_not_insert_out_param() {
+        let mut contract = empty_contract();
+        contract.functions.push(function(
+            "add",
+            vec![
+                primitive_param("left", PrimitiveType::I32),
+                primitive_param("right", PrimitiveType::I32),
+            ],
+            ReturnDef::Value(TypeExpr::Primitive(PrimitiveType::I32)),
+            false,
+        ));
+
+        let module = lower_contract(&contract);
+        let import = module
+            .wasm_imports
+            .iter()
+            .find(|import| import.ffi_name == "boltffi_add")
+            .expect("wasm import for direct return");
+
+        assert_eq!(import.return_wasm_type.as_deref(), Some("number"));
+        assert_eq!(
+            import
+                .params
+                .iter()
+                .map(|param| param.name.as_str())
+                .collect::<Vec<_>>(),
+            vec!["left", "right"]
+        );
+    }
+
+    #[test]
+    fn wasm_imports_skip_async_calls() {
+        let mut contract = empty_contract();
+        contract.functions.push(function(
+            "sync_value",
+            vec![],
+            ReturnDef::Value(TypeExpr::Primitive(PrimitiveType::I32)),
+            false,
+        ));
+        contract.functions.push(function(
+            "async_value",
+            vec![],
+            ReturnDef::Value(TypeExpr::String),
+            true,
+        ));
+
+        let module = lower_contract(&contract);
+
+        assert_eq!(module.wasm_imports.len(), 1);
+        assert_eq!(module.wasm_imports[0].ffi_name, "boltffi_sync_value");
+    }
 }

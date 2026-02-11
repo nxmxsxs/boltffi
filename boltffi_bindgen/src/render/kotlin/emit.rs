@@ -112,7 +112,7 @@ pub fn emit_size_expr(size: &SizeExpr) -> String {
         SizeExpr::StringLen(value) => format!("Utf8Codec.maxBytes({})", render_value(value)),
         SizeExpr::BytesLen(value) => format!("{}.size", render_value(value)),
         SizeExpr::ValueSize(value) => render_value(value),
-        SizeExpr::WireSize { value } => format!("{}.wireEncodedSize()", render_value(value)),
+        SizeExpr::WireSize { value, .. } => format!("{}.wireEncodedSize()", render_value(value)),
         SizeExpr::BuiltinSize { id, value } => emit_builtin_size(id, &render_value(value)),
         SizeExpr::Sum(parts) => {
             let rendered = parts
@@ -151,6 +151,7 @@ pub fn emit_size_expr_for_write_seq(seq: &WriteSeq) -> String {
     match seq.ops.first() {
         Some(WriteOp::Custom { value, .. }) => emit_size_expr(&SizeExpr::WireSize {
             value: value.clone(),
+            record_id: None,
         }),
         Some(WriteOp::Result { ok, err, .. }) => {
             let ok_type = kotlin_type_for_write_seq(ok);

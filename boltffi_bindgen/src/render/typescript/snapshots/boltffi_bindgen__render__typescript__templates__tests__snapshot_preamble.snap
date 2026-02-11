@@ -2,7 +2,8 @@
 source: boltffi_bindgen/src/render/typescript/templates.rs
 expression: output
 ---
-import { WireReader, WireWriter, BoltFFIModule, instantiateBoltFFI } from "@boltffi/runtime";
+import { WireReader, WireWriter, BoltFFIModule, instantiateBoltFFI, wireStringSize } from "@boltffi/runtime";
+import type { WireCodec } from "@boltffi/runtime";
 
 const EXPECTED_ABI_VERSION = 1;
 

@@ -86,8 +86,11 @@ pub enum SizeExpr {
     /// Size determined by calling a type-specific size method on the value.
     ValueSize(ValueExpr),
     /// Size of a wire-encoded compound value. The backend calls wireSize()
-    /// or equivalent on the value.
-    WireSize { value: ValueExpr },
+    /// or equivalent on the value. For TypeScript, record_id enables codec-based size.
+    WireSize {
+        value: ValueExpr,
+        record_id: Option<RecordId>,
+    },
     /// Size of a builtin type like Duration, Uuid, or Url.
     BuiltinSize { id: BuiltinId, value: ValueExpr },
     /// Sum of multiple size expressions. Used for records with mixed field types.
@@ -279,8 +282,9 @@ fn remap_root_in_size(size: &SizeExpr, new_root: &ValueExpr) -> SizeExpr {
         SizeExpr::StringLen(value) => SizeExpr::StringLen(value.remap_root(new_root.clone())),
         SizeExpr::BytesLen(value) => SizeExpr::BytesLen(value.remap_root(new_root.clone())),
         SizeExpr::ValueSize(value) => SizeExpr::ValueSize(value.remap_root(new_root.clone())),
-        SizeExpr::WireSize { value } => SizeExpr::WireSize {
+        SizeExpr::WireSize { value, record_id } => SizeExpr::WireSize {
             value: value.remap_root(new_root.clone()),
+            record_id: record_id.clone(),
         },
         SizeExpr::BuiltinSize { id, value } => SizeExpr::BuiltinSize {
             id: id.clone(),

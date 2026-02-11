@@ -7,14 +7,14 @@ export interface Point {
   readonly y: number;
 }
 
-function decodePoint(reader: WireReader): Point {
-  return {
+const PointCodec: WireCodec<Point> = {
+  size: (_v) => 16,
+  encode: (writer, v) => {
+    writer.writeF64(v.x);
+    writer.writeF64(v.y);
+  },
+  decode: (reader) => ({
     x: reader.readF64(),
     y: reader.readF64(),
-  };
-}
-
-function encodePoint(writer: WireWriter, value: Point): void {
-  writer.writeF64(value.x);
-  writer.writeF64(value.y);
-}
+  }),
+};

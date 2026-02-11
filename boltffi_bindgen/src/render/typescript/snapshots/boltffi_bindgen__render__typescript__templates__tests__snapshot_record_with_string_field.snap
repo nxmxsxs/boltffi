@@ -13,14 +13,14 @@ export interface User {
   readonly name: string;
 }
 
-function decodeUser(reader: WireReader): User {
-  return {
+const UserCodec: WireCodec<User> = {
+  size: (v) => 4 + wireStringSize(v.name),
+  encode: (writer, v) => {
+    writer.writeI32(v.id);
+    writer.writeString(v.name);
+  },
+  decode: (reader) => ({
     id: reader.readI32(),
     name: reader.readString(),
-  };
-}
-
-function encodeUser(writer: WireWriter, value: User): void {
-  writer.writeI32(value.id);
-  writer.writeString(value.name);
-}
+  }),
+};

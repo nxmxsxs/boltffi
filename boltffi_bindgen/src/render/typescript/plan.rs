@@ -127,7 +127,14 @@ impl TsParam {
                 "const {}_alloc = _module.allocString({});",
                 self.name, self.name
             )),
-            TsParamConversion::WireEncoded { encode, .. } => {
+            TsParamConversion::RecordEncoded { codec_name } => {
+                let writer_name = format!("{}_writer", self.name);
+                Some(format!(
+                    "const {writer_name} = _module.allocWriter({codec_name}Codec.size({}));\n  {codec_name}Codec.encode({writer_name}, {});",
+                    self.name, self.name
+                ))
+            }
+            TsParamConversion::OtherEncoded { encode } => {
                 let writer_name = format!("{}_writer", self.name);
                 let size_expr = emit::emit_size_expr(&encode.size, &self.name);
                 let encode_expr = emit::emit_writer_write(encode, &writer_name, &self.name);
@@ -147,7 +154,7 @@ impl TsParam {
                     format!("{}_alloc.len", self.name),
                 ]
             }
-            TsParamConversion::WireEncoded { .. } => {
+            TsParamConversion::RecordEncoded { .. } | TsParamConversion::OtherEncoded { .. } => {
                 vec![
                     format!("{}_writer.ptr", self.name),
                     format!("{}_writer.len", self.name),
@@ -160,7 +167,7 @@ impl TsParam {
         match &self.conversion {
             TsParamConversion::Direct => None,
             TsParamConversion::String => Some(format!("_module.freeAlloc({}_alloc);", self.name)),
-            TsParamConversion::WireEncoded { .. } => {
+            TsParamConversion::RecordEncoded { .. } | TsParamConversion::OtherEncoded { .. } => {
                 Some(format!("_module.freeWriter({}_writer);", self.name))
             }
         }
@@ -175,7 +182,8 @@ impl TsParam {
 pub enum TsParamConversion {
     Direct,
     String,
-    WireEncoded { encode: WriteSeq },
+    RecordEncoded { codec_name: String },
+    OtherEncoded { encode: WriteSeq },
 }
 
 #[derive(Debug, Clone)]

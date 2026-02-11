@@ -205,7 +205,7 @@ pub fn emit_size_expr(size: &SizeExpr) -> String {
         SizeExpr::StringLen(value) => format!("{}.utf8.count", render_value(value)),
         SizeExpr::BytesLen(value) => format!("{}.count", render_value(value)),
         SizeExpr::ValueSize(expr) => render_value(expr),
-        SizeExpr::WireSize { value } => format!("{}.wireEncodedSize()", render_value(value)),
+        SizeExpr::WireSize { value, .. } => format!("{}.wireEncodedSize()", render_value(value)),
         SizeExpr::BuiltinSize { id, value } => swift_builtin_size_expr(id, &render_value(value)),
         SizeExpr::Sum(parts) => {
             let rendered = parts

@@ -33,16 +33,28 @@ pub struct RecordTemplate<'a> {
     pub fields: &'a [TsField],
     pub is_blittable: bool,
     pub wire_size: Option<usize>,
+    pub size_expr: String,
     pub doc: &'a Option<String>,
 }
 
 impl<'a> RecordTemplate<'a> {
     pub fn from_record(record: &'a TsRecord) -> Self {
+        let size_expr = if let Some(size) = record.wire_size {
+            size.to_string()
+        } else {
+            record
+                .fields
+                .iter()
+                .map(|f| f.wire_size_expr("v"))
+                .collect::<Vec<_>>()
+                .join(" + ")
+        };
         Self {
             name: &record.name,
             fields: &record.fields,
             is_blittable: record.is_blittable,
             wire_size: record.wire_size,
+            size_expr,
             doc: &record.doc,
         }
     }
@@ -518,5 +530,29 @@ mod tests {
             wasm_imports: &imports,
         };
         insta::assert_snapshot!(template.render().unwrap());
+    }
+
+    #[test]
+    fn wasm_exports_renders_encoded_return_with_out_param() {
+        let params = vec![
+            TsWasmParam {
+                name: "out".to_string(),
+                wasm_type: "number".to_string(),
+            },
+            TsWasmParam {
+                name: "payload".to_string(),
+                wasm_type: "number".to_string(),
+            },
+        ];
+        let imports = vec![TsWasmImportView {
+            ffi_name: "boltffi_echo_payload",
+            params: &params,
+            return_wasm_type_str: "void",
+        }];
+        let template = WasmExportsTemplate {
+            wasm_imports: &imports,
+        };
+        let rendered = template.render().unwrap();
+        assert!(rendered.contains("boltffi_echo_payload(out: number, payload: number): void;"));
     }
 }
