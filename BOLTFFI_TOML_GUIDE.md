@@ -152,10 +152,10 @@ Generated API functions throw `Error` if called before `init()` resolves.
 ### Loader entrypoint behavior
 
 Each loader entrypoint (`bundler.js`, `web.js`, `node.js`) exports:
-- `ready: Promise<void>`
+- `initialized: Promise<void>`
 - all generated API functions
 
-Generated API functions throw `Error` if called before `ready` resolves.
+Generated API functions throw `Error` if called before `initialized` resolves.
 
 Loading strategy by entrypoint:
 - `bundler.js` relies on bundler WASM asset handling
