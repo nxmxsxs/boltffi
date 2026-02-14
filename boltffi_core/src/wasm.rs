@@ -1,7 +1,7 @@
 pub const WASM_ABI_VERSION: u32 = 1;
 
 #[cfg(any(test, target_arch = "wasm32"))]
-use std::alloc::{alloc, dealloc, Layout};
+use std::alloc::{Layout, alloc, dealloc};
 
 #[cfg(target_arch = "wasm32")]
 #[repr(C)]
@@ -28,18 +28,6 @@ impl WasmCallbackOutBuf {
             unsafe { core::slice::from_raw_parts(self.ptr as *const u8, self.len as usize) }
         }
     }
-}
-
-#[cfg(target_arch = "wasm32")]
-pub fn wasm_string_into_packed(value: String) -> u64 {
-    let mut boxed = value.into_bytes().into_boxed_slice();
-    let len = boxed.len();
-    if len == 0 {
-        return 0;
-    }
-    let ptr = boxed.as_mut_ptr();
-    std::mem::forget(boxed);
-    ((len as u64) << 32) | (ptr as u64)
 }
 
 #[cfg(target_arch = "wasm32")]
@@ -147,8 +135,8 @@ mod exports {
 #[cfg(test)]
 mod tests {
     use super::{
-        boltffi_wasm_alloc_impl, boltffi_wasm_free_impl, boltffi_wasm_free_string_return_impl,
-        boltffi_wasm_realloc_impl, WASM_ABI_VERSION,
+        WASM_ABI_VERSION, boltffi_wasm_alloc_impl, boltffi_wasm_free_impl,
+        boltffi_wasm_free_string_return_impl, boltffi_wasm_realloc_impl,
     };
 
     #[test]

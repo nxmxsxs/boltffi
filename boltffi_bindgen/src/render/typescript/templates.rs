@@ -810,10 +810,10 @@ mod tests {
             name: "getUsers",
             params: &[],
             return_type_str: "User[]",
-            return_abi: &TsReturnAbi::WireEncoded,
+            return_abi: &TsReturnAbi::Packed,
             ffi_name: "boltffi_get_users",
             call_args: "",
-            call_args_with_out: "outPtr",
+            call_args_with_out: "",
             wrapper_code: "",
             cleanup_code: "",
             decode_expr: "reader.readArray(() => decodeUser(reader))",
@@ -889,9 +889,7 @@ mod tests {
         .render()
         .unwrap();
 
-        assert!(rendered.contains(
-            "const _value_handler_ref_counts = new Map<number, number>();"
-        ));
+        assert!(rendered.contains("const _value_handler_ref_counts = new Map<number, number>();"));
         assert!(rendered.contains("_value_handler_ref_counts.set(id, 1);"));
         assert!(rendered.contains("return _value_handler_retain(handle);"));
         assert!(rendered.contains("_value_handler_release(handle);"));
@@ -907,15 +905,16 @@ mod tests {
         .render()
         .unwrap();
 
-        assert!(rendered.contains(
-            "Cannot clone unknown callback handle ${handle} in ValueHandler registry"
-        ));
-        assert!(rendered.contains(
-            "Cannot free unknown callback handle ${handle} in ValueHandler registry"
-        ));
-        assert!(rendered.contains(
-            "Callback handle ${handle} not found in ValueHandler registry"
-        ));
+        assert!(
+            rendered.contains(
+                "Cannot clone unknown callback handle ${handle} in ValueHandler registry"
+            )
+        );
+        assert!(
+            rendered
+                .contains("Cannot free unknown callback handle ${handle} in ValueHandler registry")
+        );
+        assert!(rendered.contains("Callback handle ${handle} not found in ValueHandler registry"));
         assert!(rendered.contains("if (currentCount === 1) {"));
         assert!(rendered.contains("_value_handler_ref_counts.delete(handle);"));
         assert!(rendered.contains("_value_handler_registry.delete(handle);"));
@@ -1037,8 +1036,7 @@ mod tests {
                 mode: TsClassMethodMode::Async(TsClassAsyncMethod {
                     poll_sync_ffi_name: "boltffi_counter_next_value_poll_sync".to_string(),
                     complete_ffi_name: "boltffi_counter_next_value_complete".to_string(),
-                    panic_message_ffi_name: "boltffi_counter_next_value_panic_message"
-                        .to_string(),
+                    panic_message_ffi_name: "boltffi_counter_next_value_panic_message".to_string(),
                     cancel_ffi_name: "boltffi_counter_next_value_cancel".to_string(),
                     free_ffi_name: "boltffi_counter_next_value_free".to_string(),
                     decode_expr: "reader.readI32()".to_string(),
@@ -1052,9 +1050,10 @@ mod tests {
         assert!(rendered.contains("let completeCompleted = false;"));
         assert!(rendered.contains("_module.freeBuf(outPtr);"));
         assert!(rendered.contains("_module.freeBufDescriptor(outPtr);"));
-        assert!(rendered.contains(
-            "(_exports.boltffi_counter_next_value_free as Function)(awaitedHandle);"
-        ));
+        assert!(
+            rendered
+                .contains("(_exports.boltffi_counter_next_value_free as Function)(awaitedHandle);")
+        );
     }
 
     #[test]

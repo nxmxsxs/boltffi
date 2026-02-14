@@ -2,7 +2,6 @@ use proc_macro2::Span;
 use quote::quote;
 use syn::{FnArg, Pat};
 
-use boltffi_ffi_rules::callback as cb_naming;
 use crate::callback_registry::CallbackTraitRegistry;
 use crate::custom_types::{
     CustomTypeRegistry, contains_custom_types, from_wire_expr_owned, to_wire_expr_owned,
@@ -12,6 +11,7 @@ use crate::util::{
     ParamTransform, classify_param_transform, foreign_trait_path, is_primitive_vec_inner,
     len_ident, ptr_ident,
 };
+use boltffi_ffi_rules::callback as cb_naming;
 
 fn generate_wasm_closure_codegen(
     name: &syn::Ident,
@@ -68,15 +68,22 @@ fn generate_wasm_closure_codegen(
                         let #wire_name = ::boltffi::__private::wire::encode(&#arg_name);
                     }
                 };
-                (arg_name, wire_var, quote! { #wire_name.as_ptr(), #wire_name.len() })
+                (
+                    arg_name,
+                    wire_var,
+                    quote! { #wire_name.as_ptr(), #wire_name.len() },
+                )
             }
         })
-        .fold((vec![], vec![], vec![]), |(mut names, mut vars, mut args), (n, v, a)| {
-            names.push(n);
-            vars.push(v);
-            args.push(a);
-            (names, vars, args)
-        });
+        .fold(
+            (vec![], vec![], vec![]),
+            |(mut names, mut vars, mut args), (n, v, a)| {
+                names.push(n);
+                vars.push(v);
+                args.push(a);
+                (names, vars, args)
+            },
+        );
 
     let closure_params: Vec<proc_macro2::TokenStream> = arg_names
         .iter()
@@ -141,7 +148,8 @@ fn generate_wasm_closure_codegen(
         let from_wire = if contains_custom_types(return_ty, custom_types) {
             let wire_ty = wire_type_for(return_ty, custom_types);
             let wire_result_ident = syn::Ident::new("__wire_result", name.span());
-            let from_wire_conversion = from_wire_expr_owned(return_ty, custom_types, &wire_result_ident);
+            let from_wire_conversion =
+                from_wire_expr_owned(return_ty, custom_types, &wire_result_ident);
             quote! {
                 let #wire_result_ident: #wire_ty = ::boltffi::__private::wire::decode(__result_bytes)
                     .expect("closure return: wire decode failed");

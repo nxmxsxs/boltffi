@@ -1,4 +1,4 @@
-use std::sync::atomic::{AtomicBool, AtomicPtr, AtomicU64, AtomicU8, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicPtr, AtomicU8, AtomicU64, Ordering};
 use std::sync::{Arc, Condvar, Mutex, Weak};
 use std::time::Duration;
 
@@ -623,9 +623,11 @@ mod tests {
 
         producer_thread.join().unwrap();
         assert_eq!(received_events.len(), 100);
-        assert!(received_events
-            .iter()
-            .enumerate()
-            .all(|(index, &value)| value == index as i32));
+        assert!(
+            received_events
+                .iter()
+                .enumerate()
+                .all(|(index, &value)| value == index as i32)
+        );
     }
 }

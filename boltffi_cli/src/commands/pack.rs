@@ -635,6 +635,11 @@ fn generate_wasm_package_json(
         serde_json::Value::String(default_entry.to_string()),
     );
 
+    let runtime_package = config.wasm_runtime_package();
+    let runtime_version = config.wasm_runtime_version();
+    let mut dependencies = serde_json::Map::new();
+    dependencies.insert(runtime_package, serde_json::Value::String(runtime_version));
+
     let package_json = serde_json::json!({
         "name": package_name,
         "version": package_version,
@@ -650,7 +655,8 @@ fn generate_wasm_package_json(
             "bundler.js",
             "web.js",
             "node.js"
-        ]
+        ],
+        "dependencies": serde_json::Value::Object(dependencies)
     });
 
     let mut package_json_object =

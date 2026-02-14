@@ -11,7 +11,7 @@ pub mod __private {
         AsyncCallbackCompletionCode, CallbackRequestId, CompleteResult, CompletionPayload,
         RequestGuard, WasmCallbackOutBuf, WasmCallbackOwner, allocate_request, cancel_request,
         complete_request, complete_request_from_ffi, remove_request, rust_future_panic_message,
-        rust_future_poll_sync, set_request_waker, take_request_result, wasm_string_into_packed,
+        rust_future_poll_sync, set_request_waker, take_request_result,
     };
     pub use boltffi_core::{
         CallbackForeignType, CallbackHandle, EventSubscription, FfiBuf, FfiStatus,

@@ -380,7 +380,11 @@ impl<T: WireEncode> WireSize for Vec<T> {
         if T::IS_BLITTABLE {
             VEC_COUNT_SIZE + self.len() * core::mem::size_of::<T>()
         } else {
-            VEC_COUNT_SIZE + self.iter().map(|element| element.wire_size()).sum::<usize>()
+            VEC_COUNT_SIZE
+                + self
+                    .iter()
+                    .map(|element| element.wire_size())
+                    .sum::<usize>()
         }
     }
 }
@@ -419,9 +423,13 @@ impl<T: WireEncode> WireSize for [T] {
     #[inline]
     fn wire_size(&self) -> usize {
         if T::IS_BLITTABLE {
-            VEC_COUNT_SIZE + self.len() * core::mem::size_of::<T>()
+            VEC_COUNT_SIZE + core::mem::size_of_val(self)
         } else {
-            VEC_COUNT_SIZE + self.iter().map(|element| element.wire_size()).sum::<usize>()
+            VEC_COUNT_SIZE
+                + self
+                    .iter()
+                    .map(|element| element.wire_size())
+                    .sum::<usize>()
         }
     }
 }
@@ -437,7 +445,7 @@ impl<T: WireEncode> WireEncode for [T] {
         }
 
         if T::IS_BLITTABLE {
-            let byte_count = self.len() * core::mem::size_of::<T>();
+            let byte_count = core::mem::size_of_val(self);
             unsafe {
                 core::ptr::copy_nonoverlapping(
                     self.as_ptr() as *const u8,
@@ -873,6 +881,7 @@ mod tests {
         }
     }
 
+    #[allow(clippy::assertions_on_constants)]
     mod blittable {
         use super::*;
 
@@ -896,10 +905,7 @@ mod tests {
 
             assert_eq!(&buf[0..4], &5u32.to_le_bytes());
 
-            let expected_bytes: Vec<u8> = vec
-                .iter()
-                .flat_map(|v| v.to_le_bytes())
-                .collect();
+            let expected_bytes: Vec<u8> = vec.iter().flat_map(|v| v.to_le_bytes()).collect();
             assert_eq!(&buf[4..], &expected_bytes);
         }
 
@@ -911,10 +917,7 @@ mod tests {
 
             assert_eq!(&buf[0..4], &3u32.to_le_bytes());
 
-            let expected_bytes: Vec<u8> = vec
-                .iter()
-                .flat_map(|v| v.to_le_bytes())
-                .collect();
+            let expected_bytes: Vec<u8> = vec.iter().flat_map(|v| v.to_le_bytes()).collect();
             assert_eq!(&buf[4..], &expected_bytes);
         }
 

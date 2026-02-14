@@ -36,6 +36,10 @@ output = "dist/jniLibs"
 [targets.wasm]
 enabled = true
 
+[targets.wasm.typescript]
+runtime_package = "@boltffi/runtime"
+runtime_version = "file:../../../runtime/typescript"
+
 [targets.wasm.optimize]
 enabled = true
 

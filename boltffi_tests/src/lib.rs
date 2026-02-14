@@ -1,4 +1,6 @@
 #![allow(improper_ctypes_definitions)]
+#![allow(clippy::unused_unit)]
+#![allow(clippy::too_many_arguments)]
 
 use boltffi::*;
 

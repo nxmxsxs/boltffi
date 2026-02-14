@@ -291,7 +291,7 @@ fn generate_typescript(config: &Config, output: Option<PathBuf>) -> Result<()> {
     let ts_module =
         TypeScriptLowerer::new(&contract, &abi_contract, crate_name.to_string()).lower();
     let runtime_package = config.wasm_runtime_package();
-    
+
     let ts_code = TypeScriptEmitter::emit(&ts_module).replacen(
         "from \"@boltffi/runtime\"",
         &format!("from \"{}\"", runtime_package),

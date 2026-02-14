@@ -21,13 +21,13 @@ pub mod wire;
 
 #[cfg(target_arch = "wasm32")]
 pub use async_callback::{
-    allocate_request, cancel_request, complete_request, complete_request_from_ffi, remove_request,
-    set_request_waker, take_request_result, AsyncCallbackCompletionCode, CallbackRequestId,
-    CompleteResult, CompletionPayload, RequestGuard,
+    AsyncCallbackCompletionCode, CallbackRequestId, CompleteResult, CompletionPayload,
+    RequestGuard, allocate_request, cancel_request, complete_request, complete_request_from_ffi,
+    remove_request, set_request_waker, take_request_result,
 };
 pub use boltffi_macros::{
-    custom_ffi, custom_type, data, default, error, export, ffi_class, ffi_export, ffi_stream,
-    ffi_trait, name, skip, Data, FfiType,
+    Data, FfiType, custom_ffi, custom_type, data, default, error, export, ffi_class, ffi_export,
+    ffi_stream, ffi_trait, name, skip,
 };
 #[cfg(target_arch = "wasm32")]
 pub use callback::WasmCallbackOwner;
@@ -36,23 +36,21 @@ pub use custom_ffi::CustomFfiConvertible;
 pub use handle::HandleBox;
 pub use pending::{CancellationToken, PendingHandle};
 pub use ringbuffer::SpscRingBuffer;
-#[cfg(target_arch = "wasm32")]
-pub use rustfuture::{rust_future_panic_message, rust_future_poll_sync, WasmPollStatus};
 pub use rustfuture::{
     RustFuture, RustFutureContinuationCallback, RustFutureHandle, RustFuturePoll,
 };
+#[cfg(target_arch = "wasm32")]
+pub use rustfuture::{WasmPollStatus, rust_future_panic_message, rust_future_poll_sync};
 pub use safety::catch_ffi_panic;
-pub use status::{clear_last_error, set_last_error, take_last_error, FfiStatus};
+pub use status::{FfiStatus, clear_last_error, set_last_error, take_last_error};
 pub use subscription::{
     EventSubscription, StreamContinuationCallback, StreamPollResult, StreamProducer,
     SubscriptionHandle, WaitResult,
 };
 pub use types::{FfiBuf, FfiError, FfiOption, FfiSlice, FfiString};
-#[cfg(target_arch = "wasm32")]
-pub use wasm::wasm_string_into_packed;
+pub use wasm::WASM_ABI_VERSION;
 #[cfg(target_arch = "wasm32")]
 pub use wasm::WasmCallbackOutBuf;
-pub use wasm::WASM_ABI_VERSION;
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct UnexpectedFfiCallbackError(pub String);
