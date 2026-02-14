@@ -13,12 +13,14 @@ export async function {{ name }}({% for p in params %}{{ p.name }}: {{ p.ts_type
     (h: number) => (_exports.{{ free_ffi_name }} as Function)(h)
   );
 
-{% if has_return %}  const outPtr = _module.allocBufDescriptor();
+{% match return_route %}{% when TsAsyncTransportRoute::Void %}
+  (_exports.{{ free_ffi_name }} as Function)(awaitedHandle);
+{% when TsAsyncTransportRoute::Packed with { decode_expr } %}
+  const outPtr = _module.allocBufDescriptor();
   (_exports.{{ complete_ffi_name }} as Function)(outPtr, awaitedHandle, 0);
   const reader = _module.readerFromBuf(outPtr);
   const result = {{ decode_expr }};
   _module.freeBuf(outPtr);
   (_exports.{{ free_ffi_name }} as Function)(awaitedHandle);
   return result;
-{% else %}  (_exports.{{ free_ffi_name }} as Function)(awaitedHandle);
-{% endif %}}
+{% endmatch %}}

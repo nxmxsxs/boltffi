@@ -446,7 +446,7 @@ impl<'a> TypeScriptLowerer<'a> {
 
         let (return_type, return_handle, mode) = match &abi_call.mode {
             CallMode::Sync => {
-                let (return_type, return_abi, decode_expr) = self.lower_return(&abi_call.return_);
+                let (return_type, return_route) = self.select_sync_route(&abi_call.return_);
                 let return_handle = match &abi_call.return_ {
                     ReturnTransport::Handle { class_id, nullable } => Some(TsHandleReturn {
                         class_name: naming::to_upper_camel_case(class_id.as_str()),
@@ -457,15 +457,12 @@ impl<'a> TypeScriptLowerer<'a> {
                 (
                     return_type,
                     return_handle,
-                    TsClassMethodMode::Sync(TsClassSyncMethod {
-                        return_abi,
-                        decode_expr,
-                    }),
+                    TsClassMethodMode::Sync(TsClassSyncMethod { return_route }),
                 )
             }
             CallMode::Async(async_call) => {
                 let entry_ffi_name = abi_call.symbol.as_str().to_string();
-                let (return_type, decode_expr) = self.lower_async_result(&async_call.result);
+                let (return_type, return_route) = self.select_async_route(&async_call.result);
                 let return_handle = match &async_call.result {
                     AsyncResultTransport::Handle { class_id, nullable } => Some(TsHandleReturn {
                         class_name: naming::to_upper_camel_case(class_id.as_str()),
@@ -482,7 +479,7 @@ impl<'a> TypeScriptLowerer<'a> {
                         panic_message_ffi_name: format!("{entry_ffi_name}_panic_message"),
                         cancel_ffi_name: format!("{entry_ffi_name}_cancel"),
                         free_ffi_name: format!("{entry_ffi_name}_free"),
-                        decode_expr,
+                        return_route,
                     }),
                 )
             }
@@ -791,7 +788,7 @@ impl<'a> TypeScriptLowerer<'a> {
             })
             .collect();
 
-        let (return_type, return_abi, decode_expr) = self.lower_return(&abi_call.return_);
+        let (return_type, return_route) = self.select_sync_route(&abi_call.return_);
         let (throws, err_type) = self.lower_error(&abi_call.error);
 
         Some(TsFunction {
@@ -799,8 +796,7 @@ impl<'a> TypeScriptLowerer<'a> {
             ffi_name,
             params,
             return_type,
-            return_abi,
-            decode_expr,
+            return_route,
             throws,
             err_type,
             doc: def.doc.clone(),
@@ -840,7 +836,7 @@ impl<'a> TypeScriptLowerer<'a> {
             })
             .collect();
 
-        let (return_type, decode_expr) = self.lower_async_result(&async_call.result);
+        let (return_type, return_route) = self.select_async_route(&async_call.result);
         let (throws, err_type) = self.lower_error(&async_call.error);
 
         Some(TsAsyncFunction {
@@ -853,7 +849,7 @@ impl<'a> TypeScriptLowerer<'a> {
             free_ffi_name: format!("{}_free", base_ffi_name),
             params,
             return_type,
-            decode_expr,
+            return_route,
             throws,
             err_type,
             doc: def.doc.clone(),
@@ -866,21 +862,21 @@ impl<'a> TypeScriptLowerer<'a> {
             ParamRole::InDirect => TsParam {
                 name: emit::escape_ts_keyword(&name),
                 ts_type: ts_abi_type(&abi_param.ffi_type),
-                conversion: TsParamConversion::Direct,
+                input_route: TsInputRoute::Direct,
             },
             ParamRole::InString { .. } => TsParam {
                 name: emit::escape_ts_keyword(&name),
                 ts_type: "string".to_string(),
-                conversion: TsParamConversion::String,
+                input_route: TsInputRoute::String,
             },
             ParamRole::InBuffer { element_abi, .. } => {
-                let (ts_type, conversion) = match element_abi {
-                    AbiType::U8 => ("Uint8Array".to_string(), TsParamConversion::Bytes),
+                let (ts_type, input_route) = match element_abi {
+                    AbiType::U8 => ("Uint8Array".to_string(), TsInputRoute::Bytes),
                     _ => (
                         param_def
                             .map(|p| emit::ts_type(&p.type_expr))
                             .unwrap_or_else(|| primitive_buffer_ts_type(*element_abi)),
-                        TsParamConversion::PrimitiveBuffer {
+                        TsInputRoute::PrimitiveBuffer {
                             element_abi: *element_abi,
                         },
                     ),
@@ -888,7 +884,7 @@ impl<'a> TypeScriptLowerer<'a> {
                 TsParam {
                     name: emit::escape_ts_keyword(&name),
                     ts_type,
-                    conversion,
+                    input_route,
                 }
             }
             ParamRole::InEncoded { encode_ops, .. } => {
@@ -898,19 +894,19 @@ impl<'a> TypeScriptLowerer<'a> {
                 let has_codec = param_def
                     .map(|p| matches!(&p.type_expr, TypeExpr::Record(_) | TypeExpr::Enum(_)))
                     .unwrap_or(false);
-                let conversion = if has_codec {
-                    TsParamConversion::CodecEncoded {
+                let input_route = if has_codec {
+                    TsInputRoute::CodecEncoded {
                         codec_name: ts_type.clone(),
                     }
                 } else {
-                    TsParamConversion::OtherEncoded {
+                    TsInputRoute::OtherEncoded {
                         encode: encode_ops.clone(),
                     }
                 };
                 TsParam {
                     name: emit::escape_ts_keyword(&name),
                     ts_type,
-                    conversion,
+                    input_route,
                 }
             }
             ParamRole::InCallback { callback_id, .. } => {
@@ -918,27 +914,29 @@ impl<'a> TypeScriptLowerer<'a> {
                 TsParam {
                     name: emit::escape_ts_keyword(&name),
                     ts_type: interface_name.clone(),
-                    conversion: TsParamConversion::Callback { interface_name },
+                    input_route: TsInputRoute::Callback { interface_name },
                 }
             }
             _ => TsParam {
                 name: emit::escape_ts_keyword(&name),
                 ts_type: "unknown".to_string(),
-                conversion: TsParamConversion::Direct,
+                input_route: TsInputRoute::Direct,
             },
         }
     }
 
-    fn lower_return(&self, transport: &ReturnTransport) -> (Option<String>, TsReturnAbi, String) {
+    fn select_sync_route(
+        &self,
+        transport: &ReturnTransport,
+    ) -> (Option<String>, TsSyncTransportRoute) {
         match transport {
-            ReturnTransport::Void => (None, TsReturnAbi::Void, String::new()),
+            ReturnTransport::Void => (None, TsSyncTransportRoute::Void),
             ReturnTransport::Direct(abi_type) => {
                 let ts_type_str = ts_abi_type(abi_type);
                 let cast = ts_direct_cast(abi_type);
                 (
                     Some(ts_type_str),
-                    TsReturnAbi::Direct { ts_cast: cast },
-                    String::new(),
+                    TsSyncTransportRoute::Direct { ts_cast: cast },
                 )
             }
             ReturnTransport::Encoded {
@@ -950,17 +948,35 @@ impl<'a> TypeScriptLowerer<'a> {
                 // - String: uses takePackedUtf8StringPrefixed (decodes directly from WASM memory)
                 let ts_type_str = infer_ts_type_from_read_ops(decode_ops);
                 match decode_ops.ops.first() {
-                    Some(ReadOp::Vec { element_type: TypeExpr::Primitive(prim), .. }) => {
+                    Some(ReadOp::Vec {
+                        element_type: TypeExpr::Primitive(prim),
+                        ..
+                    }) => {
                         let decode = emit::emit_raw_primitive_array_read(*prim);
-                        (Some(ts_type_str), TsReturnAbi::RawPacked { decode_expr: decode }, String::new())
+                        (
+                            Some(ts_type_str),
+                            TsSyncTransportRoute::RawPacked {
+                                decode_expr: decode,
+                            },
+                        )
                     }
                     Some(ReadOp::String { .. }) => {
                         let decode = "_module.takePackedUtf8String(packed)".to_string();
-                        (Some(ts_type_str), TsReturnAbi::RawPacked { decode_expr: decode }, String::new())
+                        (
+                            Some(ts_type_str),
+                            TsSyncTransportRoute::RawPacked {
+                                decode_expr: decode,
+                            },
+                        )
                     }
                     _ => {
                         let decode = emit::emit_reader_read(decode_ops);
-                        (Some(ts_type_str), TsReturnAbi::Packed, decode)
+                        (
+                            Some(ts_type_str),
+                            TsSyncTransportRoute::Packed {
+                                decode_expr: decode,
+                            },
+                        )
                     }
                 }
             }
@@ -973,17 +989,14 @@ impl<'a> TypeScriptLowerer<'a> {
                 };
                 (
                     Some(ts_type_str),
-                    TsReturnAbi::Direct {
+                    TsSyncTransportRoute::Direct {
                         ts_cast: String::new(),
                     },
-                    String::new(),
                 )
             }
-            ReturnTransport::Callback { .. } => (
-                Some("unknown".to_string()),
-                TsReturnAbi::Void,
-                String::new(),
-            ),
+            ReturnTransport::Callback { .. } => {
+                (Some("unknown".to_string()), TsSyncTransportRoute::Void)
+            }
         }
     }
 
@@ -998,9 +1011,12 @@ impl<'a> TypeScriptLowerer<'a> {
         }
     }
 
-    fn lower_async_result(&self, result: &AsyncResultTransport) -> (Option<String>, String) {
+    fn select_async_route(
+        &self,
+        result: &AsyncResultTransport,
+    ) -> (Option<String>, TsAsyncTransportRoute) {
         match result {
-            AsyncResultTransport::Void => (None, String::new()),
+            AsyncResultTransport::Void => (None, TsAsyncTransportRoute::Void),
             AsyncResultTransport::Direct(abi_type) => {
                 let ts_type = ts_abi_type(abi_type);
                 let read_method = match abi_type {
@@ -1019,12 +1035,17 @@ impl<'a> TypeScriptLowerer<'a> {
                     AbiType::F64 => "reader.readF64()",
                     AbiType::Void | AbiType::Pointer => "reader.readI32()",
                 };
-                (Some(ts_type), read_method.to_string())
+                (
+                    Some(ts_type),
+                    TsAsyncTransportRoute::Packed {
+                        decode_expr: read_method.to_string(),
+                    },
+                )
             }
             AsyncResultTransport::Encoded { decode_ops, .. } => {
                 let ts_type = infer_ts_type_from_read_ops(decode_ops);
                 let decode_expr = emit::emit_reader_read(decode_ops);
-                (Some(ts_type), decode_expr)
+                (Some(ts_type), TsAsyncTransportRoute::Packed { decode_expr })
             }
             AsyncResultTransport::Handle { class_id, nullable } => {
                 let class_name = naming::to_upper_camel_case(class_id.as_str());
@@ -1033,9 +1054,14 @@ impl<'a> TypeScriptLowerer<'a> {
                 } else {
                     class_name
                 };
-                (Some(ts_type), "reader.readU32()".to_string())
+                (
+                    Some(ts_type),
+                    TsAsyncTransportRoute::Packed {
+                        decode_expr: "reader.readU32()".to_string(),
+                    },
+                )
             }
-            AsyncResultTransport::Callback { .. } => (None, String::new()),
+            AsyncResultTransport::Callback { .. } => (None, TsAsyncTransportRoute::Void),
         }
     }
 
@@ -1056,12 +1082,18 @@ impl<'a> TypeScriptLowerer<'a> {
                 })
                 .collect();
 
-            let return_wasm_type = match &call.return_ {
-                ReturnTransport::Void => None,
-                ReturnTransport::Direct(abi_type) => Some(abi_type_to_wasm(abi_type)),
-                ReturnTransport::Encoded { .. } => Some("bigint".to_string()),
-                ReturnTransport::Handle { .. } => Some("number".to_string()),
-                ReturnTransport::Callback { .. } => None,
+            let (_, return_route) = self.select_sync_route(&call.return_);
+            let return_wasm_type = match (&call.return_, &return_route) {
+                (_, TsSyncTransportRoute::Void) => None,
+                (ReturnTransport::Direct(abi_type), TsSyncTransportRoute::Direct { .. }) => {
+                    Some(abi_type_to_wasm(abi_type))
+                }
+                (ReturnTransport::Handle { .. }, TsSyncTransportRoute::Direct { .. }) => {
+                    Some("number".to_string())
+                }
+                (_, TsSyncTransportRoute::Packed { .. })
+                | (_, TsSyncTransportRoute::RawPacked { .. }) => Some("bigint".to_string()),
+                _ => None,
             };
 
             imports.push(TsWasmImport {
@@ -1413,13 +1445,13 @@ fn remap_named_in_write_op(op: &WriteOp) -> WriteOp {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::ir::Lowerer as IrLowerer;
     use crate::ir::contract::{FfiContract, PackageInfo};
     use crate::ir::definitions::{
         ClassDef, ConstructorDef, FunctionDef, MethodDef, ParamDef, ParamPassing, Receiver,
         ReturnDef,
     };
     use crate::ir::ids::{ClassId, FunctionId, MethodId, ParamName};
+    use crate::ir::Lowerer as IrLowerer;
 
     fn empty_contract() -> FfiContract {
         FfiContract {
@@ -1669,8 +1701,8 @@ mod tests {
 
         assert_eq!(param.ts_type, "number[]");
         assert!(matches!(
-            param.conversion,
-            TsParamConversion::PrimitiveBuffer {
+            param.input_route,
+            TsInputRoute::PrimitiveBuffer {
                 element_abi: AbiType::I32
             }
         ));
@@ -1700,7 +1732,7 @@ mod tests {
 
         assert_eq!(
             param.wrapper_code(),
-            Some("const values_alloc = _module.allocPrimitiveBuffer(values, \"i32\");".to_string())
+            Some("const values_alloc = _module.allocI32Array(values);".to_string())
         );
         assert_eq!(
             param.ffi_args(),
@@ -1738,7 +1770,7 @@ mod tests {
             .expect("vec parameter should exist");
 
         assert_eq!(param.ts_type, "Uint8Array");
-        assert!(matches!(param.conversion, TsParamConversion::Bytes));
+        assert!(matches!(param.input_route, TsInputRoute::Bytes));
         assert_eq!(
             param.wrapper_code(),
             Some("const values_alloc = _module.allocBytes(values);".to_string())
@@ -2139,10 +2171,7 @@ mod tests {
         let method = &class.methods[0];
         assert_eq!(method.params[0].name, "message");
         assert_eq!(method.params[0].ts_type, "string");
-        assert!(matches!(
-            method.params[0].conversion,
-            TsParamConversion::String
-        ));
+        assert!(matches!(method.params[0].input_route, TsInputRoute::String));
     }
 
     #[test]
@@ -2211,7 +2240,7 @@ mod tests {
         assert!(method.return_type.is_none());
         match &method.mode {
             TsClassMethodMode::Sync(sync) => {
-                assert!(sync.return_abi.is_void());
+                assert!(sync.return_route.is_void());
             }
             _ => panic!("expected sync method"),
         }
@@ -2273,8 +2302,8 @@ mod tests {
         let method = &class.methods[0];
         assert_eq!(method.params[0].name, "point");
         assert_eq!(method.params[0].ts_type, "Point");
-        match &method.params[0].conversion {
-            TsParamConversion::CodecEncoded { codec_name } => {
+        match &method.params[0].input_route {
+            TsInputRoute::CodecEncoded { codec_name } => {
                 assert_eq!(codec_name, "Point");
             }
             _ => panic!("expected codec encoded conversion"),
@@ -2312,7 +2341,7 @@ mod tests {
         assert_eq!(method.return_type.as_deref(), Some("number"));
         match &method.mode {
             TsClassMethodMode::Sync(sync) => {
-                assert!(sync.return_abi.is_direct());
+                assert!(sync.return_route.is_direct());
             }
             _ => panic!("expected sync method"),
         }
