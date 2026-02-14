@@ -19,8 +19,10 @@ const UserCodec: WireCodec<User> = {
     writer.writeI32(v.id);
     writer.writeString(v.name);
   },
-  decode: (reader) => ({
-    id: reader.readI32(),
-    name: reader.readString(),
-  }),
+  decode: (reader) => {
+    return {
+      id: reader.readI32(),
+      name: reader.readString(),
+    };
+  },
 };

@@ -1,5 +1,5 @@
-use boltffi::__private::rustfuture::{self, RustFuturePoll};
 use boltffi::__private::FfiBuf;
+use boltffi::__private::rustfuture::{self, RustFuturePoll};
 use boltffi_core::wire::{WireDecode, WireEncode};
 use boltffi_tests::*;
 
@@ -194,14 +194,20 @@ mod fixture_constructors {
     #[test]
     fn new_with_id_handles_max() {
         let handle = unsafe { boltffi_class_test_fixture_new_with_id(i32::MAX) };
-        assert_eq!(unsafe { boltffi_class_test_fixture_get_id(handle) }, i32::MAX);
+        assert_eq!(
+            unsafe { boltffi_class_test_fixture_get_id(handle) },
+            i32::MAX
+        );
         unsafe { boltffi_class_test_fixture_free(handle) };
     }
 
     #[test]
     fn new_with_id_handles_min() {
         let handle = unsafe { boltffi_class_test_fixture_new_with_id(i32::MIN) };
-        assert_eq!(unsafe { boltffi_class_test_fixture_get_id(handle) }, i32::MIN);
+        assert_eq!(
+            unsafe { boltffi_class_test_fixture_get_id(handle) },
+            i32::MIN
+        );
         unsafe { boltffi_class_test_fixture_free(handle) };
     }
 
@@ -233,7 +239,10 @@ mod fixture_ref_self_methods {
     #[test]
     fn values_count_empty_returns_zero() {
         let handle = boltffi_class_test_fixture_new_default();
-        assert_eq!(unsafe { boltffi_class_test_fixture_values_count(handle) }, 0);
+        assert_eq!(
+            unsafe { boltffi_class_test_fixture_values_count(handle) },
+            0
+        );
         unsafe { boltffi_class_test_fixture_free(handle) };
     }
 
@@ -250,7 +259,10 @@ mod fixture_ref_self_methods {
         unsafe { boltffi_class_test_fixture_add_value(handle, 10) };
         unsafe { boltffi_class_test_fixture_add_value(handle, 20) };
         unsafe { boltffi_class_test_fixture_add_value(handle, 30) };
-        assert_eq!(unsafe { boltffi_class_test_fixture_compute_sum(handle) }, 60);
+        assert_eq!(
+            unsafe { boltffi_class_test_fixture_compute_sum(handle) },
+            60
+        );
         unsafe { boltffi_class_test_fixture_free(handle) };
     }
 }
@@ -270,9 +282,15 @@ mod fixture_ref_mut_self_methods {
     fn add_value_increments_count() {
         let handle = boltffi_class_test_fixture_new_default();
         unsafe { boltffi_class_test_fixture_add_value(handle, 10) };
-        assert_eq!(unsafe { boltffi_class_test_fixture_values_count(handle) }, 1);
+        assert_eq!(
+            unsafe { boltffi_class_test_fixture_values_count(handle) },
+            1
+        );
         unsafe { boltffi_class_test_fixture_add_value(handle, 20) };
-        assert_eq!(unsafe { boltffi_class_test_fixture_values_count(handle) }, 2);
+        assert_eq!(
+            unsafe { boltffi_class_test_fixture_values_count(handle) },
+            2
+        );
         unsafe { boltffi_class_test_fixture_free(handle) };
     }
 
@@ -282,7 +300,10 @@ mod fixture_ref_mut_self_methods {
         unsafe { boltffi_class_test_fixture_add_value(handle, 10) };
         unsafe { boltffi_class_test_fixture_add_value(handle, 20) };
         unsafe { boltffi_class_test_fixture_clear_values(handle) };
-        assert_eq!(unsafe { boltffi_class_test_fixture_values_count(handle) }, 0);
+        assert_eq!(
+            unsafe { boltffi_class_test_fixture_values_count(handle) },
+            0
+        );
         assert_eq!(unsafe { boltffi_class_test_fixture_compute_sum(handle) }, 0);
         unsafe { boltffi_class_test_fixture_free(handle) };
     }
@@ -413,7 +434,10 @@ mod fixture_async_ref_mut_self {
             boltffi_class_test_fixture_async_add_value_free(future);
         }
 
-        assert_eq!(unsafe { boltffi_class_test_fixture_compute_sum(handle) }, 150);
+        assert_eq!(
+            unsafe { boltffi_class_test_fixture_compute_sum(handle) },
+            150
+        );
         unsafe { boltffi_class_test_fixture_free(handle) };
     }
 }
@@ -517,9 +541,7 @@ mod fixture_wire_encoded_constructors {
     #[test]
     fn new_with_name_accepts_string() {
         let name = "test_name";
-        let handle = unsafe {
-            boltffi_class_test_fixture_new_with_name(name.as_ptr(), name.len())
-        };
+        let handle = unsafe { boltffi_class_test_fixture_new_with_name(name.as_ptr(), name.len()) };
         assert!(!handle.is_null());
 
         let buf = unsafe { boltffi_class_test_fixture_get_name(handle) };
@@ -532,9 +554,7 @@ mod fixture_wire_encoded_constructors {
     #[test]
     fn new_with_name_empty_string() {
         let name = "";
-        let handle = unsafe {
-            boltffi_class_test_fixture_new_with_name(name.as_ptr(), name.len())
-        };
+        let handle = unsafe { boltffi_class_test_fixture_new_with_name(name.as_ptr(), name.len()) };
         assert!(!handle.is_null());
 
         let buf = unsafe { boltffi_class_test_fixture_get_name(handle) };
@@ -548,9 +568,8 @@ mod fixture_wire_encoded_constructors {
     fn new_with_point_accepts_record() {
         let point = FixturePoint { x: 1.5, y: 2.5 };
         let encoded = encode(&point);
-        let handle = unsafe {
-            boltffi_class_test_fixture_new_with_point(encoded.as_ptr(), encoded.len())
-        };
+        let handle =
+            unsafe { boltffi_class_test_fixture_new_with_point(encoded.as_ptr(), encoded.len()) };
         assert!(!handle.is_null());
 
         let buf = unsafe { boltffi_class_test_fixture_get_point(handle) };
@@ -565,9 +584,8 @@ mod fixture_wire_encoded_constructors {
     fn new_with_status_accepts_enum() {
         let status = FixtureStatus::Active;
         let encoded = encode(&status);
-        let handle = unsafe {
-            boltffi_class_test_fixture_new_with_status(encoded.as_ptr(), encoded.len())
-        };
+        let handle =
+            unsafe { boltffi_class_test_fixture_new_with_status(encoded.as_ptr(), encoded.len()) };
         assert!(!handle.is_null());
 
         let buf = unsafe { boltffi_class_test_fixture_get_status(handle) };
@@ -630,7 +648,10 @@ mod fixture_wire_encoded_constructors {
         assert_eq!(result_point.y, 4.0);
 
         let status_buf = unsafe { boltffi_class_test_fixture_get_status(handle) };
-        assert_eq!(decode_buf::<FixtureStatus>(&status_buf), FixtureStatus::Completed);
+        assert_eq!(
+            decode_buf::<FixtureStatus>(&status_buf),
+            FixtureStatus::Completed
+        );
 
         unsafe { boltffi_class_test_fixture_free(handle) };
     }
@@ -642,9 +663,7 @@ mod fixture_wire_encoded_getters {
     #[test]
     fn get_name_returns_string() {
         let name = "getter_test";
-        let handle = unsafe {
-            boltffi_class_test_fixture_new_with_name(name.as_ptr(), name.len())
-        };
+        let handle = unsafe { boltffi_class_test_fixture_new_with_name(name.as_ptr(), name.len()) };
 
         let buf = unsafe { boltffi_class_test_fixture_get_name(handle) };
         let result: String = decode_buf(&buf);
@@ -657,9 +676,8 @@ mod fixture_wire_encoded_getters {
     fn get_point_returns_record() {
         let point = FixturePoint { x: 10.0, y: 20.0 };
         let encoded = encode(&point);
-        let handle = unsafe {
-            boltffi_class_test_fixture_new_with_point(encoded.as_ptr(), encoded.len())
-        };
+        let handle =
+            unsafe { boltffi_class_test_fixture_new_with_point(encoded.as_ptr(), encoded.len()) };
 
         let buf = unsafe { boltffi_class_test_fixture_get_point(handle) };
         let result: FixturePoint = decode_buf(&buf);
@@ -673,9 +691,8 @@ mod fixture_wire_encoded_getters {
     fn get_status_returns_enum() {
         let status = FixtureStatus::Failed;
         let encoded = encode(&status);
-        let handle = unsafe {
-            boltffi_class_test_fixture_new_with_status(encoded.as_ptr(), encoded.len())
-        };
+        let handle =
+            unsafe { boltffi_class_test_fixture_new_with_status(encoded.as_ptr(), encoded.len()) };
 
         let buf = unsafe { boltffi_class_test_fixture_get_status(handle) };
         let result: FixtureStatus = decode_buf(&buf);
@@ -870,7 +887,13 @@ mod fixture_wire_encoded_setters {
 
         let none: Option<i32> = None;
         let none_encoded = encode(&none);
-        unsafe { boltffi_class_test_fixture_set_optional(handle, none_encoded.as_ptr(), none_encoded.len()) };
+        unsafe {
+            boltffi_class_test_fixture_set_optional(
+                handle,
+                none_encoded.as_ptr(),
+                none_encoded.len(),
+            )
+        };
 
         let buf = unsafe { boltffi_class_test_fixture_get_optional(handle) };
         let result: Option<i32> = decode_buf(&buf);
@@ -888,10 +911,7 @@ mod fixture_wire_encoded_static {
         let a = "hello";
         let b = "world";
         let buf = unsafe {
-            boltffi_class_test_fixture_static_concat(
-                a.as_ptr(), a.len(),
-                b.as_ptr(), b.len(),
-            )
+            boltffi_class_test_fixture_static_concat(a.as_ptr(), a.len(), b.as_ptr(), b.len())
         };
         let result: String = decode_buf(&buf);
         assert_eq!(result, "helloworld");
@@ -902,10 +922,7 @@ mod fixture_wire_encoded_static {
         let a = "";
         let b = "";
         let buf = unsafe {
-            boltffi_class_test_fixture_static_concat(
-                a.as_ptr(), a.len(),
-                b.as_ptr(), b.len(),
-            )
+            boltffi_class_test_fixture_static_concat(a.as_ptr(), a.len(), b.as_ptr(), b.len())
         };
         let result: String = decode_buf(&buf);
         assert_eq!(result, "");
@@ -916,10 +933,7 @@ mod fixture_wire_encoded_static {
         let a = "foo";
         let b = "";
         let buf = unsafe {
-            boltffi_class_test_fixture_static_concat(
-                a.as_ptr(), a.len(),
-                b.as_ptr(), b.len(),
-            )
+            boltffi_class_test_fixture_static_concat(a.as_ptr(), a.len(), b.as_ptr(), b.len())
         };
         let result: String = decode_buf(&buf);
         assert_eq!(result, "foo");
@@ -981,9 +995,7 @@ mod fixture_wire_encoded_async {
     #[test]
     fn async_get_name_returns_string() {
         let name = "async_test";
-        let handle = unsafe {
-            boltffi_class_test_fixture_new_with_name(name.as_ptr(), name.len())
-        };
+        let handle = unsafe { boltffi_class_test_fixture_new_with_name(name.as_ptr(), name.len()) };
 
         let future = unsafe { boltffi_class_test_fixture_async_get_name(handle) };
         extern "C" fn noop(_: u64, _: RustFuturePoll) {}
@@ -1001,9 +1013,8 @@ mod fixture_wire_encoded_async {
         let handle = boltffi_class_test_fixture_new_default();
         let name = "async_name";
 
-        let future = unsafe {
-            boltffi_class_test_fixture_async_set_name(handle, name.as_ptr(), name.len())
-        };
+        let future =
+            unsafe { boltffi_class_test_fixture_async_set_name(handle, name.as_ptr(), name.len()) };
         extern "C" fn noop(_: u64, _: RustFuturePoll) {}
         unsafe { rustfuture::rust_future_poll::<()>(future, noop, 0) };
         let _: Option<()> = unsafe { rustfuture::rust_future_complete(future) };
@@ -1058,7 +1069,8 @@ mod fixture_wire_encoded_async {
         extern "C" fn noop(_: u64, _: RustFuturePoll) {}
         unsafe { rustfuture::rust_future_poll::<Result<i32, String>>(future, noop, 0) };
 
-        let result: Option<Result<i32, String>> = unsafe { rustfuture::rust_future_complete(future) };
+        let result: Option<Result<i32, String>> =
+            unsafe { rustfuture::rust_future_complete(future) };
         assert_eq!(result, Some(Ok(77)));
 
         boltffi_class_test_fixture_async_try_get_free(future);
@@ -1073,7 +1085,8 @@ mod fixture_wire_encoded_async {
         extern "C" fn noop(_: u64, _: RustFuturePoll) {}
         unsafe { rustfuture::rust_future_poll::<Result<i32, String>>(future, noop, 0) };
 
-        let result: Option<Result<i32, String>> = unsafe { rustfuture::rust_future_complete(future) };
+        let result: Option<Result<i32, String>> =
+            unsafe { rustfuture::rust_future_complete(future) };
         assert!(matches!(result, Some(Err(_))));
 
         boltffi_class_test_fixture_async_try_get_free(future);

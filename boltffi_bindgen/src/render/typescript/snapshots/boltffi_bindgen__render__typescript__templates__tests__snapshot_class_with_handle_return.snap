@@ -6,7 +6,7 @@ const _FactoryFinalizer: FinalizationRegistry<number> | null =
   typeof FinalizationRegistry === "undefined"
     ? null
     : new FinalizationRegistry<number>((handle) => {
-        (_module.exports.boltffi_factory_free as Function)(handle);
+        (_exports.boltffi_factory_free as Function)(handle);
       });
 
 export class Factory {
@@ -36,7 +36,7 @@ export class Factory {
     }
     this._disposed = true;
     _FactoryFinalizer?.unregister(this);
-    (_module.exports.boltffi_factory_free as Function)(this._handle);
+    (_exports.boltffi_factory_free as Function)(this._handle);
     this._handle = 0;
   }
 
@@ -48,7 +48,7 @@ export class Factory {
 
   createChild(): Child {
     this._assertNotDisposed();
-    const result = (_module.exports.boltffi_factory_create_child as Function)(this._handle);
+    const result = (_exports.boltffi_factory_create_child as Function)(this._handle);
     return Child._fromHandle(result);
   }
 }

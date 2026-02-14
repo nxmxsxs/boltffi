@@ -6,7 +6,7 @@ const _RendererFinalizer: FinalizationRegistry<number> | null =
   typeof FinalizationRegistry === "undefined"
     ? null
     : new FinalizationRegistry<number>((handle) => {
-        (_module.exports.boltffi_renderer_free as Function)(handle);
+        (_exports.boltffi_renderer_free as Function)(handle);
       });
 
 export class Renderer {
@@ -36,7 +36,7 @@ export class Renderer {
     }
     this._disposed = true;
     _RendererFinalizer?.unregister(this);
-    (_module.exports.boltffi_renderer_free as Function)(this._handle);
+    (_exports.boltffi_renderer_free as Function)(this._handle);
     this._handle = 0;
   }
 
@@ -51,7 +51,7 @@ export class Renderer {
     const point_writer = _module.allocWriter(PointCodec.size(point));
   PointCodec.encode(point_writer, point);
     try {
-      (_module.exports.boltffi_renderer_draw as Function)(this._handle, point_writer.ptr, point_writer.len);
+      (_exports.boltffi_renderer_draw as Function)(this._handle, point_writer.ptr, point_writer.len);
     } finally {
       _module.freeWriter(point_writer);
     }

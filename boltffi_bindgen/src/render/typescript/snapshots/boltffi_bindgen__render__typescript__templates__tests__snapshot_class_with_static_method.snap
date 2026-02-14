@@ -6,7 +6,7 @@ const _MathUtilsFinalizer: FinalizationRegistry<number> | null =
   typeof FinalizationRegistry === "undefined"
     ? null
     : new FinalizationRegistry<number>((handle) => {
-        (_module.exports.boltffi_math_utils_free as Function)(handle);
+        (_exports.boltffi_math_utils_free as Function)(handle);
       });
 
 export class MathUtils {
@@ -36,7 +36,7 @@ export class MathUtils {
     }
     this._disposed = true;
     _MathUtilsFinalizer?.unregister(this);
-    (_module.exports.boltffi_math_utils_free as Function)(this._handle);
+    (_exports.boltffi_math_utils_free as Function)(this._handle);
     this._handle = 0;
   }
 
@@ -47,6 +47,6 @@ export class MathUtils {
   }
 
   static add(a: number, b: number): number {
-    return (_module.exports.boltffi_math_utils_add as Function)(a, b);
+    return (_exports.boltffi_math_utils_add as Function)(a, b);
   }
 }

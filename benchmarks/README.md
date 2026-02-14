@@ -1,6 +1,10 @@
-# BoltFFI vs UniFFI Benchmarks
+# BoltFFI Benchmarks
 
-Performance comparison between BoltFFI and UniFFI. Both libraries wrap the exact same Rust code with identical public APIs, so the only variable is FFI overhead.
+Performance comparison across platforms:
+- **Swift/Kotlin**: BoltFFI vs UniFFI
+- **WASM**: BoltFFI vs wasm-bindgen
+
+All libraries wrap the exact same Rust code with identical public APIs, so the only variable is FFI overhead.
 
 ## Why This Matters
 
@@ -151,6 +155,12 @@ just bench-build-android
 # Then open android-app/ in Android Studio
 ```
 
+### WASM (Node.js)
+
+```bash
+just bench-wasm
+```
+
 ## Results
 
 These are actual results from running `just bench-swift` on Apple M3 chip:
@@ -172,6 +182,24 @@ These are actual results from running `just bench-swift` on Apple M3 chip:
 | process_locations_1k | 542 ns | 43,125 ns | 80x |
 | callback_100 | 14,834 ns | 203,791 ns | 13.7x |
 | callback_1k | 142,959 ns | 1,970,291 ns | 13.8x |
+
+### WASM (Node.js)
+
+Results from `just bench-wasm` on Apple M3:
+
+| Benchmark | BoltFFI | wasm-bindgen | Speedup |
+|-----------|--------:|-------------:|--------:|
+| noop | 2 ns | 2 ns | 1x |
+| echo_i32 | 4 ns | 4 ns | 1x |
+| add | 4 ns | 5 ns | 1x |
+| echo_string_200 | 490 ns | 754 ns | 2x |
+| echo_string_1k | 787 ns | 2,884 ns | 4x |
+| generate_locations_100 | 2,236 ns | 40,833 ns | 18x |
+| generate_locations_1k | 24,387 ns | 15,422,638 ns | 632x |
+| generate_i32_vec_1k | 4,956 ns | 715 ns | -7x |
+| generate_bytes_64k | 36,639 ns | 4,009 ns | -9x |
+| counter_increment_1k | 2,668 ns | 3,138 ns | 1x |
+| accumulator_1k | 15,527 ns | 14,137 ns | 1x |
 
 ## Prerequisites
 

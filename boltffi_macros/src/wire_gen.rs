@@ -215,6 +215,8 @@ fn generate_wire_encode_impl(
     if is_blittable {
         return quote! {
             impl #impl_generics ::boltffi::__private::wire::WireEncode for #struct_name #ty_generics #where_clause {
+                const IS_BLITTABLE: bool = true;
+
                 fn encode_to(&self, buf: &mut [u8]) -> usize {
                     let size = ::core::mem::size_of::<Self>();
                     let src = self as *const Self as *const u8;

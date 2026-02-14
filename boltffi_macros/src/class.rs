@@ -169,6 +169,95 @@ fn convert_to_wire_encoded(kind: ReturnKind) -> ReturnKind {
     }
 }
 
+fn build_instance_encoded_return_exports(
+    export_name: &syn::Ident,
+    type_name: &syn::Ident,
+    ffi_params: &[proc_macro2::TokenStream],
+    encode_body: proc_macro2::TokenStream,
+) -> proc_macro2::TokenStream {
+    match ffi_params.is_empty() {
+        true => quote! {
+            #[cfg(target_arch = "wasm32")]
+            #[unsafe(no_mangle)]
+            pub unsafe extern "C" fn #export_name(
+                handle: *mut #type_name
+            ) -> u64 {
+                let __boltffi_buf: ::boltffi::__private::FfiBuf<u8> = { #encode_body };
+                __boltffi_buf.into_packed()
+            }
+
+            #[cfg(not(target_arch = "wasm32"))]
+            #[unsafe(no_mangle)]
+            pub unsafe extern "C" fn #export_name(
+                handle: *mut #type_name
+            ) -> ::boltffi::__private::FfiBuf<u8> {
+                #encode_body
+            }
+        },
+        false => quote! {
+            #[cfg(target_arch = "wasm32")]
+            #[unsafe(no_mangle)]
+            pub unsafe extern "C" fn #export_name(
+                handle: *mut #type_name,
+                #(#ffi_params),*
+            ) -> u64 {
+                let __boltffi_buf: ::boltffi::__private::FfiBuf<u8> = { #encode_body };
+                __boltffi_buf.into_packed()
+            }
+
+            #[cfg(not(target_arch = "wasm32"))]
+            #[unsafe(no_mangle)]
+            pub unsafe extern "C" fn #export_name(
+                handle: *mut #type_name,
+                #(#ffi_params),*
+            ) -> ::boltffi::__private::FfiBuf<u8> {
+                #encode_body
+            }
+        },
+    }
+}
+
+fn build_static_encoded_return_exports(
+    export_name: &syn::Ident,
+    ffi_params: &[proc_macro2::TokenStream],
+    encode_body: proc_macro2::TokenStream,
+) -> proc_macro2::TokenStream {
+    match ffi_params.is_empty() {
+        true => quote! {
+            #[cfg(target_arch = "wasm32")]
+            #[unsafe(no_mangle)]
+            pub extern "C" fn #export_name() -> u64 {
+                let __boltffi_buf: ::boltffi::__private::FfiBuf<u8> = { #encode_body };
+                __boltffi_buf.into_packed()
+            }
+
+            #[cfg(not(target_arch = "wasm32"))]
+            #[unsafe(no_mangle)]
+            pub extern "C" fn #export_name() -> ::boltffi::__private::FfiBuf<u8> {
+                #encode_body
+            }
+        },
+        false => quote! {
+            #[cfg(target_arch = "wasm32")]
+            #[unsafe(no_mangle)]
+            pub unsafe extern "C" fn #export_name(
+                #(#ffi_params),*
+            ) -> u64 {
+                let __boltffi_buf: ::boltffi::__private::FfiBuf<u8> = { #encode_body };
+                __boltffi_buf.into_packed()
+            }
+
+            #[cfg(not(target_arch = "wasm32"))]
+            #[unsafe(no_mangle)]
+            pub unsafe extern "C" fn #export_name(
+                #(#ffi_params),*
+            ) -> ::boltffi::__private::FfiBuf<u8> {
+                #encode_body
+            }
+        },
+    }
+}
+
 fn is_factory_constructor(method: &syn::ImplItemFn, type_name: &syn::Ident) -> bool {
     let has_self = method
         .sig
@@ -351,11 +440,12 @@ fn generate_method_export(
 
     let call_expr = quote! { (*handle).#method_name(#(#call_args),*) };
 
-    let return_kind = classify_return(&method.sig.output);
-    let return_kind = if should_wire_encode(&return_kind) {
-        convert_to_wire_encoded(return_kind)
+    let raw_return_kind = classify_return(&method.sig.output);
+
+    let return_kind = if should_wire_encode(&raw_return_kind) {
+        convert_to_wire_encoded(raw_return_kind)
     } else {
-        return_kind
+        raw_return_kind
     };
 
     let (body, return_type, is_wire_encoded) = match return_kind {
@@ -419,56 +509,15 @@ fn generate_method_export(
     };
 
     if is_wire_encoded {
-        if ffi_params.is_empty() {
-            Some(quote! {
-                #[cfg(target_arch = "wasm32")]
-                #[unsafe(no_mangle)]
-                pub unsafe extern "C" fn #export_name(
-                    out: *mut ::boltffi::__private::FfiBuf<u8>,
-                    handle: *mut #type_name
-                ) {
-                    if out.is_null() {
-                        return;
-                    }
-                    let __boltffi_encoded: ::boltffi::__private::FfiBuf<u8> = { #body };
-                    out.write(__boltffi_encoded);
-                }
+        return Some(build_instance_encoded_return_exports(
+            &export_name,
+            type_name,
+            &ffi_params,
+            body,
+        ));
+    }
 
-                #[cfg(not(target_arch = "wasm32"))]
-                #[unsafe(no_mangle)]
-                pub unsafe extern "C" fn #export_name(
-                    handle: *mut #type_name
-                ) #return_type {
-                    #body
-                }
-            })
-        } else {
-            Some(quote! {
-                #[cfg(target_arch = "wasm32")]
-                #[unsafe(no_mangle)]
-                pub unsafe extern "C" fn #export_name(
-                    out: *mut ::boltffi::__private::FfiBuf<u8>,
-                    handle: *mut #type_name,
-                    #(#ffi_params),*
-                ) {
-                    if out.is_null() {
-                        return;
-                    }
-                    let __boltffi_encoded: ::boltffi::__private::FfiBuf<u8> = { #body };
-                    out.write(__boltffi_encoded);
-                }
-
-                #[cfg(not(target_arch = "wasm32"))]
-                #[unsafe(no_mangle)]
-                pub unsafe extern "C" fn #export_name(
-                    handle: *mut #type_name,
-                    #(#ffi_params),*
-                ) #return_type {
-                    #body
-                }
-            })
-        }
-    } else if ffi_params.is_empty() {
+    if ffi_params.is_empty() {
         Some(quote! {
             #[unsafe(no_mangle)]
             pub unsafe extern "C" fn #export_name(
@@ -513,11 +562,12 @@ fn generate_static_method_export(
     let has_conversions = !conversions.is_empty();
     let call_expr = quote! { #type_name::#method_name(#(#call_args),*) };
 
-    let return_kind = classify_return(&method.sig.output);
-    let return_kind = if should_wire_encode(&return_kind) {
-        convert_to_wire_encoded(return_kind)
+    let raw_return_kind = classify_return(&method.sig.output);
+
+    let return_kind = if should_wire_encode(&raw_return_kind) {
+        convert_to_wire_encoded(raw_return_kind)
     } else {
-        return_kind
+        raw_return_kind
     };
 
     let (body, return_type, is_wire_encoded) = match return_kind {
@@ -587,49 +637,14 @@ fn generate_static_method_export(
     };
 
     if is_wire_encoded {
-        if ffi_params.is_empty() {
-            Some(quote! {
-                #[cfg(target_arch = "wasm32")]
-                #[unsafe(no_mangle)]
-                pub unsafe extern "C" fn #export_name(
-                    out: *mut ::boltffi::__private::FfiBuf<u8>
-                ) {
-                    if out.is_null() {
-                        return;
-                    }
-                    let __boltffi_encoded: ::boltffi::__private::FfiBuf<u8> = { #body };
-                    out.write(__boltffi_encoded);
-                }
+        return Some(build_static_encoded_return_exports(
+            &export_name,
+            &ffi_params,
+            body,
+        ));
+    }
 
-                #[cfg(not(target_arch = "wasm32"))]
-                #[unsafe(no_mangle)]
-                pub unsafe extern "C" fn #export_name() #return_type {
-                    #body
-                }
-            })
-        } else {
-            Some(quote! {
-                #[cfg(target_arch = "wasm32")]
-                #[unsafe(no_mangle)]
-                pub unsafe extern "C" fn #export_name(
-                    out: *mut ::boltffi::__private::FfiBuf<u8>,
-                    #(#ffi_params),*
-                ) {
-                    if out.is_null() {
-                        return;
-                    }
-                    let __boltffi_encoded: ::boltffi::__private::FfiBuf<u8> = { #body };
-                    out.write(__boltffi_encoded);
-                }
-
-                #[cfg(not(target_arch = "wasm32"))]
-                #[unsafe(no_mangle)]
-                pub unsafe extern "C" fn #export_name(#(#ffi_params),*) #return_type {
-                    #body
-                }
-            })
-        }
-    } else if ffi_params.is_empty() {
+    if ffi_params.is_empty() {
         Some(quote! {
             #[unsafe(no_mangle)]
             pub unsafe extern "C" fn #export_name() #return_type {

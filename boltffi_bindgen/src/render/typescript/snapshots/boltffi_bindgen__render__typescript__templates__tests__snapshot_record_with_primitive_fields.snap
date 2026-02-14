@@ -13,8 +13,10 @@ const PointCodec: WireCodec<Point> = {
     writer.writeF64(v.x);
     writer.writeF64(v.y);
   },
-  decode: (reader) => ({
-    x: reader.readF64(),
-    y: reader.readF64(),
-  }),
+  decode: (reader) => {
+    return {
+      x: reader.readF64(),
+      y: reader.readF64(),
+    };
+  },
 };

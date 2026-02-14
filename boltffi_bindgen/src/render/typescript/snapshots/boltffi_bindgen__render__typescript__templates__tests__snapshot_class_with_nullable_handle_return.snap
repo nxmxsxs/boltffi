@@ -6,7 +6,7 @@ const _CacheFinalizer: FinalizationRegistry<number> | null =
   typeof FinalizationRegistry === "undefined"
     ? null
     : new FinalizationRegistry<number>((handle) => {
-        (_module.exports.boltffi_cache_free as Function)(handle);
+        (_exports.boltffi_cache_free as Function)(handle);
       });
 
 export class Cache {
@@ -36,7 +36,7 @@ export class Cache {
     }
     this._disposed = true;
     _CacheFinalizer?.unregister(this);
-    (_module.exports.boltffi_cache_free as Function)(this._handle);
+    (_exports.boltffi_cache_free as Function)(this._handle);
     this._handle = 0;
   }
 
@@ -50,7 +50,7 @@ export class Cache {
     this._assertNotDisposed();
     const key_alloc = _module.allocString(key);
     try {
-      const result = (_module.exports.boltffi_cache_get as Function)(this._handle, key_alloc.ptr, key_alloc.len);
+      const result = (_exports.boltffi_cache_get as Function)(this._handle, key_alloc.ptr, key_alloc.len);
       if (result === 0) {
         return null;
       }

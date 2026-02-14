@@ -3,51 +3,33 @@
   {{ wrapper_code }}
 {%- endif %}
 {%- if cleanup_code.is_empty() %}
-{%- match return_abi %}
-{%- when TsReturnAbi::Void %}
-  (_module.exports.{{ ffi_name }} as Function)({{ call_args }});
-{%- when TsReturnAbi::Direct with { ts_cast } %}
-  return (_module.exports.{{ ffi_name }} as Function)({{ call_args }}){{ ts_cast }};
-{%- when TsReturnAbi::WireEncoded %}
-  const outPtr = _module.allocBufDescriptor();
-  let callCompleted = false;
-  try {
-    (_module.exports.{{ ffi_name }} as Function)({{ call_args_with_out }});
-    callCompleted = true;
-    const reader = _module.readerFromBuf(outPtr);
-    const result = {{ decode_expr }};
-    return result;
-  } finally {
-    if (callCompleted) {
-      _module.freeBuf(outPtr);
-    } else {
-      _module.freeBufDescriptor(outPtr);
-    }
-  }
+{%- match return_route %}
+{%- when TsSyncTransportRoute::Void %}
+  (_exports.{{ ffi_name }} as Function)({{ call_args }});
+{%- when TsSyncTransportRoute::Direct with { ts_cast } %}
+  return (_exports.{{ ffi_name }} as Function)({{ call_args }}){{ ts_cast }};
+{%- when TsSyncTransportRoute::Packed with { decode_expr } %}
+  const packed = (_exports.{{ ffi_name }} as Function)({{ call_args }}) as bigint;
+  const reader = _module.takePackedBuffer(packed);
+  return {{ decode_expr }};
+{%- when TsSyncTransportRoute::RawPacked with { decode_expr } %}
+  const packed = (_exports.{{ ffi_name }} as Function)({{ call_args }}) as bigint;
+  return {{ decode_expr }};
 {%- endmatch %}
 {%- else %}
   try {
-{%- match return_abi %}
-{%- when TsReturnAbi::Void %}
-    (_module.exports.{{ ffi_name }} as Function)({{ call_args }});
-{%- when TsReturnAbi::Direct with { ts_cast } %}
-    return (_module.exports.{{ ffi_name }} as Function)({{ call_args }}){{ ts_cast }};
-{%- when TsReturnAbi::WireEncoded %}
-    const outPtr = _module.allocBufDescriptor();
-    let callCompleted = false;
-    try {
-      (_module.exports.{{ ffi_name }} as Function)({{ call_args_with_out }});
-      callCompleted = true;
-      const reader = _module.readerFromBuf(outPtr);
-      const result = {{ decode_expr }};
-      return result;
-    } finally {
-      if (callCompleted) {
-        _module.freeBuf(outPtr);
-      } else {
-        _module.freeBufDescriptor(outPtr);
-      }
-    }
+{%- match return_route %}
+{%- when TsSyncTransportRoute::Void %}
+    (_exports.{{ ffi_name }} as Function)({{ call_args }});
+{%- when TsSyncTransportRoute::Direct with { ts_cast } %}
+    return (_exports.{{ ffi_name }} as Function)({{ call_args }}){{ ts_cast }};
+{%- when TsSyncTransportRoute::Packed with { decode_expr } %}
+    const packed = (_exports.{{ ffi_name }} as Function)({{ call_args }}) as bigint;
+    const reader = _module.takePackedBuffer(packed);
+    return {{ decode_expr }};
+{%- when TsSyncTransportRoute::RawPacked with { decode_expr } %}
+    const packed = (_exports.{{ ffi_name }} as Function)({{ call_args }}) as bigint;
+    return {{ decode_expr }};
 {%- endmatch %}
   } finally {
     {{ cleanup_code }}

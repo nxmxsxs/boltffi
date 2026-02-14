@@ -27,12 +27,24 @@ pub struct PreambleTemplate {
 }
 
 #[derive(Template)]
+#[template(path = "render_typescript/preamble_node.txt", escape = "none")]
+pub struct NodePreambleTemplate {
+    pub abi_version: u32,
+    pub module_name: String,
+}
+
+#[derive(Template)]
+#[template(path = "render_typescript/footer_node.txt", escape = "none")]
+pub struct NodeFooterTemplate;
+
+#[derive(Template)]
 #[template(path = "render_typescript/record.txt", escape = "none")]
 pub struct RecordTemplate<'a> {
     pub name: &'a str,
     pub fields: &'a [TsField],
     pub is_blittable: bool,
     pub wire_size: Option<usize>,
+    pub tail_padding: usize,
     pub size_expr: String,
     pub doc: &'a Option<String>,
 }
@@ -54,6 +66,7 @@ impl<'a> RecordTemplate<'a> {
             fields: &record.fields,
             is_blittable: record.is_blittable,
             wire_size: record.wire_size,
+            tail_padding: record.tail_padding,
             size_expr,
             doc: &record.doc,
         }
@@ -90,13 +103,12 @@ pub struct FunctionTemplate<'a> {
     pub name: &'a str,
     pub params: &'a [TsParam],
     pub return_type_str: &'a str,
-    pub return_abi: &'a TsReturnAbi,
+    pub return_route: &'a TsSyncTransportRoute,
     pub ffi_name: &'a str,
     pub call_args: &'a str,
     pub call_args_with_out: &'a str,
     pub wrapper_code: &'a str,
     pub cleanup_code: &'a str,
-    pub decode_expr: &'a str,
     pub doc: &'a Option<String>,
 }
 
@@ -126,8 +138,7 @@ pub struct AsyncFunctionTemplate<'a> {
     pub call_args: &'a str,
     pub wrapper_code: &'a str,
     pub cleanup_code: &'a str,
-    pub decode_expr: &'a str,
-    pub has_return: bool,
+    pub return_route: &'a TsAsyncTransportRoute,
     pub doc: &'a Option<String>,
 }
 
@@ -235,13 +246,12 @@ impl TypeScriptEmitter {
                     name: &function.name,
                     params: &function.params,
                     return_type_str,
-                    return_abi: &function.return_abi,
+                    return_route: &function.return_route,
                     ffi_name: &function.ffi_name,
                     call_args: &call_args,
                     call_args_with_out: &call_args_with_out,
                     wrapper_code: &wrapper_code,
                     cleanup_code: &cleanup_code,
-                    decode_expr: &function.decode_expr,
                     doc: &function.doc,
                 }
                 .render()
@@ -273,7 +283,6 @@ impl TypeScriptEmitter {
                 .join("\n    ");
 
             let return_type_str = async_function.return_type.as_deref().unwrap_or("void");
-            let has_return = async_function.return_type.is_some();
 
             output.push_str(
                 &AsyncFunctionTemplate {
@@ -288,8 +297,7 @@ impl TypeScriptEmitter {
                     call_args: &call_args,
                     wrapper_code: &wrapper_code,
                     cleanup_code: &cleanup_code,
-                    decode_expr: &async_function.decode_expr,
-                    has_return,
+                    return_route: &async_function.return_route,
                     doc: &async_function.doc,
                 }
                 .render()
@@ -326,6 +334,191 @@ impl TypeScriptEmitter {
             .unwrap(),
         );
         output.push('\n');
+
+        output
+    }
+
+    pub fn emit_node(module: &TsModule, module_name: &str) -> String {
+        let mut output = String::new();
+
+        output.push_str(
+            &NodePreambleTemplate {
+                abi_version: module.abi_version,
+                module_name: module_name.to_string(),
+            }
+            .render()
+            .unwrap(),
+        );
+        output.push('\n');
+
+        for record in &module.records {
+            output.push_str(&RecordTemplate::from_record(record).render().unwrap());
+            output.push_str("\n\n");
+        }
+
+        for enumeration in &module.enums {
+            if enumeration.is_c_style() {
+                output.push_str(
+                    &EnumCStyleTemplate {
+                        name: &enumeration.name,
+                        variants: &enumeration.variants,
+                        doc: &enumeration.doc,
+                    }
+                    .render()
+                    .unwrap(),
+                );
+            } else {
+                output.push_str(
+                    &EnumDataTemplate {
+                        name: &enumeration.name,
+                        variants: &enumeration.variants,
+                        doc: &enumeration.doc,
+                    }
+                    .render()
+                    .unwrap(),
+                );
+            }
+            output.push_str("\n\n");
+        }
+
+        for error_exception in &module.error_exceptions {
+            output.push_str(
+                &ErrorExceptionTemplate {
+                    type_name: &error_exception.type_name,
+                    class_name: &error_exception.class_name,
+                    is_c_style_enum: error_exception.is_c_style_enum,
+                }
+                .render()
+                .unwrap(),
+            );
+            output.push_str("\n\n");
+        }
+
+        for callback in &module.callbacks {
+            output.push_str(&CallbackTemplate { callback }.render().unwrap());
+            output.push_str("\n\n");
+        }
+
+        let wasm_import_views: Vec<TsWasmImportView> = module
+            .wasm_imports
+            .iter()
+            .map(|import| TsWasmImportView {
+                ffi_name: &import.ffi_name,
+                params: &import.params,
+                return_wasm_type_str: import.return_wasm_type.as_deref().unwrap_or("void"),
+            })
+            .collect();
+
+        output.push_str(
+            &WasmExportsTemplate {
+                wasm_imports: &wasm_import_views,
+            }
+            .render()
+            .unwrap(),
+        );
+        output.push('\n');
+
+        output.push_str(&NodeFooterTemplate.render().unwrap());
+        output.push_str("\n\n");
+
+        for function in &module.functions {
+            let call_args = function
+                .params
+                .iter()
+                .flat_map(|p| p.ffi_args())
+                .collect::<Vec<_>>()
+                .join(", ");
+            let call_args_with_out = if call_args.is_empty() {
+                "outPtr".to_string()
+            } else {
+                format!("outPtr, {call_args}")
+            };
+
+            let wrapper_code = function
+                .params
+                .iter()
+                .filter_map(|p| p.wrapper_code())
+                .collect::<Vec<_>>()
+                .join("\n  ");
+
+            let cleanup_code = function
+                .params
+                .iter()
+                .filter_map(|p| p.cleanup_code())
+                .collect::<Vec<_>>()
+                .join("\n  ");
+
+            let return_type_str = function.return_type.as_deref().unwrap_or("void");
+
+            output.push_str(
+                &FunctionTemplate {
+                    name: &function.name,
+                    params: &function.params,
+                    return_type_str,
+                    return_route: &function.return_route,
+                    ffi_name: &function.ffi_name,
+                    call_args: &call_args,
+                    call_args_with_out: &call_args_with_out,
+                    wrapper_code: &wrapper_code,
+                    cleanup_code: &cleanup_code,
+                    doc: &function.doc,
+                }
+                .render()
+                .unwrap(),
+            );
+            output.push_str("\n\n");
+        }
+
+        for async_function in &module.async_functions {
+            let call_args = async_function
+                .params
+                .iter()
+                .flat_map(|p| p.ffi_args())
+                .collect::<Vec<_>>()
+                .join(", ");
+
+            let wrapper_code = async_function
+                .params
+                .iter()
+                .filter_map(|p| p.wrapper_code())
+                .collect::<Vec<_>>()
+                .join("\n  ");
+
+            let cleanup_code = async_function
+                .params
+                .iter()
+                .filter_map(|p| p.cleanup_code())
+                .collect::<Vec<_>>()
+                .join("\n  ");
+
+            let return_type_str = async_function.return_type.as_deref().unwrap_or("void");
+
+            output.push_str(
+                &AsyncFunctionTemplate {
+                    name: &async_function.name,
+                    params: &async_function.params,
+                    return_type_str,
+                    entry_ffi_name: &async_function.entry_ffi_name,
+                    poll_sync_ffi_name: &async_function.poll_sync_ffi_name,
+                    complete_ffi_name: &async_function.complete_ffi_name,
+                    panic_message_ffi_name: &async_function.panic_message_ffi_name,
+                    free_ffi_name: &async_function.free_ffi_name,
+                    call_args: &call_args,
+                    wrapper_code: &wrapper_code,
+                    cleanup_code: &cleanup_code,
+                    return_route: &async_function.return_route,
+                    doc: &async_function.doc,
+                }
+                .render()
+                .unwrap(),
+            );
+            output.push_str("\n\n");
+        }
+
+        for class in &module.classes {
+            output.push_str(&ClassTemplate { cls: class }.render().unwrap());
+            output.push_str("\n\n");
+        }
 
         output
     }
@@ -432,6 +625,7 @@ mod tests {
             ],
             is_blittable: true,
             wire_size: Some(16),
+            tail_padding: 0,
             doc: None,
         };
 
@@ -461,6 +655,7 @@ mod tests {
             ],
             is_blittable: false,
             wire_size: None,
+            tail_padding: 0,
             doc: Some("A user record".to_string()),
         };
 
@@ -555,13 +750,12 @@ mod tests {
             name: "reset",
             params: &[],
             return_type_str: "void",
-            return_abi: &TsReturnAbi::Void,
+            return_route: &TsSyncTransportRoute::Void,
             ffi_name: "boltffi_reset",
             call_args: "",
             call_args_with_out: "outPtr",
             wrapper_code: "",
             cleanup_code: "",
-            decode_expr: "",
             doc: &doc,
         };
         insta::assert_snapshot!(template.render().unwrap());
@@ -574,19 +768,19 @@ mod tests {
             TsParam {
                 name: "a".to_string(),
                 ts_type: "number".to_string(),
-                conversion: TsParamConversion::Direct,
+                input_route: TsInputRoute::Direct,
             },
             TsParam {
                 name: "b".to_string(),
                 ts_type: "number".to_string(),
-                conversion: TsParamConversion::Direct,
+                input_route: TsInputRoute::Direct,
             },
         ];
         let template = FunctionTemplate {
             name: "add",
             params: &params,
             return_type_str: "number",
-            return_abi: &TsReturnAbi::Direct {
+            return_route: &TsSyncTransportRoute::Direct {
                 ts_cast: String::new(),
             },
             ffi_name: "boltffi_add",
@@ -594,7 +788,6 @@ mod tests {
             call_args_with_out: "outPtr, a, b",
             wrapper_code: "",
             cleanup_code: "",
-            decode_expr: "",
             doc: &doc,
         };
         insta::assert_snapshot!(template.render().unwrap());
@@ -607,13 +800,14 @@ mod tests {
             name: "getUsers",
             params: &[],
             return_type_str: "User[]",
-            return_abi: &TsReturnAbi::WireEncoded,
+            return_route: &TsSyncTransportRoute::Packed {
+                decode_expr: "reader.readArray(() => decodeUser(reader))".to_string(),
+            },
             ffi_name: "boltffi_get_users",
             call_args: "",
-            call_args_with_out: "outPtr",
+            call_args_with_out: "",
             wrapper_code: "",
             cleanup_code: "",
-            decode_expr: "reader.readArray(() => decodeUser(reader))",
             doc: &doc,
         };
         insta::assert_snapshot!(template.render().unwrap());
@@ -686,9 +880,7 @@ mod tests {
         .render()
         .unwrap();
 
-        assert!(rendered.contains(
-            "const _value_handler_ref_counts = new Map<number, number>();"
-        ));
+        assert!(rendered.contains("const _value_handler_ref_counts = new Map<number, number>();"));
         assert!(rendered.contains("_value_handler_ref_counts.set(id, 1);"));
         assert!(rendered.contains("return _value_handler_retain(handle);"));
         assert!(rendered.contains("_value_handler_release(handle);"));
@@ -704,15 +896,11 @@ mod tests {
         .render()
         .unwrap();
 
-        assert!(rendered.contains(
-            "Cannot clone unknown callback handle ${handle} in ValueHandler registry"
-        ));
-        assert!(rendered.contains(
-            "Cannot free unknown callback handle ${handle} in ValueHandler registry"
-        ));
-        assert!(rendered.contains(
-            "Callback handle ${handle} not found in ValueHandler registry"
-        ));
+        assert!(rendered
+            .contains("Cannot clone unknown callback handle ${handle} in ValueHandler registry"));
+        assert!(rendered
+            .contains("Cannot free unknown callback handle ${handle} in ValueHandler registry"));
+        assert!(rendered.contains("Callback handle ${handle} not found in ValueHandler registry"));
         assert!(rendered.contains("if (currentCount === 1) {"));
         assert!(rendered.contains("_value_handler_ref_counts.delete(handle);"));
         assert!(rendered.contains("_value_handler_registry.delete(handle);"));
@@ -755,15 +943,14 @@ mod tests {
                     params: vec![TsParam {
                         name: "delta".to_string(),
                         ts_type: "number".to_string(),
-                        conversion: TsParamConversion::Direct,
+                        input_route: TsInputRoute::Direct,
                     }],
                     return_type: Some("number".to_string()),
                     return_handle: None,
                     mode: TsClassMethodMode::Sync(TsClassSyncMethod {
-                        return_abi: TsReturnAbi::Direct {
+                        return_route: TsSyncTransportRoute::Direct {
                             ts_cast: String::new(),
                         },
-                        decode_expr: String::new(),
                     }),
                     doc: None,
                 },
@@ -781,7 +968,9 @@ mod tests {
                             .to_string(),
                         cancel_ffi_name: "boltffi_counter_next_value_cancel".to_string(),
                         free_ffi_name: "boltffi_counter_next_value_free".to_string(),
-                        decode_expr: "reader.readI32()".to_string(),
+                        return_route: TsAsyncTransportRoute::Packed {
+                            decode_expr: "reader.readI32()".to_string(),
+                        },
                     }),
                     doc: None,
                 },
@@ -804,7 +993,7 @@ mod tests {
                 params: vec![TsParam {
                     name: "path".to_string(),
                     ts_type: "string".to_string(),
-                    conversion: TsParamConversion::String,
+                    input_route: TsInputRoute::String,
                 }],
                 returns_nullable_handle: true,
                 doc: None,
@@ -834,11 +1023,12 @@ mod tests {
                 mode: TsClassMethodMode::Async(TsClassAsyncMethod {
                     poll_sync_ffi_name: "boltffi_counter_next_value_poll_sync".to_string(),
                     complete_ffi_name: "boltffi_counter_next_value_complete".to_string(),
-                    panic_message_ffi_name: "boltffi_counter_next_value_panic_message"
-                        .to_string(),
+                    panic_message_ffi_name: "boltffi_counter_next_value_panic_message".to_string(),
                     cancel_ffi_name: "boltffi_counter_next_value_cancel".to_string(),
                     free_ffi_name: "boltffi_counter_next_value_free".to_string(),
-                    decode_expr: "reader.readI32()".to_string(),
+                    return_route: TsAsyncTransportRoute::Packed {
+                        decode_expr: "reader.readI32()".to_string(),
+                    },
                 }),
                 doc: None,
             }],
@@ -849,9 +1039,8 @@ mod tests {
         assert!(rendered.contains("let completeCompleted = false;"));
         assert!(rendered.contains("_module.freeBuf(outPtr);"));
         assert!(rendered.contains("_module.freeBufDescriptor(outPtr);"));
-        assert!(rendered.contains(
-            "(_module.exports.boltffi_counter_next_value_free as Function)(awaitedHandle);"
-        ));
+        assert!(rendered
+            .contains("(_exports.boltffi_counter_next_value_free as Function)(awaitedHandle);"));
     }
 
     #[test]
@@ -867,7 +1056,7 @@ mod tests {
                 params: vec![TsParam {
                     name: "sql".to_string(),
                     ts_type: "string".to_string(),
-                    conversion: TsParamConversion::String,
+                    input_route: TsInputRoute::String,
                 }],
                 return_type: Some("QueryResult".to_string()),
                 return_handle: None,
@@ -877,7 +1066,9 @@ mod tests {
                     panic_message_ffi_name: "boltffi_database_query_panic_message".to_string(),
                     cancel_ffi_name: "boltffi_database_query_cancel".to_string(),
                     free_ffi_name: "boltffi_database_query_free".to_string(),
-                    decode_expr: "QueryResultCodec.decode(reader)".to_string(),
+                    return_route: TsAsyncTransportRoute::Packed {
+                        decode_expr: "QueryResultCodec.decode(reader)".to_string(),
+                    },
                 }),
                 doc: None,
             }],
@@ -953,21 +1144,20 @@ mod tests {
                     TsParam {
                         name: "a".to_string(),
                         ts_type: "number".to_string(),
-                        conversion: TsParamConversion::Direct,
+                        input_route: TsInputRoute::Direct,
                     },
                     TsParam {
                         name: "b".to_string(),
                         ts_type: "number".to_string(),
-                        conversion: TsParamConversion::Direct,
+                        input_route: TsInputRoute::Direct,
                     },
                 ],
                 return_type: Some("number".to_string()),
                 return_handle: None,
                 mode: TsClassMethodMode::Sync(TsClassSyncMethod {
-                    return_abi: TsReturnAbi::Direct {
+                    return_route: TsSyncTransportRoute::Direct {
                         ts_cast: String::new(),
                     },
-                    decode_expr: String::new(),
                 }),
                 doc: None,
             }],
@@ -997,13 +1187,12 @@ mod tests {
                 params: vec![TsParam {
                     name: "message".to_string(),
                     ts_type: "string".to_string(),
-                    conversion: TsParamConversion::String,
+                    input_route: TsInputRoute::String,
                 }],
                 return_type: None,
                 return_handle: None,
                 mode: TsClassMethodMode::Sync(TsClassSyncMethod {
-                    return_abi: TsReturnAbi::Void,
-                    decode_expr: String::new(),
+                    return_route: TsSyncTransportRoute::Void,
                 }),
                 doc: None,
             }],
@@ -1030,10 +1219,9 @@ mod tests {
                     nullable: false,
                 }),
                 mode: TsClassMethodMode::Sync(TsClassSyncMethod {
-                    return_abi: TsReturnAbi::Direct {
+                    return_route: TsSyncTransportRoute::Direct {
                         ts_cast: String::new(),
                     },
-                    decode_expr: String::new(),
                 }),
                 doc: None,
             }],
@@ -1056,7 +1244,7 @@ mod tests {
                 params: vec![TsParam {
                     name: "key".to_string(),
                     ts_type: "string".to_string(),
-                    conversion: TsParamConversion::String,
+                    input_route: TsInputRoute::String,
                 }],
                 return_type: Some("Entry | null".to_string()),
                 return_handle: Some(TsHandleReturn {
@@ -1064,10 +1252,9 @@ mod tests {
                     nullable: true,
                 }),
                 mode: TsClassMethodMode::Sync(TsClassSyncMethod {
-                    return_abi: TsReturnAbi::Direct {
+                    return_route: TsSyncTransportRoute::Direct {
                         ts_cast: String::new(),
                     },
-                    decode_expr: String::new(),
                 }),
                 doc: None,
             }],
@@ -1090,15 +1277,14 @@ mod tests {
                 params: vec![TsParam {
                     name: "point".to_string(),
                     ts_type: "Point".to_string(),
-                    conversion: TsParamConversion::CodecEncoded {
+                    input_route: TsInputRoute::CodecEncoded {
                         codec_name: "Point".to_string(),
                     },
                 }],
                 return_type: None,
                 return_handle: None,
                 mode: TsClassMethodMode::Sync(TsClassSyncMethod {
-                    return_abi: TsReturnAbi::Void,
-                    decode_expr: String::new(),
+                    return_route: TsSyncTransportRoute::Void,
                 }),
                 doc: None,
             }],
@@ -1121,7 +1307,7 @@ mod tests {
                 params: vec![TsParam {
                     name: "sql".to_string(),
                     ts_type: "string".to_string(),
-                    conversion: TsParamConversion::String,
+                    input_route: TsInputRoute::String,
                 }],
                 return_type: Some("QueryResult".to_string()),
                 return_handle: None,
@@ -1131,7 +1317,9 @@ mod tests {
                     panic_message_ffi_name: "boltffi_database_query_panic_message".to_string(),
                     cancel_ffi_name: "boltffi_database_query_cancel".to_string(),
                     free_ffi_name: "boltffi_database_query_free".to_string(),
-                    decode_expr: "QueryResultCodec.decode(reader)".to_string(),
+                    return_route: TsAsyncTransportRoute::Packed {
+                        decode_expr: "QueryResultCodec.decode(reader)".to_string(),
+                    },
                 }),
                 doc: None,
             }],

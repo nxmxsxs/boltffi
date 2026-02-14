@@ -784,3 +784,80 @@ pub mod callback {
         }
     }
 }
+
+pub mod transport {
+    //! When returning a buffer (wire-encoded data) from Rust to the host, we need
+    //! to tell the host where the data lives and how big it is. Different platforms
+    //! have different optimal ways to do this:
+    //!
+    //! - WASM: pointers are 32-bit, so ptr+len fits in a single u64 register.
+    //!   Returning a packed u64 avoids allocating a separate descriptor struct.
+    //!
+    //! - Native 64-bit: pointers are 64-bit, so we can't pack ptr+len into u64.
+    //!   We return a FfiBuf struct containing { ptr, len, cap }.
+    //!
+    //! This module defines the transport strategies so both the macro (which
+    //! generates Rust FFI exports) and the codegen (which generates host bindings)
+    //! use the same rules. Adding a new platform means adding a variant here and
+    //! handling it in both macro and codegen.
+
+    #[derive(Debug, Clone, Copy, PartialEq, Eq)]
+    pub enum BufferTransport {
+        Packed,
+        Descriptor,
+    }
+
+    impl BufferTransport {
+        pub fn for_target(target: &str) -> Self {
+            match target {
+                "wasm32" | "wasm32-unknown-unknown" | "wasm32-wasi" => Self::Packed,
+                _ => Self::Descriptor,
+            }
+        }
+
+        pub fn is_packed(self) -> bool {
+            matches!(self, Self::Packed)
+        }
+
+        pub fn is_descriptor(self) -> bool {
+            matches!(self, Self::Descriptor)
+        }
+    }
+
+    #[cfg(test)]
+    mod tests {
+        use super::*;
+
+        #[test]
+        fn wasm_targets_use_packed() {
+            assert_eq!(
+                BufferTransport::for_target("wasm32"),
+                BufferTransport::Packed
+            );
+            assert_eq!(
+                BufferTransport::for_target("wasm32-unknown-unknown"),
+                BufferTransport::Packed
+            );
+            assert_eq!(
+                BufferTransport::for_target("wasm32-wasi"),
+                BufferTransport::Packed
+            );
+        }
+
+        #[test]
+        fn native_targets_use_descriptor() {
+            assert_eq!(
+                BufferTransport::for_target("aarch64-apple-darwin"),
+                BufferTransport::Descriptor
+            );
+            assert_eq!(
+                BufferTransport::for_target("x86_64-unknown-linux-gnu"),
+                BufferTransport::Descriptor
+            );
+            assert_eq!(
+                BufferTransport::for_target("aarch64-linux-android"),
+                BufferTransport::Descriptor
+            );
+        }
+    }
+}

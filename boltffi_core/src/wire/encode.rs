@@ -28,6 +28,7 @@ pub trait WireSize {
 }
 
 pub trait WireEncode: WireSize {
+    const IS_BLITTABLE: bool = false;
     fn encode_to(&self, buf: &mut [u8]) -> usize;
 }
 
@@ -46,6 +47,8 @@ macro_rules! impl_wire_primitive {
             }
 
             impl WireEncode for $ty {
+                const IS_BLITTABLE: bool = true;
+
                 #[inline]
                 fn encode_to(&self, buf: &mut [u8]) -> usize {
                     let bytes = self.to_le_bytes();
@@ -361,7 +364,7 @@ impl<T: WireEncode> WireEncode for Option<T> {
     }
 }
 
-impl<T: WireSize> WireSize for Vec<T> {
+impl<T: WireEncode> WireSize for Vec<T> {
     #[inline]
     fn is_fixed_size() -> bool {
         false
@@ -374,38 +377,90 @@ impl<T: WireSize> WireSize for Vec<T> {
 
     #[inline]
     fn wire_size(&self) -> usize {
-        VEC_COUNT_SIZE + self.iter().map(|e| e.wire_size()).sum::<usize>()
+        if T::IS_BLITTABLE {
+            VEC_COUNT_SIZE + self.len() * core::mem::size_of::<T>()
+        } else {
+            VEC_COUNT_SIZE
+                + self
+                    .iter()
+                    .map(|element| element.wire_size())
+                    .sum::<usize>()
+        }
     }
 }
 
 impl<T: WireEncode> WireEncode for Vec<T> {
+    #[inline]
     fn encode_to(&self, buf: &mut [u8]) -> usize {
         let count = self.len() as u32;
         buf[..VEC_COUNT_SIZE].copy_from_slice(&count.to_le_bytes());
-        let mut offset = VEC_COUNT_SIZE;
-        for element in self {
-            offset += element.encode_to(&mut buf[offset..]);
+
+        if self.is_empty() {
+            return VEC_COUNT_SIZE;
         }
-        offset
+
+        if T::IS_BLITTABLE {
+            let byte_count = self.len() * core::mem::size_of::<T>();
+            unsafe {
+                core::ptr::copy_nonoverlapping(
+                    self.as_ptr() as *const u8,
+                    buf.as_mut_ptr().add(VEC_COUNT_SIZE),
+                    byte_count,
+                );
+            }
+            VEC_COUNT_SIZE + byte_count
+        } else {
+            let mut offset = VEC_COUNT_SIZE;
+            self.iter().for_each(|element| {
+                offset += element.encode_to(&mut buf[offset..]);
+            });
+            offset
+        }
     }
 }
 
-impl<T: WireSize> WireSize for [T] {
+impl<T: WireEncode> WireSize for [T] {
     #[inline]
     fn wire_size(&self) -> usize {
-        VEC_COUNT_SIZE + self.iter().map(|e| e.wire_size()).sum::<usize>()
+        if T::IS_BLITTABLE {
+            VEC_COUNT_SIZE + core::mem::size_of_val(self)
+        } else {
+            VEC_COUNT_SIZE
+                + self
+                    .iter()
+                    .map(|element| element.wire_size())
+                    .sum::<usize>()
+        }
     }
 }
 
 impl<T: WireEncode> WireEncode for [T] {
+    #[inline]
     fn encode_to(&self, buf: &mut [u8]) -> usize {
         let count = self.len() as u32;
         buf[..VEC_COUNT_SIZE].copy_from_slice(&count.to_le_bytes());
-        let mut offset = VEC_COUNT_SIZE;
-        for element in self {
-            offset += element.encode_to(&mut buf[offset..]);
+
+        if self.is_empty() {
+            return VEC_COUNT_SIZE;
         }
-        offset
+
+        if T::IS_BLITTABLE {
+            let byte_count = core::mem::size_of_val(self);
+            unsafe {
+                core::ptr::copy_nonoverlapping(
+                    self.as_ptr() as *const u8,
+                    buf.as_mut_ptr().add(VEC_COUNT_SIZE),
+                    byte_count,
+                );
+            }
+            VEC_COUNT_SIZE + byte_count
+        } else {
+            let mut offset = VEC_COUNT_SIZE;
+            self.iter().for_each(|element| {
+                offset += element.encode_to(&mut buf[offset..]);
+            });
+            offset
+        }
     }
 }
 
@@ -823,6 +878,70 @@ mod tests {
             s.encode_to(&mut buf);
 
             assert_eq!(&buf[4..], s.as_bytes());
+        }
+    }
+
+    #[allow(clippy::assertions_on_constants)]
+    mod blittable {
+        use super::*;
+
+        #[test]
+        fn primitive_is_blittable() {
+            assert!(i32::IS_BLITTABLE);
+            assert!(f64::IS_BLITTABLE);
+            assert!(u8::IS_BLITTABLE);
+        }
+
+        #[test]
+        fn string_is_not_blittable() {
+            assert!(!String::IS_BLITTABLE);
+        }
+
+        #[test]
+        fn vec_i32_encoding_matches_raw_memory() {
+            let vec: Vec<i32> = vec![1, 2, 3, 0x7FFFFFFF, -1];
+            let mut buf = vec![0u8; vec.wire_size()];
+            vec.encode_to(&mut buf);
+
+            assert_eq!(&buf[0..4], &5u32.to_le_bytes());
+
+            let expected_bytes: Vec<u8> = vec.iter().flat_map(|v| v.to_le_bytes()).collect();
+            assert_eq!(&buf[4..], &expected_bytes);
+        }
+
+        #[test]
+        fn vec_f64_encoding_matches_raw_memory() {
+            let vec: Vec<f64> = vec![1.5, -2.25, std::f64::consts::PI];
+            let mut buf = vec![0u8; vec.wire_size()];
+            vec.encode_to(&mut buf);
+
+            assert_eq!(&buf[0..4], &3u32.to_le_bytes());
+
+            let expected_bytes: Vec<u8> = vec.iter().flat_map(|v| v.to_le_bytes()).collect();
+            assert_eq!(&buf[4..], &expected_bytes);
+        }
+
+        #[test]
+        fn empty_blittable_vec() {
+            let vec: Vec<i32> = vec![];
+            assert_eq!(vec.wire_size(), 4);
+
+            let mut buf = vec![0u8; 4];
+            let written = vec.encode_to(&mut buf);
+            assert_eq!(written, 4);
+            assert_eq!(&buf, &[0, 0, 0, 0]);
+        }
+
+        #[test]
+        fn blittable_wire_size_is_exact() {
+            let vec: Vec<i32> = vec![1, 2, 3];
+            assert_eq!(vec.wire_size(), 4 + 3 * 4);
+
+            let vec: Vec<f64> = vec![1.0, 2.0];
+            assert_eq!(vec.wire_size(), 4 + 2 * 8);
+
+            let vec: Vec<u8> = vec![1, 2, 3, 4, 5];
+            assert_eq!(vec.wire_size(), 4 + 5);
         }
     }
 }

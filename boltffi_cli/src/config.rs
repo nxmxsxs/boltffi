@@ -255,6 +255,7 @@ pub enum WasmOptimizeOnMissing {
 pub struct WasmTypeScriptConfig {
     pub output: Option<PathBuf>,
     pub runtime_package: Option<String>,
+    pub runtime_version: Option<String>,
     pub module_name: Option<String>,
     pub source_map: Option<bool>,
     #[serde(default)]
@@ -685,6 +686,15 @@ impl Config {
             .runtime_package
             .clone()
             .unwrap_or_else(|| "@boltffi/runtime".to_string())
+    }
+
+    pub fn wasm_runtime_version(&self) -> String {
+        self.targets
+            .wasm
+            .typescript
+            .runtime_version
+            .clone()
+            .unwrap_or_else(|| "*".to_string())
     }
 
     pub fn wasm_typescript_module_name(&self) -> String {

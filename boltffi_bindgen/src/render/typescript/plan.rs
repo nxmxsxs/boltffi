@@ -34,7 +34,7 @@ pub struct TsAsyncFunction {
     pub free_ffi_name: String,
     pub params: Vec<TsParam>,
     pub return_type: Option<String>,
-    pub decode_expr: String,
+    pub return_route: TsAsyncTransportRoute,
     pub throws: bool,
     pub err_type: String,
     pub doc: Option<String>,
@@ -51,7 +51,9 @@ pub struct TsClass {
 
 impl TsClass {
     pub fn has_default_constructor(&self) -> bool {
-        self.constructors.iter().any(|constructor| constructor.is_default)
+        self.constructors
+            .iter()
+            .any(|constructor| constructor.is_default)
     }
 
     pub fn default_constructor(&self) -> Option<&TsClassConstructor> {
@@ -166,8 +168,7 @@ pub enum TsClassMethodMode {
 
 #[derive(Debug, Clone)]
 pub struct TsClassSyncMethod {
-    pub return_abi: TsReturnAbi,
-    pub decode_expr: String,
+    pub return_route: TsSyncTransportRoute,
 }
 
 #[derive(Debug, Clone)]
@@ -177,7 +178,7 @@ pub struct TsClassAsyncMethod {
     pub panic_message_ffi_name: String,
     pub cancel_ffi_name: String,
     pub free_ffi_name: String,
-    pub decode_expr: String,
+    pub return_route: TsAsyncTransportRoute,
 }
 
 #[derive(Debug, Clone)]
@@ -252,6 +253,7 @@ pub struct TsRecord {
     pub fields: Vec<TsField>,
     pub is_blittable: bool,
     pub wire_size: Option<usize>,
+    pub tail_padding: usize,
     pub doc: Option<String>,
 }
 
@@ -350,8 +352,7 @@ pub struct TsFunction {
     pub ffi_name: String,
     pub params: Vec<TsParam>,
     pub return_type: Option<String>,
-    pub return_abi: TsReturnAbi,
-    pub decode_expr: String,
+    pub return_route: TsSyncTransportRoute,
     pub throws: bool,
     pub err_type: String,
     pub doc: Option<String>,
@@ -361,39 +362,39 @@ pub struct TsFunction {
 pub struct TsParam {
     pub name: String,
     pub ts_type: String,
-    pub conversion: TsParamConversion,
+    pub input_route: TsInputRoute,
 }
 
 impl TsParam {
     pub fn wrapper_code(&self) -> Option<String> {
-        match &self.conversion {
-            TsParamConversion::Direct => None,
-            TsParamConversion::String => Some(format!(
+        match &self.input_route {
+            TsInputRoute::Direct => None,
+            TsInputRoute::String => Some(format!(
                 "const {}_alloc = _module.allocString({});",
                 self.name, self.name
             )),
-            TsParamConversion::Bytes => Some(format!(
+            TsInputRoute::Bytes => Some(format!(
                 "const {}_alloc = _module.allocBytes({});",
                 self.name, self.name
             )),
-            TsParamConversion::PrimitiveBuffer { element_abi } => Some(format!(
-                "const {}_alloc = _module.allocPrimitiveBuffer({}, \"{}\");",
+            TsInputRoute::PrimitiveBuffer { element_abi } => Some(format!(
+                "const {}_alloc = _module.{}({});",
                 self.name,
-                self.name,
-                primitive_buffer_runtime_tag(*element_abi)
+                primitive_buffer_alloc_method(*element_abi),
+                self.name
             )),
-            TsParamConversion::Callback { interface_name } => Some(format!(
+            TsInputRoute::Callback { interface_name } => Some(format!(
                 "const {}_handle = register{}({});",
                 self.name, interface_name, self.name
             )),
-            TsParamConversion::CodecEncoded { codec_name } => {
+            TsInputRoute::CodecEncoded { codec_name } => {
                 let writer_name = format!("{}_writer", self.name);
                 Some(format!(
                     "const {writer_name} = _module.allocWriter({codec_name}Codec.size({}));\n  {codec_name}Codec.encode({writer_name}, {});",
                     self.name, self.name
                 ))
             }
-            TsParamConversion::OtherEncoded { encode } => {
+            TsInputRoute::OtherEncoded { encode } => {
                 let writer_name = format!("{}_writer", self.name);
                 let size_expr = emit::emit_size_expr(&encode.size, &self.name);
                 let encode_expr = emit::emit_writer_write(encode, &writer_name, &self.name);
@@ -405,24 +406,24 @@ impl TsParam {
     }
 
     pub fn ffi_args(&self) -> Vec<String> {
-        match &self.conversion {
-            TsParamConversion::Direct => vec![self.name.clone()],
-            TsParamConversion::String | TsParamConversion::Bytes => {
+        match &self.input_route {
+            TsInputRoute::Direct => vec![self.name.clone()],
+            TsInputRoute::String | TsInputRoute::Bytes => {
                 vec![
                     format!("{}_alloc.ptr", self.name),
                     format!("{}_alloc.len", self.name),
                 ]
             }
-            TsParamConversion::PrimitiveBuffer { .. } => {
+            TsInputRoute::PrimitiveBuffer { .. } => {
                 vec![
                     format!("{}_alloc.ptr", self.name),
                     format!("{}_alloc.len", self.name),
                 ]
             }
-            TsParamConversion::Callback { .. } => {
+            TsInputRoute::Callback { .. } => {
                 vec![format!("{}_handle", self.name)]
             }
-            TsParamConversion::CodecEncoded { .. } | TsParamConversion::OtherEncoded { .. } => {
+            TsInputRoute::CodecEncoded { .. } | TsInputRoute::OtherEncoded { .. } => {
                 vec![
                     format!("{}_writer.ptr", self.name),
                     format!("{}_writer.len", self.name),
@@ -432,22 +433,22 @@ impl TsParam {
     }
 
     pub fn cleanup_code(&self) -> Option<String> {
-        match &self.conversion {
-            TsParamConversion::Direct | TsParamConversion::Callback { .. } => None,
-            TsParamConversion::String | TsParamConversion::Bytes => {
+        match &self.input_route {
+            TsInputRoute::Direct | TsInputRoute::Callback { .. } => None,
+            TsInputRoute::String | TsInputRoute::Bytes => {
                 Some(format!("_module.freeAlloc({}_alloc);", self.name))
             }
-            TsParamConversion::PrimitiveBuffer { .. } => {
+            TsInputRoute::PrimitiveBuffer { .. } => {
                 Some(format!("_module.freePrimitiveBuffer({}_alloc);", self.name))
             }
-            TsParamConversion::CodecEncoded { .. } | TsParamConversion::OtherEncoded { .. } => {
+            TsInputRoute::CodecEncoded { .. } | TsInputRoute::OtherEncoded { .. } => {
                 Some(format!("_module.freeWriter({}_writer);", self.name))
             }
         }
     }
 
     pub fn needs_cleanup(&self) -> bool {
-        !matches!(self.conversion, TsParamConversion::Direct)
+        !matches!(self.input_route, TsInputRoute::Direct)
     }
 }
 
@@ -456,7 +457,7 @@ fn flatten_ffi_args(params: &[TsParam]) -> Vec<String> {
 }
 
 #[derive(Debug, Clone)]
-pub enum TsParamConversion {
+pub enum TsInputRoute {
     Direct,
     String,
     Bytes,
@@ -466,21 +467,21 @@ pub enum TsParamConversion {
     OtherEncoded { encode: WriteSeq },
 }
 
-fn primitive_buffer_runtime_tag(abi_type: AbiType) -> &'static str {
+fn primitive_buffer_alloc_method(abi_type: AbiType) -> &'static str {
     match abi_type {
-        AbiType::Bool => "bool",
-        AbiType::I8 => "i8",
-        AbiType::U8 => "u8",
-        AbiType::I16 => "i16",
-        AbiType::U16 => "u16",
-        AbiType::I32 => "i32",
-        AbiType::U32 => "u32",
-        AbiType::I64 => "i64",
-        AbiType::U64 => "u64",
-        AbiType::ISize => "isize",
-        AbiType::USize => "usize",
-        AbiType::F32 => "f32",
-        AbiType::F64 => "f64",
+        AbiType::Bool => "allocBoolArray",
+        AbiType::I8 => "allocI8Array",
+        AbiType::U8 => "allocU8Array",
+        AbiType::I16 => "allocI16Array",
+        AbiType::U16 => "allocU16Array",
+        AbiType::I32 => "allocI32Array",
+        AbiType::U32 => "allocU32Array",
+        AbiType::I64 => "allocI64Array",
+        AbiType::U64 => "allocU64Array",
+        AbiType::ISize => "allocI64Array",
+        AbiType::USize => "allocU64Array",
+        AbiType::F32 => "allocF32Array",
+        AbiType::F64 => "allocF64Array",
         AbiType::Void | AbiType::Pointer => {
             panic!("unsupported primitive buffer abi type: {abi_type:?}")
         }
@@ -496,14 +497,14 @@ mod tests {
         let param = TsParam {
             name: "values".to_string(),
             ts_type: "number[]".to_string(),
-            conversion: TsParamConversion::PrimitiveBuffer {
+            input_route: TsInputRoute::PrimitiveBuffer {
                 element_abi: AbiType::I32,
             },
         };
 
         assert_eq!(
             param.wrapper_code(),
-            Some("const values_alloc = _module.allocPrimitiveBuffer(values, \"i32\");".to_string())
+            Some("const values_alloc = _module.allocI32Array(values);".to_string())
         );
         assert_eq!(
             param.ffi_args(),
@@ -520,30 +521,31 @@ mod tests {
     }
 
     #[test]
-    fn primitive_buffer_param_uses_i64_runtime_tag_for_bigint_vectors() {
+    fn primitive_buffer_param_uses_alloc_method_for_bigint_vectors() {
         let param = TsParam {
             name: "values".to_string(),
             ts_type: "bigint[]".to_string(),
-            conversion: TsParamConversion::PrimitiveBuffer {
+            input_route: TsInputRoute::PrimitiveBuffer {
                 element_abi: AbiType::I64,
             },
         };
 
         assert_eq!(
             param.wrapper_code(),
-            Some("const values_alloc = _module.allocPrimitiveBuffer(values, \"i64\");".to_string())
+            Some("const values_alloc = _module.allocI64Array(values);".to_string())
         );
     }
 }
 
 #[derive(Debug, Clone)]
-pub enum TsReturnAbi {
+pub enum TsSyncTransportRoute {
     Void,
     Direct { ts_cast: String },
-    WireEncoded,
+    Packed { decode_expr: String },
+    RawPacked { decode_expr: String },
 }
 
-impl TsReturnAbi {
+impl TsSyncTransportRoute {
     pub fn is_void(&self) -> bool {
         matches!(self, Self::Void)
     }
@@ -552,8 +554,24 @@ impl TsReturnAbi {
         matches!(self, Self::Direct { .. })
     }
 
-    pub fn is_wire_encoded(&self) -> bool {
-        matches!(self, Self::WireEncoded)
+    pub fn is_packed(&self) -> bool {
+        matches!(self, Self::Packed { .. })
+    }
+
+    pub fn is_raw_packed(&self) -> bool {
+        matches!(self, Self::RawPacked { .. })
+    }
+}
+
+#[derive(Debug, Clone)]
+pub enum TsAsyncTransportRoute {
+    Void,
+    Packed { decode_expr: String },
+}
+
+impl TsAsyncTransportRoute {
+    pub fn is_void(&self) -> bool {
+        matches!(self, Self::Void)
     }
 }
 

@@ -248,6 +248,15 @@ fn pack_wasm(config: &Config, options: PackWasmOptions) -> Result<()> {
         transpile_typescript_bundle(config, &generated_typescript_source, &npm_output)
     })?;
 
+    let generated_node_typescript_source = config
+        .wasm_typescript_output()
+        .join(format!("{}_node.ts", module_name));
+    if generated_node_typescript_source.exists() {
+        run_step("Transpiling Node.js bindings", || {
+            transpile_typescript_bundle(config, &generated_node_typescript_source, &npm_output)
+        })?;
+    }
+
     let enabled_targets = config.wasm_npm_targets();
     run_step("Generating WASM loader entrypoints", || {
         generate_wasm_loader_entrypoints(&module_name, &enabled_targets, &npm_output)
@@ -563,7 +572,7 @@ fn generate_wasm_loader_entrypoints(
                 WasmNpmTarget::Nodejs => (
                     "node.js",
                     format!(
-                        "import init from \"./{module}.js\";\nimport {{ readFile }} from \"node:fs/promises\";\nimport {{ dirname, join }} from \"node:path\";\nimport {{ fileURLToPath }} from \"node:url\";\nexport * from \"./{module}.js\";\nexport {{ default as init }} from \"./{module}.js\";\nexport const initialized = (async () => {{\n  const thisDir = dirname(fileURLToPath(import.meta.url));\n  const wasmBytes = await readFile(join(thisDir, \"{module}_bg.wasm\"));\n  await init(wasmBytes);\n}})();\n",
+                        "export * from \"./{module}_node.js\";\nexport {{ default, initialized }} from \"./{module}_node.js\";\n",
                         module = module_name
                     ),
                 ),
@@ -626,6 +635,11 @@ fn generate_wasm_package_json(
         serde_json::Value::String(default_entry.to_string()),
     );
 
+    let runtime_package = config.wasm_runtime_package();
+    let runtime_version = config.wasm_runtime_version();
+    let mut dependencies = serde_json::Map::new();
+    dependencies.insert(runtime_package, serde_json::Value::String(runtime_version));
+
     let package_json = serde_json::json!({
         "name": package_name,
         "version": package_version,
@@ -641,7 +655,8 @@ fn generate_wasm_package_json(
             "bundler.js",
             "web.js",
             "node.js"
-        ]
+        ],
+        "dependencies": serde_json::Value::Object(dependencies)
     });
 
     let mut package_json_object =

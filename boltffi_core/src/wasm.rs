@@ -73,6 +73,14 @@ pub(crate) fn boltffi_wasm_free_impl(ptr: usize, size: usize) {
 }
 
 #[cfg(any(test, target_arch = "wasm32"))]
+pub(crate) unsafe fn boltffi_wasm_free_string_return_impl(ptr: usize, len: usize) {
+    if ptr == 0 || len == 0 {
+        return;
+    }
+    unsafe { drop(Vec::from_raw_parts(ptr as *mut u8, len, len)) };
+}
+
+#[cfg(any(test, target_arch = "wasm32"))]
 fn boltffi_wasm_realloc_impl(ptr: usize, old_size: usize, new_size: usize) -> usize {
     if new_size == 0 {
         boltffi_wasm_free_impl(ptr, old_size);
@@ -117,13 +125,18 @@ mod exports {
     pub extern "C" fn boltffi_wasm_realloc(ptr: u32, old_size: u32, new_size: u32) -> u32 {
         super::boltffi_wasm_realloc_impl(ptr as usize, old_size as usize, new_size as usize) as u32
     }
+
+    #[unsafe(no_mangle)]
+    pub unsafe extern "C" fn boltffi_wasm_free_string_return(ptr: u32, len: u32) {
+        unsafe { super::boltffi_wasm_free_string_return_impl(ptr as usize, len as usize) };
+    }
 }
 
 #[cfg(test)]
 mod tests {
     use super::{
         WASM_ABI_VERSION, boltffi_wasm_alloc_impl, boltffi_wasm_free_impl,
-        boltffi_wasm_realloc_impl,
+        boltffi_wasm_free_string_return_impl, boltffi_wasm_realloc_impl,
     };
 
     #[test]
@@ -189,5 +202,15 @@ mod tests {
     fn free_ignores_zero_inputs() {
         boltffi_wasm_free_impl(0, 32);
         boltffi_wasm_free_impl(1024, 0);
+    }
+
+    #[test]
+    fn free_string_return_releases_owned_buffer() {
+        let text = "boltffi";
+        let mut boxed = text.as_bytes().to_vec().into_boxed_slice();
+        let ptr = boxed.as_mut_ptr() as usize;
+        let len = boxed.len();
+        std::mem::forget(boxed);
+        unsafe { boltffi_wasm_free_string_return_impl(ptr, len) };
     }
 }
