@@ -144,7 +144,6 @@ impl<'c> Lowerer<'c> {
             free_buf: naming::free_buf_u8(),
             atomic_cas: naming::atomic_u8_cas(),
         };
-        abi_contract.assert_shape_consistency();
         abi_contract
     }
 

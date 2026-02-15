@@ -8,7 +8,7 @@ use crate::ir::ids::{
     CallbackId, ClassId, EnumId, FieldName, FunctionId, MethodId, ParamName, RecordId, StreamId,
     VariantName,
 };
-use crate::ir::ops::{ReadSeq, WriteSeq};
+use crate::ir::ops::{ReadOp, ReadSeq, WriteOp, WriteSeq};
 use crate::ir::plan::{AbiType, CallbackStyle, Mutability};
 use crate::ir::types::TypeExpr;
 
@@ -228,6 +228,149 @@ pub enum ErrorTransport {
     },
 }
 
+#[derive(Debug, Clone, Copy)]
+pub enum ParamBinding<'a> {
+    Input(InputBinding<'a>),
+    Hidden(HiddenInputBinding<'a>),
+    UnsupportedValue,
+}
+
+#[derive(Debug, Clone, Copy)]
+pub enum InputBinding<'a> {
+    Scalar,
+    Utf8Slice {
+        len_param: &'a ParamName,
+    },
+    PrimitiveSlice {
+        len_param: &'a ParamName,
+        mutability: Mutability,
+        element_abi: AbiType,
+    },
+    WirePacket {
+        len_param: &'a ParamName,
+        decode_ops: &'a ReadSeq,
+        encode_ops: &'a WriteSeq,
+    },
+    OutputBuffer {
+        len_param: &'a ParamName,
+        decode_ops: &'a ReadSeq,
+    },
+    Handle {
+        class_id: &'a ClassId,
+        nullable: bool,
+    },
+    CallbackHandle {
+        callback_id: &'a CallbackId,
+        nullable: bool,
+        style: CallbackStyle,
+    },
+}
+
+#[derive(Debug, Clone, Copy)]
+pub enum HiddenInputBinding<'a> {
+    SyntheticLen { for_param: &'a ParamName },
+    OutLen { for_param: &'a ParamName },
+    OutDirect,
+    StatusOut,
+}
+
+#[derive(Debug, Clone, Copy)]
+pub enum FastOutputBinding<'a> {
+    Scalar {
+        abi_type: AbiType,
+    },
+    OptionScalar {
+        abi_type: AbiType,
+        decode_ops: &'a ReadSeq,
+        encode_ops: &'a WriteSeq,
+    },
+    ResultScalar {
+        ok_abi: AbiType,
+        err_abi: AbiType,
+        decode_ops: &'a ReadSeq,
+        encode_ops: &'a WriteSeq,
+    },
+    PrimitiveVec {
+        element_abi: AbiType,
+        decode_ops: &'a ReadSeq,
+        encode_ops: &'a WriteSeq,
+    },
+    BlittableRecord {
+        record_id: &'a RecordId,
+        size: u32,
+        decode_ops: &'a ReadSeq,
+        encode_ops: &'a WriteSeq,
+    },
+}
+
+impl FastOutputBinding<'_> {
+    pub fn decode_ops(&self) -> Option<&ReadSeq> {
+        match self {
+            Self::Scalar { .. } => None,
+            Self::OptionScalar { decode_ops, .. }
+            | Self::ResultScalar { decode_ops, .. }
+            | Self::PrimitiveVec { decode_ops, .. }
+            | Self::BlittableRecord { decode_ops, .. } => Some(decode_ops),
+        }
+    }
+
+    pub fn encode_ops(&self) -> Option<&WriteSeq> {
+        match self {
+            Self::Scalar { .. } => None,
+            Self::OptionScalar { encode_ops, .. }
+            | Self::ResultScalar { encode_ops, .. }
+            | Self::PrimitiveVec { encode_ops, .. }
+            | Self::BlittableRecord { encode_ops, .. } => Some(encode_ops),
+        }
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum WireOutputKind {
+    Utf8String,
+    Encoded,
+}
+
+#[derive(Debug, Clone, Copy)]
+pub struct WireOutputBinding<'a> {
+    pub decode_ops: &'a ReadSeq,
+    pub encode_ops: &'a WriteSeq,
+    pub wire_shape: WireOutputKind,
+}
+
+#[derive(Debug, Clone, Copy)]
+pub enum OutputBinding<'a> {
+    Unit,
+    Fast(FastOutputBinding<'a>),
+    Wire(WireOutputBinding<'a>),
+    Handle {
+        class_id: &'a ClassId,
+        nullable: bool,
+    },
+    CallbackHandle {
+        callback_id: &'a CallbackId,
+        nullable: bool,
+    },
+}
+
+impl OutputBinding<'_> {
+    pub fn decode_ops(&self) -> Option<&ReadSeq> {
+        match self {
+            Self::Fast(fast) => fast.decode_ops(),
+            Self::Wire(wire) => Some(wire.decode_ops),
+            Self::Unit | Self::Handle { .. } | Self::CallbackHandle { .. } => None,
+        }
+    }
+
+    pub fn encode_ops(&self) -> Option<&WriteSeq> {
+        match self {
+            Self::Fast(fast) => fast.encode_ops(),
+            Self::Wire(wire) => Some(wire.encode_ops),
+            Self::Unit | Self::Handle { .. } | Self::CallbackHandle { .. } => None,
+        }
+    }
+}
+
 #[derive(Debug, Clone)]
 pub struct AbiCallbackInvocation {
     pub callback_id: CallbackId,
@@ -247,95 +390,168 @@ pub struct AbiCallbackMethod {
     pub error: ErrorTransport,
 }
 
-impl AbiContract {
-    pub fn assert_shape_consistency(&self) {
-        self.calls
-            .iter()
-            .for_each(AbiCall::assert_shape_consistency);
-        self.callbacks.iter().for_each(|callback| {
-            callback
-                .methods
-                .iter()
-                .for_each(AbiCallbackMethod::assert_shape_consistency)
-        });
-    }
-}
-
 impl AbiCall {
-    fn assert_shape_consistency(&self) {
-        self.params
-            .iter()
-            .for_each(AbiParam::assert_shape_consistency);
-        if let OutputShape::Value(value_shape) = &self.output_shape {
-            assert!(
-                value_shape.has_consistent_wire_metadata(),
-                "output_shape has inconsistent wire metadata for call {}",
-                self.symbol.as_str()
-            );
-        }
-        if let CallMode::Async(async_call) = &self.mode {
-            async_call.assert_shape_consistency();
-        }
+    pub fn output_binding(&self) -> OutputBinding<'_> {
+        self.output_shape.output_binding()
     }
 }
 
 impl AsyncCall {
-    fn assert_shape_consistency(&self) {
-        if let OutputShape::Value(value_shape) = &self.result_shape {
-            assert!(
-                value_shape.has_consistent_wire_metadata(),
-                "result_shape has inconsistent wire metadata for {}",
-                self.complete.as_str()
-            );
-        }
-    }
-}
-
-impl AbiCallbackMethod {
-    fn assert_shape_consistency(&self) {
-        self.params
-            .iter()
-            .for_each(AbiParam::assert_shape_consistency);
-        if let OutputShape::Value(value_shape) = &self.output_shape {
-            assert!(
-                value_shape.has_consistent_wire_metadata(),
-                "output_shape has inconsistent wire metadata for callback method {}",
-                self.id.as_str()
-            );
-        }
+    pub fn result_binding(&self) -> OutputBinding<'_> {
+        self.result_shape.output_binding()
     }
 }
 
 impl AbiParam {
-    fn assert_shape_consistency(&self) {
-        if let InputShape::Value(ValueShape::Scalar(abi_type)) = &self.input_shape {
-            assert!(
-                *abi_type == self.ffi_type,
-                "scalar input shape ABI and ffi_type mismatch for param {}",
-                self.name.as_str()
-            );
+    pub fn param_binding(&self) -> ParamBinding<'_> {
+        match &self.input_shape {
+            InputShape::Value(ValueShape::Scalar(_)) => ParamBinding::Input(InputBinding::Scalar),
+            InputShape::Utf8Slice { len_param } => {
+                ParamBinding::Input(InputBinding::Utf8Slice { len_param })
+            }
+            InputShape::PrimitiveSlice {
+                len_param,
+                mutability,
+                element_abi,
+            } => ParamBinding::Input(InputBinding::PrimitiveSlice {
+                len_param,
+                mutability: *mutability,
+                element_abi: *element_abi,
+            }),
+            InputShape::WirePacket { len_param, value } => {
+                ParamBinding::Input(InputBinding::WirePacket {
+                    len_param,
+                    decode_ops: value.read_ops().unwrap_or_else(|| {
+                        panic!(
+                            "wire packet input shape missing decode ops for param {}",
+                            self.name.as_str()
+                        )
+                    }),
+                    encode_ops: value.write_ops().unwrap_or_else(|| {
+                        panic!(
+                            "wire packet input shape missing encode ops for param {}",
+                            self.name.as_str()
+                        )
+                    }),
+                })
+            }
+            InputShape::OutputBuffer { len_param, value } => {
+                ParamBinding::Input(InputBinding::OutputBuffer {
+                    len_param,
+                    decode_ops: value.read_ops().unwrap_or_else(|| {
+                        panic!(
+                            "output buffer input shape missing decode ops for param {}",
+                            self.name.as_str()
+                        )
+                    }),
+                })
+            }
+            InputShape::Handle { class_id, nullable } => {
+                ParamBinding::Input(InputBinding::Handle {
+                    class_id,
+                    nullable: *nullable,
+                })
+            }
+            InputShape::Callback {
+                callback_id,
+                nullable,
+                style,
+            } => ParamBinding::Input(InputBinding::CallbackHandle {
+                callback_id,
+                nullable: *nullable,
+                style: *style,
+            }),
+            InputShape::HiddenSyntheticLen { for_param } => {
+                ParamBinding::Hidden(HiddenInputBinding::SyntheticLen { for_param })
+            }
+            InputShape::HiddenOutLen { for_param } => {
+                ParamBinding::Hidden(HiddenInputBinding::OutLen { for_param })
+            }
+            InputShape::HiddenOutDirect => ParamBinding::Hidden(HiddenInputBinding::OutDirect),
+            InputShape::HiddenStatusOut => ParamBinding::Hidden(HiddenInputBinding::StatusOut),
+            InputShape::Value(_) => ParamBinding::UnsupportedValue,
         }
-        if matches!(
-            self.input_shape,
-            InputShape::Utf8Slice { .. }
-                | InputShape::PrimitiveSlice { .. }
-                | InputShape::WirePacket { .. }
-                | InputShape::OutputBuffer { .. }
-                | InputShape::Handle { .. }
-                | InputShape::Callback { .. }
-        ) {
-            assert!(
-                self.ffi_type == AbiType::Pointer,
-                "non-scalar input shape must use pointer ffi_type for param {}",
-                self.name.as_str()
-            );
+    }
+
+    pub fn input_binding(&self) -> Option<InputBinding<'_>> {
+        match self.param_binding() {
+            ParamBinding::Input(binding) => Some(binding),
+            ParamBinding::Hidden(_) | ParamBinding::UnsupportedValue => None,
         }
-        if let InputShape::Value(value_shape) = &self.input_shape {
-            assert!(
-                value_shape.has_consistent_wire_metadata(),
-                "input_shape has inconsistent wire metadata for param {}",
-                self.name.as_str()
-            );
+    }
+}
+
+impl OutputShape {
+    pub fn output_binding(&self) -> OutputBinding<'_> {
+        match self {
+            OutputShape::Unit => OutputBinding::Unit,
+            OutputShape::Value(ValueShape::Scalar(abi_type)) => {
+                OutputBinding::Fast(FastOutputBinding::Scalar {
+                    abi_type: *abi_type,
+                })
+            }
+            OutputShape::Value(ValueShape::OptionScalar { abi, read, write }) => {
+                OutputBinding::Fast(FastOutputBinding::OptionScalar {
+                    abi_type: *abi,
+                    decode_ops: read,
+                    encode_ops: write,
+                })
+            }
+            OutputShape::Value(ValueShape::ResultScalar {
+                ok,
+                err,
+                read,
+                write,
+            }) => OutputBinding::Fast(FastOutputBinding::ResultScalar {
+                ok_abi: *ok,
+                err_abi: *err,
+                decode_ops: read,
+                encode_ops: write,
+            }),
+            OutputShape::Value(ValueShape::PrimitiveVec {
+                element_abi,
+                read,
+                write,
+            }) => OutputBinding::Fast(FastOutputBinding::PrimitiveVec {
+                element_abi: *element_abi,
+                decode_ops: read,
+                encode_ops: write,
+            }),
+            OutputShape::Value(ValueShape::BlittableRecord {
+                id,
+                size,
+                read,
+                write,
+            }) => OutputBinding::Fast(FastOutputBinding::BlittableRecord {
+                record_id: id,
+                size: *size,
+                decode_ops: read,
+                encode_ops: write,
+            }),
+            OutputShape::Handle { class_id, nullable } => OutputBinding::Handle {
+                class_id,
+                nullable: *nullable,
+            },
+            OutputShape::Callback {
+                callback_id,
+                nullable,
+            } => OutputBinding::CallbackHandle {
+                callback_id,
+                nullable: *nullable,
+            },
+            OutputShape::Value(ValueShape::WireEncoded { read, write }) => {
+                let wire_shape = match (read.ops.first(), write.ops.first()) {
+                    (Some(ReadOp::String { .. }), Some(WriteOp::String { .. })) => {
+                        WireOutputKind::Utf8String
+                    }
+                    _ => WireOutputKind::Encoded,
+                };
+                OutputBinding::Wire(WireOutputBinding {
+                    decode_ops: read,
+                    encode_ops: write,
+                    wire_shape,
+                })
+            }
         }
     }
 }
@@ -360,17 +576,6 @@ impl ValueShape {
             | Self::PrimitiveVec { write, .. }
             | Self::BlittableRecord { write, .. }
             | Self::WireEncoded { write, .. } => Some(write),
-        }
-    }
-
-    fn has_consistent_wire_metadata(&self) -> bool {
-        match self {
-            Self::Scalar(_) => true,
-            Self::OptionScalar { .. }
-            | Self::ResultScalar { .. }
-            | Self::PrimitiveVec { .. }
-            | Self::BlittableRecord { .. }
-            | Self::WireEncoded { .. } => self.read_ops().is_some() && self.write_ops().is_some(),
         }
     }
 }
@@ -408,6 +613,65 @@ mod tests {
         }
     }
 
+    fn assert_value_shape_consistency(value_shape: &ValueShape) {
+        match value_shape {
+            ValueShape::Scalar(_) => {}
+            ValueShape::OptionScalar { .. }
+            | ValueShape::ResultScalar { .. }
+            | ValueShape::PrimitiveVec { .. }
+            | ValueShape::BlittableRecord { .. }
+            | ValueShape::WireEncoded { .. } => {
+                assert!(value_shape.read_ops().is_some());
+                assert!(value_shape.write_ops().is_some());
+            }
+        }
+    }
+
+    fn assert_param_shape_consistency(param: &AbiParam) {
+        if let InputShape::Value(ValueShape::Scalar(abi_type)) = &param.input_shape {
+            assert_eq!(*abi_type, param.ffi_type);
+        }
+        if matches!(
+            param.input_shape,
+            InputShape::Utf8Slice { .. }
+                | InputShape::PrimitiveSlice { .. }
+                | InputShape::WirePacket { .. }
+                | InputShape::OutputBuffer { .. }
+                | InputShape::Handle { .. }
+                | InputShape::Callback { .. }
+        ) {
+            assert_eq!(param.ffi_type, AbiType::Pointer);
+        }
+        if let InputShape::Value(value_shape) = &param.input_shape {
+            assert_value_shape_consistency(value_shape);
+        }
+    }
+
+    fn assert_contract_shape_consistency(contract: &AbiContract) {
+        contract.calls.iter().for_each(|call| {
+            call.params.iter().for_each(assert_param_shape_consistency);
+            if let OutputShape::Value(value_shape) = &call.output_shape {
+                assert_value_shape_consistency(value_shape);
+            }
+            if let CallMode::Async(async_call) = &call.mode
+                && let OutputShape::Value(value_shape) = &async_call.result_shape
+            {
+                assert_value_shape_consistency(value_shape);
+            }
+        });
+        contract.callbacks.iter().for_each(|callback| {
+            callback.methods.iter().for_each(|method| {
+                method
+                    .params
+                    .iter()
+                    .for_each(assert_param_shape_consistency);
+                if let OutputShape::Value(value_shape) = &method.output_shape {
+                    assert_value_shape_consistency(value_shape);
+                }
+            });
+        });
+    }
+
     #[test]
     fn shape_consistency_accepts_matching_contract() {
         let param = AbiParam {
@@ -417,7 +681,7 @@ mod tests {
         };
         let call = minimal_call(param, OutputShape::Value(ValueShape::Scalar(AbiType::I32)));
         let contract = minimal_contract(call);
-        contract.assert_shape_consistency();
+        assert_contract_shape_consistency(&contract);
     }
 
     #[test]
@@ -429,7 +693,7 @@ mod tests {
             input_shape: InputShape::Value(ValueShape::Scalar(AbiType::I32)),
         };
         let call = minimal_call(param, OutputShape::Unit);
-        minimal_contract(call).assert_shape_consistency();
+        assert_contract_shape_consistency(&minimal_contract(call));
     }
 
     #[test]
