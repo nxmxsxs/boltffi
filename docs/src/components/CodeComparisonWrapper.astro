@@ -5,16 +5,18 @@ interface Props {
   rust: string;
   swift: string;
   kotlin: string;
+  typescript?: string;
   title?: string;
 }
 
-const { rust, swift, kotlin, title } = Astro.props;
+const { rust, swift, kotlin, typescript, title } = Astro.props;
 ---
 
-<CodeComparison 
-  rust={rust} 
-  swift={swift} 
-  kotlin={kotlin} 
-  title={title} 
-  client:load 
+<CodeComparison
+  rust={rust}
+  swift={swift}
+  kotlin={kotlin}
+  typescript={typescript}
+  title={title}
+  client:load
 />

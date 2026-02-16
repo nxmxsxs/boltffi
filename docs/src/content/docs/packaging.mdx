@@ -10,7 +10,7 @@ The packaging process has three stages:
 2. **Generate** - Create Swift/Kotlin bindings and C headers from your exported API
 3. **Package** - Bundle everything into platform-specific formats
 
-For Apple, this produces an xcframework and SwiftPM package. For Android, this produces jniLibs and Kotlin sources ready to drop into your project.
+For Apple, this produces an xcframework and SwiftPM package. For Android, this produces jniLibs and Kotlin sources. For WASM, this produces an npm package with TypeScript bindings.
 
 ## Getting Started
 
@@ -33,6 +33,101 @@ Your `Cargo.toml` needs the right crate types:
 [lib]
 crate-type = ["staticlib", "cdylib"]
 ```
+
+## Packaging All Platforms
+
+Package each platform with its own command:
+
+```bash
+boltffi pack apple
+boltffi pack android
+boltffi pack wasm
+```
+
+Add `--release` for optimized builds:
+
+```bash
+boltffi pack apple --release
+boltffi pack android --release
+boltffi pack wasm --release
+```
+
+Or run the full pipeline (check, build, generate, pack) for all platforms at once:
+
+```bash
+boltffi release all
+```
+
+The output lands in `dist/` with a subdirectory per platform:
+
+```
+dist/
+├── apple/
+│   ├── MyLib.xcframework/
+│   │   ├── ios-arm64/
+│   │   │   ├── Headers/
+│   │   │   │   └── mylib.h
+│   │   │   └── libmylib.a
+│   │   ├── ios-arm64_x86_64-simulator/
+│   │   │   ├── Headers/
+│   │   │   │   └── mylib.h
+│   │   │   └── libmylib.a
+│   │   └── Info.plist
+│   ├── Package.swift
+│   └── Sources/
+│       └── BoltFFI/
+│           └── MyLibBoltFFI.swift
+├── android/
+│   ├── jniLibs/
+│   │   ├── arm64-v8a/
+│   │   │   └── libmylib.so
+│   │   ├── armeabi-v7a/
+│   │   │   └── libmylib.so
+│   │   ├── x86/
+│   │   │   └── libmylib.so
+│   │   └── x86_64/
+│   │       └── libmylib.so
+│   └── kotlin/
+│       └── com/example/mylib/
+│           └── MyLib.kt
+└── wasm/
+    └── pkg/
+        ├── mylib_bg.wasm
+        ├── mylib.js
+        ├── mylib.d.ts
+        ├── bundler.js
+        ├── web.js
+        ├── node.js
+        └── package.json
+```
+
+## Step-by-Step Workflow
+
+The `boltffi pack` command combines build, generate, and package steps. If you need more control, run each step separately:
+
+**Apple:**
+```bash
+boltffi build apple --release
+boltffi generate swift
+boltffi generate header
+boltffi pack apple --release --no-build
+```
+
+**Android:**
+```bash
+boltffi build android --release
+boltffi generate kotlin
+boltffi pack android --release --no-build
+```
+
+**WASM:**
+```bash
+boltffi build wasm --release
+boltffi generate typescript
+boltffi pack wasm --release --no-build
+```
+
+Use `--no-build` with `pack` when you've already built, to skip recompilation.
 
 ## Apple Packaging
 
@@ -71,7 +166,7 @@ The xcframework contains fat libraries for each platform slice. The SwiftPM pack
 To also build for macOS, add this to your `boltffi.toml`:
 
 ```toml
-[apple]
+[targets.apple]
 include_macos = true
 ```
 
@@ -88,7 +183,7 @@ The xcframework will include an additional `macos-arm64_x86_64` slice.
 The `layout` option controls how the SwiftPM package is structured. Configure it in `boltffi.toml`:
 
 ```toml
-[apple.spm]
+[targets.apple.spm]
 layout = "ffi-only"  # or "bundled" or "split"
 ```
 
@@ -121,7 +216,7 @@ The package exposes a single module with your library name. All exported functio
 For distributing via GitHub releases or another host:
 
 ```toml
-[apple.spm]
+[targets.apple.spm]
 distribution = "remote"
 repo_url = "https://github.com/you/mylib/releases/download"
 ```
@@ -196,6 +291,161 @@ android {
 
 The shared libraries are loaded automatically when you first call into your Kotlin bindings.
 
+## WASM Packaging
+
+Package everything for WebAssembly:
+
+```bash
+boltffi pack wasm --release
+```
+
+This compiles to wasm32-unknown-unknown, runs wasm-opt for size optimization, generates TypeScript bindings, and produces an npm package ready to publish or use locally.
+
+### Output Structure
+
+```
+dist/wasm/pkg/
+├── wasm_demo_bg.wasm      # Compiled WASM binary
+├── wasm_demo.js           # Generated bindings
+├── wasm_demo.d.ts         # TypeScript declarations
+├── bundler.js             # Entrypoint for bundlers (Vite, webpack)
+├── web.js                 # Entrypoint for browsers
+├── node.js                # Entrypoint for Node.js
+├── package.json           # npm package manifest
+└── README.md
+```
+
+### Entrypoint Behavior
+
+Each entrypoint handles WASM loading differently:
+
+**Core module (`mylib.js`):**
+- Exports `init(source: BufferSource | Response): Promise<void>` for manual initialization
+- Exports all generated API functions
+- Functions throw `Error` if called before `init()` resolves
+
+**Loader entrypoints (`bundler.js`, `web.js`, `node.js`):**
+- Export `initialized: Promise<void>` that resolves when WASM is ready
+- Export all generated API functions
+- Functions throw `Error` if called before `initialized` resolves
+
+Loading strategy by entrypoint:
+- `bundler.js` - relies on bundler WASM asset handling (Vite, webpack)
+- `web.js` - loads WASM via `fetch()` from package-relative location
+- `node.js` - loads WASM via `fs.readFile()` from disk
+
+### Configuration
+
+Set the npm package name in `boltffi.toml`:
+
+```toml
+[targets.wasm.npm]
+package_name = "@myorg/mylib"
+targets = ["bundler", "web", "nodejs"]
+```
+
+The `targets` array controls which entrypoints are generated. Include only what you need.
+
+### wasm-opt
+
+By default, release builds run wasm-opt for size optimization:
+
+```toml
+[targets.wasm.optimize]
+enabled = true
+level = "s"          # optimize for size
+strip_debug = true   # remove debug info
+```
+
+Set `enabled = false` during development for faster builds.
+
+### Using in a Bundler (Vite, webpack)
+
+Install the package and import directly:
+
+```typescript
+import { someExportedFunction, MyClass } from "@myorg/mylib";
+
+const result = someExportedFunction();
+const instance = MyClass.create();
+```
+
+Your bundler handles WASM loading automatically.
+
+### Using in Node.js
+
+Import from the package and await initialization:
+
+```typescript
+import { initialized, someExportedFunction } from "@myorg/mylib";
+
+await initialized;
+const result = someExportedFunction();
+```
+
+The `initialized` promise resolves once the WASM module is loaded and ready.
+
+### Using in a Browser (no bundler)
+
+Use the web entrypoint with a script tag or dynamic import:
+
+```html
+<script type="module">
+  import init, { someExportedFunction } from "./pkg/web.js";
+  
+  await init();
+  const result = someExportedFunction();
+</script>
+```
+
+The `init()` function fetches the WASM file relative to the script location.
+
+### Package Exports
+
+The generated `package.json` includes conditional exports for all enabled environments.
+
+With all targets enabled (`targets = ["bundler", "web", "nodejs"]`):
+
+```json
+{
+  "name": "@myorg/mylib",
+  "type": "module",
+  "exports": {
+    ".": {
+      "types": "./mylib.d.ts",
+      "browser": "./web.js",
+      "node": "./node.js",
+      "default": "./bundler.js"
+    }
+  }
+}
+```
+
+With only Node.js (`targets = ["nodejs"]`):
+
+```json
+{
+  "exports": {
+    ".": {
+      "types": "./mylib.d.ts",
+      "node": "./node.js",
+      "default": "./node.js"
+    }
+  }
+}
+```
+
+The `default` condition resolves to `bundler.js` if enabled, else `web.js` if enabled, else `node.js`.
+
+### Publishing to npm
+
+Publish with:
+
+```bash
+cd dist/wasm/pkg
+npm publish
+```
+
 ## Build Profiles
 
 Debug builds are faster but produce larger, slower binaries:
@@ -209,13 +459,18 @@ Always use `--release` for distribution. Debug builds include symbols and skip o
 
 ## Skipping Steps
 
-If you've already built and just want to regenerate bindings or repackage:
+If you've already built and just want to repackage:
 
 ```bash
-boltffi pack apple --no-build        # skip cargo build
-boltffi pack apple --regenerate=false # skip binding generation
-boltffi pack apple --xcframework-only # skip Package.swift
-boltffi pack apple --spm-only        # skip xcframework
+boltffi pack apple --no-build         # skip cargo build
+boltffi pack apple --xcframework-only # skip SwiftPM package
+boltffi pack apple --spm-only         # skip xcframework
+```
+
+Force regeneration of bindings:
+
+```bash
+boltffi pack apple --regenerate
 ```
 
 These options are useful during development when iterating on specific parts of the pipeline.
@@ -226,14 +481,14 @@ For CI or final releases, run the complete pipeline:
 
 ```bash
 boltffi release apple
+boltffi release android
+boltffi release wasm
 ```
 
-This runs check, build, generate, and pack in sequence. Equivalent to:
+Or build everything at once:
 
 ```bash
-boltffi check --apple
-boltffi build apple --release
-boltffi generate swift
-boltffi generate header
-boltffi pack apple --release --no-build
+boltffi release all
 ```
+
+The `release` command runs check, build, generate, and pack in sequence for the specified platform.

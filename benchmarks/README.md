@@ -6,11 +6,19 @@ Performance comparison across platforms:
 
 All libraries wrap the exact same Rust code with identical public APIs, so the only variable is FFI overhead.
 
+## Prerequisites
+
+```bash
+just setup-targets
+```
+
+For Android, set `ANDROID_NDK_HOME`.
+
 ## Why This Matters
 
 FFI has inherent costs: crossing the language boundary, converting types, copying memory. UniFFI uses a runtime approach with serialization similar to JSON. BoltFFI generates specialized code at compile time that avoids most of this overhead.
 
-These benchmarks isolate the FFI layer by using trivial Rust implementations (just constructing data or summing numbers). The Rust code itself is not the bottleneck—the FFI marshalling is.
+These benchmarks isolate the FFI layer by using trivial Rust implementations (just constructing data or summing numbers).
 
 ## Test Data Structures
 
@@ -190,21 +198,38 @@ Results from `just bench-wasm` on Apple M3:
 | Benchmark | BoltFFI | wasm-bindgen | Speedup |
 |-----------|--------:|-------------:|--------:|
 | noop | 2 ns | 2 ns | 1x |
-| echo_i32 | 4 ns | 4 ns | 1x |
-| add | 4 ns | 5 ns | 1x |
-| echo_string_200 | 490 ns | 754 ns | 2x |
-| echo_string_1k | 787 ns | 2,884 ns | 4x |
-| generate_locations_100 | 2,236 ns | 40,833 ns | 18x |
-| generate_locations_1k | 24,387 ns | 15,422,638 ns | 632x |
-| generate_i32_vec_1k | 4,956 ns | 715 ns | -7x |
-| generate_bytes_64k | 36,639 ns | 4,009 ns | -9x |
-| counter_increment_1k | 2,668 ns | 3,138 ns | 1x |
-| accumulator_1k | 15,527 ns | 14,137 ns | 1x |
+| echo_i32 | 2 ns | 2 ns | 1x |
+| echo_f64 | 2 ns | 2 ns | 1x |
+| add | 2 ns | 2 ns | 1x |
+| multiply | 2 ns | 2 ns | 1x |
+| echo_string_200 | 487 ns | 763 ns | 1.6x |
+| echo_string_1k | 806 ns | 2,921 ns | 3.6x |
+| generate_string_1k | 231 ns | 241 ns | 1x |
+| generate_locations_100 | 2,199 ns | 283,753 ns | 129x |
+| generate_locations_1k | 21,931 ns | 4,037,879 ns | 184x |
+| generate_trades_100 | 5,595 ns | 616,253 ns | 110x |
+| generate_trades_1k | 42,015 ns | 5,781,767 ns | 138x |
+| generate_particles_100 | 3,117 ns | 748,287 ns | 240x |
+| generate_particles_1k | 29,886 ns | 13,532,530 ns | 453x |
+| generate_i32_vec_1k | 623 ns | 559 ns | -1.1x |
+| generate_i32_vec_10k | 3,667 ns | 3,493 ns | 1x |
+| generate_bytes_64k | 2,973 ns | 2,973 ns | 1x |
+| roundtrip_locations_100 | 15,467 ns | 24,587 ns | 1.6x |
+| roundtrip_i32_vec_1k | 1,305 ns | 1,228 ns | -1.1x |
+| counter_increment_1k | 2,382 ns | 2,594 ns | 1.1x |
+| datastore_add_1k | 91,226 ns | 115,574 ns | 1.3x |
+| accumulator_1k | 14,096 ns | 13,778 ns | 1x |
+| find_even_100 | 172 ns | 173 ns | 1x |
+| async_add | 243 ns | 327 ns | 1.3x |
 
-## Prerequisites
+#### So who wins?
 
-```bash
-just setup-targets
-```
+1. For pure primitives (integers, floats, scalars), both tie at ~2ns.
 
-For Android, set `ANDROID_NDK_HOME`.
+2. For strings, BoltFFI is 1.6-3.6x faster.
+
+3. For structured data (records, arrays of structs), BoltFFI is **110-453x faster**.
+
+4. For primitive vectors (`Vec<i32>`, `Vec<u8>`), both tie.
+
+BoltFFI wins for real world mixed data, and ties or a bit slower with wasm-bindgen on scalar types.

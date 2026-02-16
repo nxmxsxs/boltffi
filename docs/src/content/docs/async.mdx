@@ -1,5 +1,5 @@
 import CodeComparison from "../../components/CodeComparisonWrapper.astro";
-import TypeTable from "../../components/TypeTable";
+import TypeTable from "../../components/TypeTableWrapper.astro";
 
 # Async
 
@@ -21,6 +21,11 @@ suspend fun fetchUser(id: Int): User
 
 // Usage
 val user = fetchUser(42)`}
+  typescript={`// Generated
+async function fetchUser(id: number): Promise<User>
+
+// Usage
+const user = await fetchUser(42)`}
 />
 
 ## How It Works
@@ -49,6 +54,11 @@ suspend fun loadConfig(path: String): Config
 
 // Usage
 val config = loadConfig("settings.json")`}
+  typescript={`// Generated
+async function loadConfig(path: string): Promise<Config>
+
+// Usage
+const config = await loadConfig("settings.json")`}
 />
 
 ## Methods
@@ -93,6 +103,17 @@ class Database {
 // Usage
 val db = Database.connect("postgres://...")
 val rows = db.query("SELECT * FROM users")`}
+  typescript={`// Generated
+declare class Database {
+    private constructor()
+    static connect(url: string): Database
+    async query(sql: string): Promise<Row[]>
+    dispose(): void
+}
+
+// Usage
+const db = Database.connect("postgres://...")
+const rows = await db.query("SELECT * FROM users")`}
 />
 
 ## Error Handling
@@ -124,6 +145,15 @@ try {
 } catch (e: FfiException) {
     println("Failed: \${e.message}")
 }`}
+  typescript={`// Generated
+async function fetchUser(id: number): Promise<User>  // throws
+
+// Usage
+try {
+    const user = await fetchUser(42)
+} catch (e) {
+    console.log("Failed:", e)
+}`}
 />
 
 ## Cancellation
@@ -154,6 +184,12 @@ val job = scope.launch {
 }
 // later
 job.cancel()`}
+  typescript={`// Generated
+async function syncAll(): Promise<SyncResult>
+
+// Usage
+const promise = syncAll()
+const result = await promise`}
 />
 
 ## Runtime

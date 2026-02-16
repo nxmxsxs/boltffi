@@ -1,5 +1,5 @@
 import CodeComparison from "../../components/CodeComparisonWrapper.astro";
-import TypeTable from "../../components/TypeTable";
+import TypeTable from "../../components/TypeTableWrapper.astro";
 
 # Errors
 
@@ -54,6 +54,21 @@ try {
 } catch (e: FfiException) {
     println(e.message)
 }`}
+  typescript={`// Generated
+declare class FfiException extends Error {
+    readonly message: string
+}
+
+declare function parseInt(s: string): number  // throws
+
+// Usage
+try {
+    const n = parseInt("42")
+} catch (e) {
+    if (e instanceof FfiException) {
+        console.log(e.message)
+    }
+}`}
 />
 
 ## Struct Errors
@@ -107,6 +122,27 @@ try {
     val config = parseConfig(src)
 } catch (e: ParseError) {
     println("\${e.line}:\${e.column}: \${e.message}")
+}`}
+  typescript={`// Generated
+interface ParseError {
+    readonly line: number
+    readonly column: number
+    readonly message: string
+}
+
+declare class ParseErrorException extends Error {
+    readonly error: ParseError
+}
+
+declare function parseConfig(input: string): Config  // throws
+
+// Usage
+try {
+    const config = parseConfig(src)
+} catch (e) {
+    if (e instanceof ParseErrorException) {
+        console.log(\`\${e.error.line}:\${e.error.column}: \${e.error.message}\`)
+    }
 }`}
 />
 
@@ -174,6 +210,37 @@ try {
             println("Account is locked")
     }
 }`}
+  typescript={`// Generated
+declare enum AuthError {
+    InvalidCredentials = 0,
+    SessionExpired = 1,
+    AccountLocked = 2
+}
+
+declare class AuthErrorException extends Error {
+    readonly code: AuthError
+}
+
+declare function login(user: string, pass: string): Session  // throws
+
+// Usage
+try {
+    const session = login(u, p)
+} catch (e) {
+    if (e instanceof AuthErrorException) {
+        switch (e.code) {
+            case AuthError.InvalidCredentials:
+                console.log("Wrong username or password")
+                break
+            case AuthError.SessionExpired:
+                console.log("Please log in again")
+                break
+            case AuthError.AccountLocked:
+                console.log("Account is locked")
+                break
+        }
+    }
+}`}
 />
 
 ### Enums with Payloads
@@ -238,6 +305,36 @@ try {
             println("Try again in \${e.retryAfter}s")
     }
 }`}
+  typescript={`// Generated
+type ApiError =
+    | { readonly tag: "Network"; readonly message: string }
+    | { readonly tag: "NotFound" }
+    | { readonly tag: "RateLimited"; readonly retryAfter: number }
+
+declare class ApiErrorException extends Error {
+    readonly error: ApiError
+}
+
+declare function fetchUser(id: bigint): User  // throws
+
+// Usage
+try {
+    const user = fetchUser(42n)
+} catch (e) {
+    if (e instanceof ApiErrorException) {
+        switch (e.error.tag) {
+            case "Network":
+                console.log(\`Network error: \${e.error.message}\`)
+                break
+            case "NotFound":
+                console.log("User not found")
+                break
+            case "RateLimited":
+                console.log(\`Try again in \${e.error.retryAfter}s\`)
+                break
+        }
+    }
+}`}
 />
 
 ## Async Errors
@@ -271,6 +368,18 @@ try {
     process(data)
 } catch (e: FetchError) {
     handle(e)
+}`}
+  typescript={`// Generated
+declare async function fetchData(url: string): Promise<Uint8Array>  // throws
+
+// Usage
+try {
+    const data = await fetchData(endpoint)
+    process(data)
+} catch (e) {
+    if (e instanceof FetchErrorException) {
+        handle(e)
+    }
 }`}
 />
 

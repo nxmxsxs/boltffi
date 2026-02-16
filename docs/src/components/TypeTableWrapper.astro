@@ -1,0 +1,23 @@
+---
+import TypeTable from './TypeTable';
+
+interface TypeMapping {
+  rust: string;
+  swift: string;
+  kotlin: string;
+  typescript?: string;
+}
+
+interface Props {
+  title: string;
+  mappings: TypeMapping[];
+}
+
+const { title, mappings } = Astro.props;
+---
+
+<TypeTable
+  title={title}
+  mappings={mappings}
+  client:load
+/>

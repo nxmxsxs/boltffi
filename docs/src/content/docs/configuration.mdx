@@ -25,14 +25,14 @@ BoltFFI scans and builds the crate specified by `crate`, but uses `name` for all
 
 ## Apple Configuration
 
-The `[apple]` section controls iOS, iOS Simulator, and optionally macOS builds.
+The `[targets.apple]` section controls iOS, iOS Simulator, and optionally macOS builds.
 
 ### Output Directory
 
 All Apple artifacts go into a single root directory. By default this is `dist/apple`, but you can change it:
 
 ```toml
-[apple]
+[targets.apple]
 output = "build/ios"
 ```
 
@@ -43,7 +43,7 @@ After running `boltffi pack apple`, this directory contains your xcframework, Pa
 The deployment target sets the minimum iOS version your library supports. This affects which APIs are available and which devices can run your code:
 
 ```toml
-[apple]
+[targets.apple]
 deployment_target = "15.0"
 ```
 
@@ -54,7 +54,7 @@ The default is `16.0`. Lower this if you need to support older devices, but be a
 By default, BoltFFI only builds for iOS and iOS Simulator. If your library also needs to run on Mac, enable macOS builds:
 
 ```toml
-[apple]
+[targets.apple]
 include_macos = true
 ```
 
@@ -65,7 +65,7 @@ This adds macOS slices to your xcframework, making it usable in Mac Catalyst app
 The generated Swift code is organized into a module. By default, BoltFFI converts your package name to PascalCase (`mylib` becomes `MyLib`). Override this if you want a different name:
 
 ```toml
-[apple.swift]
+[targets.apple.swift]
 module_name = "MyLibrary"
 ```
 
@@ -80,7 +80,7 @@ The layout determines how BoltFFI structures the SwiftPM package. This is the mo
 This is the default and simplest option. BoltFFI creates a self-contained SwiftPM package with everything inside:
 
 ```toml
-[apple.spm]
+[targets.apple.spm]
 layout = "ffi-only"
 ```
 
@@ -134,7 +134,7 @@ To use this package in Xcode, add it as a local package dependency pointing to `
 Use this when you have an existing Swift package and want to add BoltFFI-generated bindings to it. BoltFFI places the generated Swift inside your existing source directory:
 
 ```toml
-[apple.spm]
+[targets.apple.spm]
 layout = "bundled"
 wrapper_sources = "Sources/MyWrapper"
 ```
@@ -160,10 +160,10 @@ The `wrapper_sources` path tells BoltFFI where your existing Swift target lives.
 Use this when you want maximum control. BoltFFI creates a binary-only package containing just the xcframework, and writes the generated Swift to a separate location:
 
 ```toml
-[apple.spm]
+[targets.apple.spm]
 layout = "split"
 
-[apple.swift]
+[targets.apple.swift]
 output = "Sources/Generated"
 ```
 
@@ -208,7 +208,7 @@ You then create your own package that depends on `MyLibFFI` and includes the gen
 By default, Package.swift references the xcframework via a local file path. This works for development and when you bundle the package directly in your app repository. For distributing your library to others, switch to remote distribution:
 
 ```toml
-[apple.spm]
+[targets.apple.spm]
 distribution = "remote"
 repo_url = "https://github.com/yourname/mylib/releases/download"
 ```
@@ -235,7 +235,7 @@ Upload `MyLib.xcframework.zip` to your GitHub release. Consumers can then add yo
 If you use custom types that should map to native Swift types, configure type mappings. For example, if your Rust code uses a `Uuid` type that should become Swift's `UUID`:
 
 ```toml
-[apple.swift.type_mappings]
+[targets.apple.swift.type_mappings]
 Uuid = { type = "UUID", conversion = "uuid_string" }
 ```
 
@@ -247,14 +247,14 @@ Available conversions:
 
 ## Android Configuration
 
-The `[android]` section controls builds for all Android ABIs.
+The `[targets.android]` section controls builds for all Android ABIs.
 
 ### Output Directory
 
 All Android artifacts go into a single root directory:
 
 ```toml
-[android]
+[targets.android]
 output = "build/android"
 ```
 
@@ -265,7 +265,7 @@ The default is `dist/android`. After running `boltffi pack android`, this direct
 Set the minimum Android API level:
 
 ```toml
-[android]
+[targets.android]
 min_sdk = 21
 ```
 
@@ -276,7 +276,7 @@ The default is `24` (Android 7.0). Lower values support more devices but may lim
 Generated Kotlin code needs a package name. By default, BoltFFI uses `com.example.{name}`:
 
 ```toml
-[android.kotlin]
+[targets.android.kotlin]
 package = "com.mycompany.mylib"
 ```
 
@@ -287,7 +287,7 @@ This determines the directory structure of the generated files and the package d
 Choose how exported functions appear in Kotlin:
 
 ```toml
-[android.kotlin]
+[targets.android.kotlin]
 api_style = "top_level"
 ```
 
@@ -302,7 +302,7 @@ val result = processData(input)
 **module_object**: Functions are methods on an object. Useful if you want to namespace everything:
 
 ```toml
-[android.kotlin]
+[targets.android.kotlin]
 api_style = "module_object"
 module_name = "MyLib"
 ```
@@ -318,7 +318,7 @@ val result = MyLib.processData(input)
 When your Rust code has factory functions (functions that create class instances), choose how they appear in Kotlin:
 
 ```toml
-[android.kotlin]
+[targets.android.kotlin]
 factory_style = "constructors"
 ```
 
@@ -358,37 +358,151 @@ dist/android/
 
 Copy `jniLibs` to your Android project's `src/main/` directory. Copy the Kotlin sources to your source set. The native libraries are loaded automatically when you first use the Kotlin bindings.
 
+## WASM Configuration
+
+The `[targets.wasm]` section controls WebAssembly builds and npm package generation.
+
+### Output Directory
+
+All WASM artifacts go into a single root directory:
+
+```toml
+[targets.wasm]
+output = "dist/wasm"
+```
+
+The default is `dist/wasm`. After running `boltffi pack wasm`, this directory contains your compiled WASM binary, TypeScript bindings, and npm package files.
+
+### Build Profile
+
+Control whether to build debug or release:
+
+```toml
+[targets.wasm]
+profile = "release"
+```
+
+The default is `release`. Use `debug` during development for faster builds and better error messages, but always ship `release` builds.
+
+### wasm-opt Optimization
+
+Release builds run `wasm-opt` to reduce binary size:
+
+```toml
+[targets.wasm.optimize]
+enabled = true
+level = "s"          # optimize for size
+strip_debug = true   # remove debug info
+```
+
+Available optimization levels:
+- `0` through `4`: increasing optimization (4 is most aggressive)
+- `s`: optimize for size (default, recommended)
+- `z`: optimize aggressively for size
+
+Set `enabled = false` during development to skip optimization and speed up builds.
+
+### TypeScript Module Name
+
+The generated TypeScript uses a module name derived from your package name. Override it if needed:
+
+```toml
+[targets.wasm.typescript]
+module_name = "mylib"
+output = "dist/wasm/pkg"
+```
+
+This affects the generated filenames: `mylib.js`, `mylib.d.ts`, `mylib_bg.wasm`.
+
+### npm Package
+
+Configure the npm package that `boltffi pack wasm` generates:
+
+```toml
+[targets.wasm.npm]
+package_name = "@mycompany/mylib"
+targets = ["bundler", "web", "nodejs"]
+```
+
+The `package_name` field is required for packaging. Include the scope if publishing to a scoped npm registry.
+
+The `targets` array controls which environment entrypoints are generated:
+
+- `bundler`: For Vite, webpack, and other bundlers that handle WASM loading
+- `web`: For browsers without a bundler (uses `fetch()` to load WASM)
+- `nodejs`: For Node.js (uses `fs.readFile()` to load WASM)
+
+Include only the targets you need. Each generates a separate entrypoint file.
+
+### npm Package Metadata
+
+Add metadata to the generated `package.json`:
+
+```toml
+[targets.wasm.npm]
+package_name = "@mycompany/mylib"
+version = "1.0.0"
+license = "MIT"
+repository = "https://github.com/mycompany/mylib"
+generate_package_json = true
+generate_readme = true
+```
+
+If `version`, `license`, or `repository` are not set, they fall back to the values in `[package]` or your `Cargo.toml`.
+
+### Type Mappings
+
+Map custom types to native TypeScript types:
+
+```toml
+[targets.wasm.typescript.type_mappings]
+Uuid = { type = "string", conversion = "uuid_string" }
+```
+
+Since TypeScript doesn't have native UUID or URL types, these typically map to `string`.
+
 ## Complete Example
 
-Here's a full configuration for a library that targets both platforms:
+Here's a full configuration for a library that targets all platforms:
 
 ```toml
 [package]
 name = "mylib"
 
-[apple]
+[targets.apple]
 output = "dist/apple"
 deployment_target = "15.0"
 include_macos = true
 
-[apple.swift]
+[targets.apple.swift]
 module_name = "MyLib"
 
-[apple.swift.type_mappings]
+[targets.apple.swift.type_mappings]
 Uuid = { type = "UUID", conversion = "uuid_string" }
 
-[apple.spm]
+[targets.apple.spm]
 layout = "ffi-only"
 distribution = "local"
 
-[android]
+[targets.android]
 output = "dist/android"
 min_sdk = 24
 
-[android.kotlin]
+[targets.android.kotlin]
 package = "com.mycompany.mylib"
 api_style = "top_level"
 factory_style = "constructors"
+
+[targets.wasm]
+output = "dist/wasm"
+
+[targets.wasm.npm]
+package_name = "@mycompany/mylib"
+targets = ["bundler", "web", "nodejs"]
+
+[targets.wasm.optimize]
+enabled = true
+level = "s"
 ```
 
 This configuration:
@@ -398,3 +512,4 @@ This configuration:
 - Maps `Uuid` to native Swift `UUID`
 - Builds for Android API 24+
 - Generates top-level Kotlin functions with constructor-style factories
+- Builds optimized WASM with npm package `@mycompany/mylib`

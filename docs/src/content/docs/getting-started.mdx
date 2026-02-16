@@ -7,6 +7,7 @@ This guide walks you through creating a Rust library and packaging it for use in
 - Rust 1.70+ ([rustup.rs](https://rustup.rs))
 - For Apple: Xcode 15+ with command line tools
 - For Android: Android Studio with NDK
+- For WASM: Node.js 18+ and wasm-pack (`cargo install wasm-pack`)
 
 ## Install BoltFFI
 
@@ -63,18 +64,21 @@ pub fn distance(a: Point, b: Point) -> f64 {
 ## Build and package
 
 ```bash
-boltffi init                    # creates boltffi.toml
-boltffi pack apple --release    # builds, generates Swift, packages xcframework
+boltffi init              # creates boltffi.toml
+boltffi pack --release    # builds for all platforms
 ```
 
 This creates:
-- `dist/apple/MyLib.xcframework`
-- `dist/apple/Package.swift`
+- `dist/apple/` - XCFramework + Swift bindings
+- `dist/android/` - JNI libraries + Kotlin bindings
+- `dist/wasm/` - WASM module + TypeScript bindings
 
-For Android:
+To build for a single platform:
 
 ```bash
-boltffi pack android --release  # builds, generates Kotlin, packages jniLibs
+boltffi pack apple --release
+boltffi pack android --release
+boltffi pack wasm --release
 ```
 
 ## Use in Swift
@@ -99,6 +103,52 @@ import com.example.mylib.*
 val p1 = Point(0.0, 0.0)
 val p2 = Point(3.0, 4.0)
 println(distance(p1, p2))  // 5.0
+```
+
+## Use in TypeScript
+
+The WASM package works in bundlers, Node.js, and browsers.
+
+### With a Bundler (Vite, webpack)
+
+Import directly - your bundler handles WASM loading:
+
+```typescript
+import { Point, distance } from 'mylib';
+
+const p1: Point = { x: 0, y: 0 };
+const p2: Point = { x: 3, y: 4 };
+console.log(distance(p1, p2));  // 5.0
+```
+
+### In Node.js
+
+Await initialization before calling functions:
+
+```typescript
+import { initialized, Point, distance } from 'mylib';
+
+await initialized;
+
+const p1: Point = { x: 0, y: 0 };
+const p2: Point = { x: 3, y: 4 };
+console.log(distance(p1, p2));  // 5.0
+```
+
+### In a Browser (no bundler)
+
+Use the web entrypoint and call `init()`:
+
+```html
+<script type="module">
+  import init, { distance } from './pkg/web.js';
+  
+  await init();
+  
+  const p1 = { x: 0, y: 0 };
+  const p2 = { x: 3, y: 4 };
+  console.log(distance(p1, p2));  // 5.0
+</script>
 ```
 
 ## What you learned

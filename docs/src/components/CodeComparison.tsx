@@ -5,11 +5,13 @@ import Prism from "prismjs";
 import "prismjs/components/prism-rust";
 import "prismjs/components/prism-swift";
 import "prismjs/components/prism-kotlin";
+import "prismjs/components/prism-typescript";
 
 interface CodeComparisonProps {
   rust: string;
   swift: string;
   kotlin: string;
+  typescript?: string;
   title?: string;
 }
 
@@ -19,17 +21,24 @@ function highlight(code: string, lang: string): string {
   return code;
 }
 
-const CodeComparison = ({ rust, swift, kotlin, title }: CodeComparisonProps) => {
-  const [activeLang, setActiveLang] = useState<"Swift" | "Kotlin">("Swift");
+const CodeComparison = ({ rust, swift, kotlin, typescript, title }: CodeComparisonProps) => {
+  const [activeLang, setActiveLang] = useState<"Swift" | "Kotlin" | "TypeScript">("Swift");
   const [copiedSide, setCopiedSide] = useState<"left" | "right" | null>(null);
 
-  const bindings = { Swift: swift, Kotlin: kotlin };
-  const langMap = { Swift: "swift", Kotlin: "kotlin" };
+  const bindings: Record<string, string> = { Swift: swift, Kotlin: kotlin };
+  const langMap: Record<string, string> = { Swift: "swift", Kotlin: "kotlin" };
+  const availableLangs: ("Swift" | "Kotlin" | "TypeScript")[] = ["Swift", "Kotlin"];
+
+  if (typescript) {
+    bindings.TypeScript = typescript;
+    langMap.TypeScript = "typescript";
+    availableLangs.push("TypeScript");
+  }
 
   const rustHighlighted = useMemo(() => highlight(rust, "rust"), [rust]);
   const bindingHighlighted = useMemo(
     () => highlight(bindings[activeLang], langMap[activeLang]),
-    [activeLang, swift, kotlin]
+    [activeLang, swift, kotlin, typescript]
   );
 
   const handleCopy = (code: string, side: "left" | "right") => {
@@ -70,7 +79,7 @@ const CodeComparison = ({ rust, swift, kotlin, title }: CodeComparisonProps) => 
         <div className="relative group min-w-0">
           <div className="flex items-center justify-between px-4 py-2 border-b border-border bg-muted/30 h-[42px]">
             <div className="flex items-center gap-1">
-              {(["Swift", "Kotlin"] as const).map((lang) => (
+              {availableLangs.map((lang) => (
                 <button
                   key={lang}
                   onClick={() => setActiveLang(lang)}

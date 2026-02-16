@@ -5,6 +5,7 @@ interface TypeMapping {
   rust: string;
   swift: string;
   kotlin: string;
+  typescript?: string;
 }
 
 interface TypeTableProps {
@@ -13,14 +14,25 @@ interface TypeTableProps {
 }
 
 const TypeTable = ({ title, mappings }: TypeTableProps) => {
-  const [activeLang, setActiveLang] = useState<"Swift" | "Kotlin">("Swift");
+  const hasTypeScript = mappings.some(m => m.typescript);
+  const langs = hasTypeScript
+    ? (["Swift", "Kotlin", "TypeScript"] as const)
+    : (["Swift", "Kotlin"] as const);
+
+  const [activeLang, setActiveLang] = useState<"Swift" | "Kotlin" | "TypeScript">("Swift");
+
+  const getValue = (mapping: TypeMapping) => {
+    if (activeLang === "Swift") return mapping.swift;
+    if (activeLang === "Kotlin") return mapping.kotlin;
+    return mapping.typescript || mapping.kotlin;
+  };
 
   return (
     <div className="my-3">
       <div className="flex items-center gap-3 mb-2">
         <span className="text-sm font-medium text-muted-foreground">{title}</span>
         <div className="flex items-center gap-0.5">
-          {(["Swift", "Kotlin"] as const).map((lang) => (
+          {langs.map((lang) => (
             <button
               key={lang}
               onClick={() => setActiveLang(lang)}
@@ -42,7 +54,7 @@ const TypeTable = ({ title, mappings }: TypeTableProps) => {
             <code className="text-sm font-mono text-primary">{mapping.rust}</code>
             <span className="text-muted-foreground text-sm">→</span>
             <code className="text-sm font-mono text-muted-foreground">
-              {activeLang === "Swift" ? mapping.swift : mapping.kotlin}
+              {getValue(mapping)}
             </code>
           </div>
         ))}

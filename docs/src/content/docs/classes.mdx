@@ -1,5 +1,5 @@
 import CodeComparison from "../../components/CodeComparisonWrapper.astro";
-import TypeTable from "../../components/TypeTable";
+import TypeTable from "../../components/TypeTableWrapper.astro";
 
 # Classes
 
@@ -55,6 +55,19 @@ val counter = Counter()
 counter.increment()
 counter.increment()
 println(counter.get())  // 2`}
+  typescript={`declare class Counter {
+    private constructor()
+    static new(): Counter
+    increment(): void
+    get(): number
+    dispose(): void
+}
+
+const counter = Counter.new()
+counter.increment()
+counter.increment()
+console.log(counter.get())  // 2
+counter.dispose()`}
 />
 
 ## Constructors
@@ -83,6 +96,13 @@ let c = Counter()`}
 }
 
 val c = Counter()`}
+  typescript={`declare class Counter {
+    private constructor()
+    static new(): Counter
+    dispose(): void
+}
+
+const c = Counter.new()`}
 />
 
 ### Named constructors with parameters
@@ -122,7 +142,7 @@ let db2 = Database(path: "data.db")
 let db3 = Database(path: "data.db", readOnly: true)`}
   kotlin={`class Database {
     constructor()
-    
+
     companion object {
         fun open(path: String): Database
         fun withOptions(path: String, readOnly: Boolean): Database
@@ -132,6 +152,17 @@ let db3 = Database(path: "data.db", readOnly: true)`}
 val db1 = Database()
 val db2 = Database.open("data.db")
 val db3 = Database.withOptions("data.db", true)`}
+  typescript={`declare class Database {
+    private constructor()
+    static new(): Database
+    static open(path: string): Database
+    static withOptions(path: string, readOnly: boolean): Database
+    dispose(): void
+}
+
+const db1 = Database.new()
+const db2 = Database.open("data.db")
+const db3 = Database.withOptions("data.db", true)`}
 />
 
 ### Factory methods (no parameters)
@@ -163,7 +194,7 @@ impl Config {
 let cfg = Config.production()`}
   kotlin={`class Config {
     constructor()
-    
+
     companion object {
         fun production(): Config
         fun development(): Config
@@ -171,6 +202,15 @@ let cfg = Config.production()`}
 }
 
 val cfg = Config.production()`}
+  typescript={`declare class Config {
+    private constructor()
+    static new(): Config
+    static production(): Config
+    static development(): Config
+    dispose(): void
+}
+
+const cfg = Config.production()`}
 />
 
 ### Fallible constructors
@@ -214,6 +254,28 @@ try {
     val db = Database.open("data.db")
 } catch (e: DbError.NotFound) {
     println("file not found")
+}`}
+  typescript={`declare enum DbError {
+    NotFound = 0,
+    PermissionDenied = 1
+}
+
+declare class DbErrorException extends Error {
+    readonly code: DbError
+}
+
+declare class Database {
+    private constructor()
+    static open(path: string): Database  // throws
+    dispose(): void
+}
+
+try {
+    const db = Database.open("data.db")
+} catch (e) {
+    if (e instanceof DbErrorException && e.code === DbError.NotFound) {
+        console.log("file not found")
+    }
 }`}
 />
 
@@ -275,6 +337,24 @@ try {
 } catch (e: AccountError) {
     println(e.message)
 }`}
+  typescript={`declare class Account {
+    private constructor()
+    static new(): Account
+    balance(): bigint
+    deposit(amount: bigint): void
+    withdraw(amount: bigint): void  // throws
+    dispose(): void
+}
+
+const acc = Account.new()
+acc.deposit(100n)
+console.log(acc.balance())
+
+try {
+    acc.withdraw(50n)
+} catch (e) {
+    console.log(e)
+}`}
 />
 
 ### &self vs &mut self
@@ -313,6 +393,13 @@ let t = Config.defaultTimeout()`}
 }
 
 val t = Config.defaultTimeout()`}
+  typescript={`declare class Config {
+    private constructor()
+    static defaultTimeout(): number
+    static maxConnections(): number
+}
+
+const t = Config.defaultTimeout()`}
 />
 
 ### Async methods
@@ -362,6 +449,16 @@ let data = try await client.get(url: "https://api.example.com")`}
 
 val client = HttpClient()
 val data = client.get("https://api.example.com")`}
+  typescript={`declare class HttpClient {
+    private constructor()
+    static new(): HttpClient
+    async get(url: string): Promise<string>
+    async post(url: string, body: string): Promise<string>
+    dispose(): void
+}
+
+const client = HttpClient.new()
+const data = await client.get("https://api.example.com")`}
 />
 
 ### Methods that take or return classes
@@ -403,6 +500,21 @@ let u = session.user()`}
 val user = User("alice")
 val session = Session(user)
 val u = session.user()`}
+  typescript={`declare class Session {
+    private constructor()
+    static new(user: User): Session
+    user(): User
+    dispose(): void
+}
+
+declare class User {
+    private constructor()
+    id(): bigint
+}
+
+const user = User.new("alice")
+const session = Session.new(user)
+const u = session.user()`}
 />
 
 ## Skipping methods
@@ -477,6 +589,18 @@ val counter = SafeCounter()
 repeat(100) {
     thread { counter.increment() }
 }`}
+  typescript={`declare class SafeCounter {
+    private constructor()
+    static new(): SafeCounter
+    increment(): void
+    get(): number
+    dispose(): void
+}
+
+const counter = SafeCounter.new()
+await Promise.all(
+    Array(100).fill(0).map(() => counter.increment())
+)`}
 />
 
 ### Opting out

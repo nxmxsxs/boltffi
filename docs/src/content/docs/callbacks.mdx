@@ -1,5 +1,5 @@
 import CodeComparison from "../../components/CodeComparisonWrapper.astro";
-import TypeTable from "../../components/TypeTable";
+import TypeTable from "../../components/TypeTableWrapper.astro";
 
 # Callbacks & Traits
 
@@ -40,6 +40,19 @@ var sum = 0
 foreachItem(intArrayOf(1, 2, 3)) { value ->
     sum += value
 }`}
+  typescript={`// Generated
+type ForeachCallback = (value: number) => void
+
+declare function foreachItem(
+    items: number[],
+    callback: ForeachCallback
+): void
+
+// Usage
+let sum = 0
+foreachItem([1, 2, 3], (value) => {
+    sum += value
+})`}
 />
 
 ### Return Values
@@ -71,6 +84,16 @@ fun transform(
 
 // Usage
 val doubled = transform(intArrayOf(1, 2, 3)) { it * 2 }`}
+  typescript={`// Generated
+type TransformFn = (value: number) => number
+
+declare function transform(
+    items: number[],
+    f: TransformFn
+): number[]
+
+// Usage
+const doubled = transform([1, 2, 3], (v) => v * 2)`}
 />
 
 ## Traits
@@ -147,6 +170,32 @@ class MyHandler : ProgressHandlerProtocol {
 }
 
 download("https://example.com", MyHandler())`}
+  typescript={`// Generated
+interface ProgressHandler {
+    onProgress(percent: number): void
+    onComplete(result: string): void
+    onError(error: string): void
+}
+
+declare function download(
+    url: string,
+    handler: ProgressHandler
+): void
+
+// Usage
+const handler: ProgressHandler = {
+    onProgress(percent) {
+        console.log(\`Progress: \${percent}%\`)
+    },
+    onComplete(result) {
+        console.log(\`Done: \${result}\`)
+    },
+    onError(error) {
+        console.log(\`Error: \${error}\`)
+    }
+}
+
+download("https://example.com", handler)`}
 />
 
 ### Ownership
@@ -180,6 +229,13 @@ fun sharedUse(handler: ProgressHandlerProtocol)
 // Usage is identical from Kotlin side
 singleUse(MyHandler())
 sharedUse(MyHandler())`}
+  typescript={`// Both accept the same interface
+declare function singleUse(handler: ProgressHandler): void
+declare function sharedUse(handler: ProgressHandler): void
+
+// Usage is identical from TypeScript side
+singleUse(handler)
+sharedUse(handler)`}
 />
 
 ### Async Methods
@@ -237,6 +293,24 @@ class MyProvider : DataProviderProtocol {
 }
 
 val result = process(MyProvider())`}
+  typescript={`// Generated
+interface DataProvider {
+    fetch(key: string): Promise<string>
+}
+
+declare async function process(
+    provider: DataProvider
+): Promise<string>
+
+// Usage
+const provider: DataProvider = {
+    async fetch(key) {
+        // can do async work here
+        return \`value for \${key}\`
+    }
+}
+
+const result = await process(provider)`}
 />
 
 ### Storing Traits
@@ -276,6 +350,25 @@ class Engine(logger: LoggerProtocol) {
 // Usage
 val engine = Engine(MyLogger())
 engine.doWork()`}
+  typescript={`// Generated
+interface Logger {
+    log(message: string): void
+}
+
+declare class Engine {
+    private constructor()
+    static new(logger: Logger): Engine
+    doWork(): void
+    dispose(): void
+}
+
+// Usage
+const logger: Logger = {
+    log(message) { console.log(message) }
+}
+const engine = Engine.new(logger)
+engine.doWork()
+engine.dispose()`}
 />
 
 ### Thread Safety

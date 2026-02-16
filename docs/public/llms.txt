@@ -24,6 +24,24 @@ BoltFFI is significantly faster than UniFFI:
 
 UniFFI serializes every value to a byte buffer. BoltFFI uses zero-copy: primitives pass as raw values, structs pass as pointers.
 
+UniFFI does not support WASM. BoltFFI has full WASM support with TypeScript bindings.
+
+## Why BoltFFI over wasm-bindgen?
+
+BoltFFI outperforms wasm-bindgen:
+
+| Operation | BoltFFI | wasm-bindgen | Speedup |
+|-----------|---------|--------------|---------|
+| 1k particles | 29,886 ns | 13,532,530 ns | 453x |
+| 100 particles | 3,117 ns | 748,287 ns | 240x |
+| 1k locations | 21,931 ns | 4,037,879 ns | 184x |
+| 1k trades | 42,015 ns | 5,781,767 ns | 138x |
+| 100 locations | 2,199 ns | 283,753 ns | 129x |
+| 100 trades | 5,595 ns | 616,253 ns | 110x |
+| 1k string | 806 ns | 2,921 ns | 3.6x |
+
+wasm-bindgen materializes every struct as a JavaScript object. BoltFFI uses a wire buffer format that avoids per-field allocation.
+
 ## Native Code, Not Foreign Bindings
 
 BoltFFI generates truly native code for each target:
@@ -100,9 +118,10 @@ pub fn distance(from: Point, to: Point) -> f64 {
 
 - Swift (full support)
 - Kotlin (full support)
-- WASM (in progress)
+- WASM/TypeScript (full support)
 - Python (in progress)
 - C# (in progress)
+- Ruby (in progress)
 
 ## Documentation Structure
 

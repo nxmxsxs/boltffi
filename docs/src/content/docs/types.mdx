@@ -1,5 +1,5 @@
 import CodeComparison from "../../components/CodeComparisonWrapper.astro";
-import TypeTable from "../../components/TypeTable";
+import TypeTable from "../../components/TypeTableWrapper.astro";
 
 # Types
 
@@ -7,36 +7,53 @@ When you design a Rust API for BoltFFI, you need to know what happens to your ty
 
 ## Quick Reference
 
-<TypeTable 
+#### Numeric Types
+
+<TypeTable
   title="Integers"
   mappings={[
-    { rust: "i8", swift: "Int8", kotlin: "Byte" },
-    { rust: "i16", swift: "Int16", kotlin: "Short" },
-    { rust: "i32", swift: "Int32", kotlin: "Int" },
-    { rust: "i64", swift: "Int64", kotlin: "Long" },
-    { rust: "u8", swift: "UInt8", kotlin: "UByte" },
-    { rust: "u16", swift: "UInt16", kotlin: "UShort" },
-    { rust: "u32", swift: "UInt32", kotlin: "UInt" },
-    { rust: "u64", swift: "UInt64", kotlin: "ULong" },
+    { rust: "i8", swift: "Int8", kotlin: "Byte", typescript: "number" },
+    { rust: "i16", swift: "Int16", kotlin: "Short", typescript: "number" },
+    { rust: "i32", swift: "Int32", kotlin: "Int", typescript: "number" },
+    { rust: "i64", swift: "Int64", kotlin: "Long", typescript: "bigint" },
+    { rust: "u8", swift: "UInt8", kotlin: "UByte", typescript: "number" },
+    { rust: "u16", swift: "UInt16", kotlin: "UShort", typescript: "number" },
+    { rust: "u32", swift: "UInt32", kotlin: "UInt", typescript: "number" },
+    { rust: "u64", swift: "UInt64", kotlin: "ULong", typescript: "bigint" },
   ]}
 />
 
-<TypeTable 
+<TypeTable
   title="Floats & Primitives"
   mappings={[
-    { rust: "f32", swift: "Float", kotlin: "Float" },
-    { rust: "f64", swift: "Double", kotlin: "Double" },
-    { rust: "bool", swift: "Bool", kotlin: "Boolean" },
-    { rust: "String", swift: "String", kotlin: "String" },
+    { rust: "f32", swift: "Float", kotlin: "Float", typescript: "number" },
+    { rust: "f64", swift: "Double", kotlin: "Double", typescript: "number" },
+    { rust: "bool", swift: "Bool", kotlin: "Boolean", typescript: "boolean" },
+    { rust: "String", swift: "String", kotlin: "String", typescript: "string" },
   ]}
 />
 
-<TypeTable 
-  title="Collections & Wrappers"
+#### Collections & Wrappers
+
+<TypeTable
+  title=""
   mappings={[
-    { rust: "Vec<T>", swift: "[T]", kotlin: "List<T>" },
-    { rust: "Option<T>", swift: "T?", kotlin: "T?" },
-    { rust: "Result<T, E>", swift: "throws", kotlin: "throws" },
+    { rust: "Vec<T>", swift: "[T]", kotlin: "List<T>", typescript: "T[]" },
+    { rust: "Option<T>", swift: "T?", kotlin: "T?", typescript: "T | null" },
+    { rust: "Result<T, E>", swift: "throws", kotlin: "throws", typescript: "throws" },
+  ]}
+/>
+
+#### Built-in Custom Types
+
+<TypeTable
+  title=""
+  mappings={[
+    { rust: "Duration", swift: "TimeInterval", kotlin: "Duration", typescript: "Duration" },
+    { rust: "SystemTime", swift: "Date", kotlin: "Instant", typescript: "Date" },
+    { rust: "Uuid", swift: "UUID", kotlin: "UUID", typescript: "string" },
+    { rust: "Url", swift: "URL", kotlin: "URI", typescript: "string" },
+    { rust: "Vec<u8>", swift: "Data", kotlin: "ByteArray", typescript: "Uint8Array" },
   ]}
 />
 
@@ -84,6 +101,13 @@ fun byteAt(data: ByteArray, index: ULong): UByte
 val sum = add(5, 3)
 val ts = timestampMs()
 val b = byteAt(byteArrayOf(0x48, 0x69), 0uL)`}
+  typescript={`function add(a: number, b: number): number
+function timestampMs(): bigint
+function byteAt(data: Uint8Array, index: number): number
+
+const sum = add(5, 3)
+const ts = timestampMs()
+const b = byteAt(new Uint8Array([0x48, 0x69]), 0)`}
 />
 
 For floating point, `f64` is the default choice. It matches what most languages use for their default float type, and the extra precision rarely hurts. Use `f32` when you're interfacing with graphics APIs, audio processing, or other domains where single precision is the standard.
@@ -109,6 +133,11 @@ fun lerp(a: Float, b: Float, t: Float): Float
 
 val area = circleArea(5.0)
 val mid = lerp(0.0f, 10.0f, 0.5f)`}
+  typescript={`function circleArea(radius: number): number
+function lerp(a: number, b: number, t: number): number
+
+const area = circleArea(5.0)
+const mid = lerp(0.0, 10.0, 0.5)`}
 />
 
 ## Strings
@@ -152,6 +181,13 @@ fun firstWord(s: String): String
 val msg = greet("World")
 val ha = repeat("ha", 3uL)  // "hahaha"
 val word = firstWord("hello world")`}
+  typescript={`function greet(name: string): string
+function repeat(s: string, n: number): string
+function firstWord(s: string): string
+
+const msg = greet("World")
+const ha = repeat("ha", 3)  // "hahaha"
+const word = firstWord("hello world")`}
 />
 
 If string handling is your bottleneck, rethink the API. Instead of calling a function once per string in a loop, pass a batch of strings and process them all in one call. Or do the string-heavy work entirely on the Rust side and only return the final result.
@@ -227,6 +263,12 @@ fun parseInt(s: String): Int?
 val user = findUser(42uL)  // "alice"
 val num = parseInt("123")  // 123
 val bad = parseInt("abc")  // null`}
+  typescript={`function findUser(id: bigint): string | null
+function parseInt(s: string): number | null
+
+const user = findUser(42n)  // "alice"
+const num = parseInt("123") // 123
+const bad = parseInt("abc") // null`}
 />
 
 ## Result and errors
@@ -285,6 +327,27 @@ try {
 } catch (e: ParseError) {
     println("other error")
 }`}
+  typescript={`enum ParseError {
+    Empty = 0,
+    InvalidFormat = 1,
+    OutOfRange = 2
+}
+
+class ParseErrorException extends Error {
+    readonly code: ParseError
+}
+
+function parsePort(s: string): number // throws
+
+try {
+    const port = parsePort("8080")
+} catch (e) {
+    if (e instanceof ParseErrorException && e.code === ParseError.Empty) {
+        console.log("empty input")
+    } else {
+        console.log("other error")
+    }
+}`}
 />
 
 ## Collections
@@ -332,6 +395,13 @@ fun filterPositive(values: IntArray): IntArray
 val total = sum(intArrayOf(1, 2, 3, 4, 5))
 val nums = range(0, 10)
 val pos = filterPositive(intArrayOf(-1, 2, -3, 4))`}
+  typescript={`function sum(values: number[]): number
+function range(start: number, end: number): number[]
+function filterPositive(values: number[]): number[]
+
+const total = sum([1, 2, 3, 4, 5])
+const nums = range(0, 10)
+const pos = filterPositive([-1, 2, -3, 4])`}
 />
 
 ### Nested collections
@@ -366,6 +436,11 @@ let t = transpose(matrix: m)
 
 val m = listOf(intArrayOf(1, 2, 3), intArrayOf(4, 5, 6))
 val t = transpose(m)
+// [[1, 4], [2, 5], [3, 6]]`}
+  typescript={`function transpose(matrix: number[][]): number[][]
+
+const m = [[1, 2, 3], [4, 5, 6]]
+const t = transpose(m)
 // [[1, 4], [2, 5], [3, 6]]`}
 />
 
@@ -405,3 +480,188 @@ Some Rust types can't cross the FFI boundary. This isn't a limitation of BoltFFI
 - Non-static lifetimes like `&'a str` can't be enforced across FFI. Return owned data (`String`) instead of borrowed references.
 
 - HashSet doesn't have a universal representation. Convert to `Vec<T>` instead.
+
+## Built-in custom types
+
+BoltFFI recognizes certain standard library and common crate types and maps them to idiomatic equivalents in each target language.
+
+<TypeTable
+  title="Built-in Type Mappings"
+  mappings={[
+    { rust: "std::time::Duration", swift: "TimeInterval", kotlin: "Duration", typescript: "Duration" },
+    { rust: "std::time::SystemTime", swift: "Date", kotlin: "Instant", typescript: "Date" },
+    { rust: "uuid::Uuid", swift: "UUID", kotlin: "UUID", typescript: "string" },
+    { rust: "url::Url", swift: "URL", kotlin: "URI", typescript: "string" },
+    { rust: "Vec<u8>", swift: "Data", kotlin: "ByteArray", typescript: "Uint8Array" },
+  ]}
+/>
+
+### Duration
+
+`std::time::Duration` represents a span of time. BoltFFI encodes it as seconds plus nanoseconds (12 bytes total). Swift uses `TimeInterval` (a `Double` of seconds), Kotlin uses `java.time.Duration`, and TypeScript uses a `{ secs: bigint, nanos: number }` object.
+
+<CodeComparison
+  title=""
+  rust={`use std::time::Duration;
+
+#[export]
+pub fn sleep_duration() -> Duration {
+    Duration::from_millis(500)
+}
+
+#[export]
+pub fn double_duration(d: Duration) -> Duration {
+    d * 2
+}`}
+  swift={`func sleepDuration() -> TimeInterval
+func doubleDuration(d: TimeInterval) -> TimeInterval
+
+let half = sleepDuration()  // 0.5
+let full = doubleDuration(d: half)  // 1.0`}
+  kotlin={`fun sleepDuration(): Duration
+fun doubleDuration(d: Duration): Duration
+
+val half = sleepDuration()  // PT0.5S
+val full = doubleDuration(half)  // PT1S`}
+  typescript={`function sleepDuration(): Duration
+function doubleDuration(d: Duration): Duration
+
+const half = sleepDuration()  // { secs: 0n, nanos: 500000000 }
+const full = doubleDuration(half)`}
+/>
+
+### SystemTime
+
+`std::time::SystemTime` represents a point in time. BoltFFI encodes it as seconds since Unix epoch plus nanoseconds (12 bytes). Negative values represent times before 1970.
+
+<CodeComparison
+  title=""
+  rust={`use std::time::SystemTime;
+
+#[export]
+pub fn now() -> SystemTime {
+    SystemTime::now()
+}
+
+#[export]
+pub fn epoch() -> SystemTime {
+    SystemTime::UNIX_EPOCH
+}`}
+  swift={`func now() -> Date
+func epoch() -> Date
+
+let current = now()
+let unix = epoch()  // 1970-01-01`}
+  kotlin={`fun now(): Instant
+fun epoch(): Instant
+
+val current = now()
+val unix = epoch()  // 1970-01-01T00:00:00Z`}
+  typescript={`function now(): Date
+function epoch(): Date
+
+const current = now()
+const unix = epoch()  // 1970-01-01T00:00:00.000Z`}
+/>
+
+### UUID
+
+`uuid::Uuid` from the [uuid](https://crates.io/crates/uuid) crate maps to native UUID types in Swift and Kotlin. TypeScript receives it as a string since JavaScript has no built-in UUID type.
+
+<CodeComparison
+  title=""
+  rust={`use uuid::Uuid;
+
+#[export]
+pub fn new_id() -> Uuid {
+    Uuid::new_v4()
+}
+
+#[export]
+pub fn parse_id(s: &str) -> Option<Uuid> {
+    Uuid::parse_str(s).ok()
+}`}
+  swift={`func newId() -> UUID
+func parseId(s: String) -> UUID?
+
+let id = newId()
+let parsed = parseId(s: "550e8400-e29b-41d4-a716-446655440000")`}
+  kotlin={`fun newId(): UUID
+fun parseId(s: String): UUID?
+
+val id = newId()
+val parsed = parseId("550e8400-e29b-41d4-a716-446655440000")`}
+  typescript={`function newId(): string
+function parseId(s: string): string | null
+
+const id = newId()  // "550e8400-e29b-41d4-a716-446655440000"
+const parsed = parseId("550e8400-e29b-41d4-a716-446655440000")`}
+/>
+
+### URL
+
+`url::Url` from the [url](https://crates.io/crates/url) crate maps to `URL` in Swift, `URI` in Kotlin, and `string` in TypeScript. The URL is serialized as its string representation.
+
+<CodeComparison
+  title=""
+  rust={`use url::Url;
+
+#[export]
+pub fn base_url() -> Url {
+    Url::parse("https://example.com").unwrap()
+}
+
+#[export]
+pub fn with_path(base: Url, path: &str) -> Url {
+    base.join(path).unwrap()
+}`}
+  swift={`func baseUrl() -> URL
+func withPath(base: URL, path: String) -> URL
+
+let base = baseUrl()
+let full = withPath(base: base, path: "/api/v1")`}
+  kotlin={`fun baseUrl(): URI
+fun withPath(base: URI, path: String): URI
+
+val base = baseUrl()
+val full = withPath(base, "/api/v1")`}
+  typescript={`function baseUrl(): string
+function withPath(base: string, path: string): string
+
+const base = baseUrl()  // "https://example.com/"
+const full = withPath(base, "/api/v1")`}
+/>
+
+### Bytes
+
+`Vec<u8>` and `&[u8]` represent raw binary data. Unlike other collections, bytes get special treatment: they map to `Data` in Swift, `ByteArray` in Kotlin, and `Uint8Array` in TypeScript.
+
+<CodeComparison
+  title=""
+  rust={`#[export]
+pub fn compress(data: &[u8]) -> Vec<u8> {
+    // compression logic
+    data.to_vec()
+}
+
+#[export]
+pub fn hash(data: &[u8]) -> Vec<u8> {
+    // hashing logic
+    vec![0u8; 32]
+}`}
+  swift={`func compress(data: Data) -> Data
+func hash(data: Data) -> Data
+
+let compressed = compress(data: originalData)
+let digest = hash(data: message)`}
+  kotlin={`fun compress(data: ByteArray): ByteArray
+fun hash(data: ByteArray): ByteArray
+
+val compressed = compress(originalData)
+val digest = hash(message)`}
+  typescript={`function compress(data: Uint8Array): Uint8Array
+function hash(data: Uint8Array): Uint8Array
+
+const compressed = compress(originalData)
+const digest = hash(message)`}
+/>

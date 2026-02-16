@@ -1,5 +1,5 @@
 import CodeComparison from "../../components/CodeComparisonWrapper.astro";
-import TypeTable from "../../components/TypeTable";
+import TypeTable from "../../components/TypeTableWrapper.astro";
 
 # Functions
 
@@ -34,6 +34,11 @@ fun multiply(x: Double, y: Double): Double
 
 val sum = add(5, 3)
 val product = multiply(2.5, 4.0)`}
+  typescript={`function add(a: number, b: number): number
+function multiply(x: number, y: number): number
+
+const sum = add(5, 3)
+const product = multiply(2.5, 4.0)`}
 />
 
 ## Parameters
@@ -63,6 +68,11 @@ fun charCount(s: String): ULong
 
 val msg = greet("World")
 val len = charCount("hello")`}
+  typescript={`function greet(name: string): string
+function charCount(s: string): number
+
+const msg = greet("World")
+const len = charCount("hello")`}
 />
 
 Use `&str` for string parameters (you're borrowing) and `String` for return values (you're transferring ownership).
@@ -95,18 +105,55 @@ pub fn distance(a: Point, b: Point, unit: Unit) -> f64 {
         Unit::Feet => d * 3.28084,
     }
 }`}
-  swift={`func distance(a: Point, b: Point, unit: Unit) -> Double
+  swift={`public struct Point {
+    public var x: Double
+    public var y: Double
+}
+
+public enum Unit {
+    case meters
+    case feet
+}
+
+func distance(a: Point, b: Point, unit: Unit) -> Double
 
 let d = distance(
     a: Point(x: 0, y: 0),
     b: Point(x: 3, y: 4),
     unit: .meters
 )`}
-  kotlin={`fun distance(a: Point, b: Point, unit: Unit): Double
+  kotlin={`data class Point(
+    val x: Double,
+    val y: Double
+)
+
+enum class Unit {
+    Meters,
+    Feet
+}
+
+fun distance(a: Point, b: Point, unit: Unit): Double
 
 val d = distance(
     Point(0.0, 0.0),
     Point(3.0, 4.0),
+    Unit.Meters
+)`}
+  typescript={`interface Point {
+    readonly x: number
+    readonly y: number
+}
+
+enum Unit {
+    Meters = 0,
+    Feet = 1
+}
+
+function distance(a: Point, b: Point, unit: Unit): number
+
+const d = distance(
+    { x: 0, y: 0 },
+    { x: 3, y: 4 },
     Unit.Meters
 )`}
 />
@@ -139,6 +186,11 @@ fun average(values: DoubleArray): Double
 
 val total = sum(intArrayOf(1, 2, 3, 4, 5))
 val avg = average(doubleArrayOf(1.0, 2.0, 3.0))`}
+  typescript={`function sum(values: number[]): number
+function average(values: number[]): number
+
+const total = sum([1, 2, 3, 4, 5])
+const avg = average([1.0, 2.0, 3.0])`}
 />
 
 ### Optional
@@ -189,6 +241,18 @@ fun setTimeout(
 
 val formal = greetUser("Smith", "Dr.")
 val casual = greetUser("John", null)`}
+  typescript={`function greetUser(
+    name: string,
+    title: string | null
+): string
+
+function setTimeout(
+    ms: bigint,
+    callbackId: bigint | null
+): void
+
+const formal = greetUser("Smith", "Dr.")
+const casual = greetUser("John", null)`}
 />
 
 ## Return types
@@ -224,6 +288,15 @@ findUser(42uL)?.let { user ->
 }
 
 val pos = firstPositive(intArrayOf(-1, -2, 3))`}
+  typescript={`function findUser(id: bigint): User | null
+function firstPositive(values: number[]): number | null
+
+const user = findUser(42n)
+if (user !== null) {
+    console.log(user.name)
+}
+
+const pos = firstPositive([-1, -2, 3])`}
 />
 
 ### Result
@@ -247,7 +320,12 @@ pub fn parse_port(s: &str) -> Result<u16, ParseError> {
     }
     Ok(n as u16)
 }`}
-  swift={`func parsePort(s: String) throws -> UInt16
+  swift={`public enum ParseError: Error {
+    case invalidFormat
+    case outOfRange
+}
+
+func parsePort(s: String) throws -> UInt16
 
 do {
     let port = try parsePort(s: "8080")
@@ -256,7 +334,12 @@ do {
 } catch ParseError.outOfRange {
     print("too large")
 }`}
-  kotlin={`@Throws(ParseError::class)
+  kotlin={`sealed class ParseError : Exception() {
+    object InvalidFormat : ParseError()
+    object OutOfRange : ParseError()
+}
+
+@Throws(ParseError::class)
 fun parsePort(s: String): UShort
 
 try {
@@ -265,6 +348,28 @@ try {
     println("bad format")
 } catch (e: ParseError.OutOfRange) {
     println("too large")
+}`}
+  typescript={`enum ParseError {
+    InvalidFormat = 0,
+    OutOfRange = 1
+}
+
+class ParseErrorException extends Error {
+    readonly code: ParseError
+}
+
+function parsePort(s: string): number  // throws
+
+try {
+    const port = parsePort("8080")
+} catch (e) {
+    if (e instanceof ParseErrorException) {
+        if (e.code === ParseError.InvalidFormat) {
+            console.log("bad format")
+        } else if (e.code === ParseError.OutOfRange) {
+            console.log("too large")
+        }
+    }
 }`}
 />
 
@@ -295,6 +400,11 @@ fun filterPositive(values: IntArray): IntArray
 
 val nums = range(0, 10)
 val pos = filterPositive(intArrayOf(-1, 2, -3, 4))`}
+  typescript={`function range(start: number, end: number): number[]
+function filterPositive(values: number[]): number[]
+
+const nums = range(0, 10)
+const pos = filterPositive([-1, 2, -3, 4])`}
 />
 
 ## Async functions
@@ -318,13 +428,22 @@ pub async fn load_config() -> Config {
   swift={`func fetchData(url: String) async throws -> String
 func loadConfig() async -> Config
 
-let data = try await fetchData(url: "https://api.example.com")
-let config = await loadConfig()`}
+Task {
+    let data = try await fetchData(url: "https://api.example.com")
+    let config = await loadConfig()
+}`}
   kotlin={`suspend fun fetchData(url: String): String
 suspend fun loadConfig(): Config
 
-val data = fetchData("https://api.example.com")
-val config = loadConfig()`}
+coroutineScope {
+    val data = fetchData("https://api.example.com")
+    val config = loadConfig()
+}`}
+  typescript={`async function fetchData(url: string): Promise<string>
+async function loadConfig(): Promise<Config>
+
+const data = await fetchData("https://api.example.com")
+const config = await loadConfig()`}
 />
 
 The async runtime is handled by BoltFFI. Your Rust async code runs on a Tokio runtime that BoltFFI manages.
@@ -381,6 +500,21 @@ var sum = 0
 foreachRange(1, 5) { sum += it }
 
 val doubled = mapValues(intArrayOf(1, 2, 3)) { it * 2 }`}
+  typescript={`function foreachRange(
+    start: number,
+    end: number,
+    callback: (value: number) => void
+): void
+
+function mapValues(
+    values: number[],
+    transform: (value: number) => number
+): number[]
+
+let sum = 0
+foreachRange(1, 5, (v) => { sum += v })
+
+const doubled = mapValues([1, 2, 3], (v) => v * 2)`}
 />
 
 Each closure call crosses the FFI boundary. If you're calling the closure many times in a tight loop, consider restructuring to reduce crossings.

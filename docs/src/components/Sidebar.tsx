@@ -50,6 +50,7 @@ const sections: Section[] = [
       { id: "result-and-errors", label: "Result" },
       { id: "collections", label: "Collections" },
       { id: "callbacks", label: "Callbacks" },
+      { id: "built-in-types", label: "Built-in Custom Types" },
     ]
   },
   { 
@@ -151,6 +152,7 @@ const sections: Section[] = [
     children: [
       { id: "apple-packaging", label: "Apple" },
       { id: "android-packaging", label: "Android" },
+      { id: "wasm-packaging", label: "WASM" },
       { id: "using-in-xcode", label: "Using in Xcode" },
       { id: "using-in-android-studio", label: "Using in Android" },
     ]
@@ -164,6 +166,7 @@ const sections: Section[] = [
       { id: "apple-configuration", label: "Apple" },
       { id: "swiftpm-layouts", label: "SwiftPM Layouts" },
       { id: "android-configuration", label: "Android" },
+      { id: "wasm-configuration", label: "WASM" },
     ]
   },
   { id: "tutorial", label: "Tutorial", icon: GraduationCap },
