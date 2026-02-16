@@ -193,6 +193,16 @@ pub fn invoke_mixed_sync(
 }
 
 #[export]
+pub fn simple_maybe_double(x: i32) -> Option<i32> {
+    if x > 0 { Some(x * 2) } else { None }
+}
+
+#[export]
+pub fn simple_try_divide(a: i32, b: i32) -> Result<i32, i32> {
+    if b != 0 { Ok(a / b) } else { Err(-1) }
+}
+
+#[export]
 pub fn invoke_mixed_three(
     boxed: Box<dyn SyncValueCallback>,
     impl1: impl SyncValueCallback,

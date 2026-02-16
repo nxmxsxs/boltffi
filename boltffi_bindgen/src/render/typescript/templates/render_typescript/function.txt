@@ -7,6 +7,9 @@
   (_exports.{{ ffi_name }} as Function)({{ call_args }});
 {%- elif return_route.is_direct() %}
   return (_exports.{{ ffi_name }} as Function)({{ call_args }}){{ return_route.ts_cast() }};
+{%- elif return_route.is_void_slot() %}
+  (_exports.{{ ffi_name }} as Function)({{ call_args }});
+  return {{ return_route.decode_expr() }};
 {%- elif return_route.is_packed() %}
   const packed = (_exports.{{ ffi_name }} as Function)({{ call_args }}) as bigint;
   const reader = _module.takePackedBuffer(packed);
@@ -21,6 +24,9 @@
     (_exports.{{ ffi_name }} as Function)({{ call_args }});
 {%- elif return_route.is_direct() %}
     return (_exports.{{ ffi_name }} as Function)({{ call_args }}){{ return_route.ts_cast() }};
+{%- elif return_route.is_void_slot() %}
+    (_exports.{{ ffi_name }} as Function)({{ call_args }});
+    return {{ return_route.decode_expr() }};
 {%- elif return_route.is_packed() %}
     const packed = (_exports.{{ ffi_name }} as Function)({{ call_args }}) as bigint;
     const reader = _module.takePackedBuffer(packed);

@@ -15,6 +15,10 @@ export async function {{ name }}({% for p in params %}{{ p.name }}: {{ p.ts_type
 
 {% if return_route.is_void() %}
   (_exports.{{ free_ffi_name }} as Function)(awaitedHandle);
+{% elif return_route.is_async_scalar() %}
+  const result = (_exports.{{ complete_ffi_name }} as Function)(awaitedHandle){{ return_route.ts_cast() }};
+  (_exports.{{ free_ffi_name }} as Function)(awaitedHandle);
+  return result;
 {% elif return_route.is_packed() %}
   const outPtr = _module.allocBufDescriptor();
   (_exports.{{ complete_ffi_name }} as Function)(outPtr, awaitedHandle, 0);

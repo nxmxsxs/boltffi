@@ -14,11 +14,18 @@ const results = [];
 function runSuite(name, boltffiFn, wasmbindgenFn) {
   return new Promise((resolve) => {
     const suite = new Benchmark.Suite(name);
+    const isAsync = boltffiFn.constructor.name === 'AsyncFunction';
     
-    suite
-      .add(`boltffi_${name}`, boltffiFn)
-      .add(`wasmbindgen_${name}`, wasmbindgenFn)
-      .on('cycle', (event) => {
+    if (isAsync) {
+      suite
+        .add(`boltffi_${name}`, { defer: true, fn: async (deferred) => { await boltffiFn(); deferred.resolve(); } })
+        .add(`wasmbindgen_${name}`, { defer: true, fn: async (deferred) => { await wasmbindgenFn(); deferred.resolve(); } })
+    } else {
+      suite
+        .add(`boltffi_${name}`, boltffiFn)
+        .add(`wasmbindgen_${name}`, wasmbindgenFn)
+    }
+    suite.on('cycle', (event) => {
         console.log(String(event.target));
       })
       .on('complete', function() {
@@ -227,14 +234,25 @@ console.log('=====================================\n');
 console.log('| Benchmark | BoltFFI (ns) | wasm-bindgen (ns) | Speedup |');
 console.log('|-----------|--------------|-------------------|---------|');
 for (const r of results) {
-  const ratio = parseFloat(r.speedup);
+  const boltffiNs = r.boltffi_ns;
+  const wbNs = r.wasmbindgen_ns;
   let speedupStr;
-  if (ratio >= 0.95 && ratio <= 1.05) {
+  if (boltffiNs === 0 && wbNs === 0) {
     speedupStr = 'TIE';
-  } else if (ratio < 1) {
-    speedupStr = `${(1/ratio).toFixed(2)}x faster`;
+  } else if (boltffiNs === 0) {
+    speedupStr = '∞';
+  } else if (wbNs === 0) {
+    speedupStr = '∞ slower';
   } else {
-    speedupStr = `${r.speedup} slower`;
+    const ratio = wbNs / boltffiNs;
+    if (ratio >= 0.95 && ratio <= 1.05) {
+      speedupStr = 'TIE';
+    } else if (ratio > 1) {
+      speedupStr = ratio > 1000 ? '>1000x' : `${ratio.toFixed(2)}x`;
+    } else {
+      const inv = 1 / ratio;
+      speedupStr = inv > 1000 ? '>1000x slower' : `${inv.toFixed(2)}x slower`;
+    }
   }
-  console.log(`| ${r.name} | ${r.boltffi_ns} | ${r.wasmbindgen_ns} | ${speedupStr} |`);
+  console.log(`| ${r.name} | ${boltffiNs} | ${wbNs} | ${speedupStr} |`);
 }

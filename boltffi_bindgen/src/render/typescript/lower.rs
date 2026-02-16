@@ -971,7 +971,7 @@ impl<'a> TypeScriptLowerer<'a> {
             ),
             TsExecutionModel::Async => (
                 Some(ts_type),
-                TsOutputRoute::packed(scalar_async_decode_expr(&abi_type)),
+                TsOutputRoute::async_scalar(ts_direct_cast(&abi_type)),
             ),
         }
     }
@@ -1013,16 +1013,29 @@ impl<'a> TypeScriptLowerer<'a> {
         if let Some(optional_decode) = emit_raw_optional_primitive_read(decode_ops) {
             return (
                 Some(ts_type_str),
-                TsOutputRoute::raw_packed(optional_decode),
+                TsOutputRoute::f64_optional(optional_decode),
             );
         }
         match decode_ops.ops.first() {
             Some(ReadOp::Vec {
-                element_type: TypeExpr::Primitive(_),
+                element_type: TypeExpr::Primitive(prim),
                 ..
             }) => {
-                let decode = emit::emit_reader_read(decode_ops);
-                (Some(ts_type_str), TsOutputRoute::packed(decode))
+                let slot_decode = match prim {
+                    PrimitiveType::U8 => Some("_module.takeSlotU8Array()"),
+                    PrimitiveType::I8 => Some("_module.takeSlotI8Array()"),
+                    PrimitiveType::I32 => Some("_module.takeSlotI32Array()"),
+                    PrimitiveType::U32 => Some("_module.takeSlotU32Array()"),
+                    PrimitiveType::F32 => Some("_module.takeSlotF32Array()"),
+                    PrimitiveType::F64 => Some("_module.takeSlotF64Array()"),
+                    _ => None,
+                };
+                if let Some(decode) = slot_decode {
+                    (Some(ts_type_str), TsOutputRoute::void_slot(decode.to_string()))
+                } else {
+                    let decode = emit::emit_reader_read(decode_ops);
+                    (Some(ts_type_str), TsOutputRoute::packed(decode))
+                }
             }
             Some(ReadOp::String { .. }) => {
                 let decode = "_module.takePackedUtf8String(packed)".to_string();
@@ -1071,6 +1084,10 @@ impl<'a> TypeScriptLowerer<'a> {
                     OutputBinding::Handle { .. } => Some("number".to_string()),
                     _ => None,
                 }
+            } else if return_route.is_f64_optional() {
+                Some("number".to_string())
+            } else if return_route.is_void_slot() {
+                None
             } else if return_route.is_packed() || return_route.is_raw_packed() {
                 Some("bigint".to_string())
             } else {
@@ -1270,17 +1287,16 @@ fn emit_raw_optional_primitive_read(seq: &ReadSeq) -> Option<String> {
     };
 
     let method = match primitive {
-        PrimitiveType::Bool => "takePackedOptionalBool",
-        PrimitiveType::I8 => "takePackedOptionalI8",
-        PrimitiveType::U8 => "takePackedOptionalU8",
-        PrimitiveType::I16 => "takePackedOptionalI16",
-        PrimitiveType::U16 => "takePackedOptionalU16",
-        PrimitiveType::I32 => "takePackedOptionalI32",
-        PrimitiveType::U32 => "takePackedOptionalU32",
-        PrimitiveType::I64 => "takePackedOptionalI64",
-        PrimitiveType::U64 => "takePackedOptionalU64",
-        PrimitiveType::F32 => "takePackedOptionalF32",
-        PrimitiveType::F64 => "takePackedOptionalF64",
+        PrimitiveType::Bool => "unpackOptionBool",
+        PrimitiveType::I8 => "unpackOptionI8",
+        PrimitiveType::U8 => "unpackOptionU8",
+        PrimitiveType::I16 => "unpackOptionI16",
+        PrimitiveType::U16 => "unpackOptionU16",
+        PrimitiveType::I32 => "unpackOptionI32",
+        PrimitiveType::U32 => "unpackOptionU32",
+        PrimitiveType::I64 | PrimitiveType::U64 => return None,
+        PrimitiveType::F32 => "unpackOptionF32",
+        PrimitiveType::F64 => return None,
         PrimitiveType::ISize | PrimitiveType::USize => return None,
     };
 
@@ -1659,10 +1675,10 @@ mod tests {
             .find(|function| function.name == "findEven")
             .expect("findEven should be lowered");
 
-        assert!(function.return_route.is_raw_packed());
+        assert!(function.return_route.is_f64_optional());
         assert_eq!(
             function.return_route.decode_expr(),
-            "_module.takePackedOptionalI32(packed)"
+            "_module.unpackOptionI32(packed)"
         );
     }
 

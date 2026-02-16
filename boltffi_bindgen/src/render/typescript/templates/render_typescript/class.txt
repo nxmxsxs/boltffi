@@ -113,7 +113,11 @@ export class {{ cls.class_name }} {
       (futureHandle: number) => (_exports.{{ async_method.panic_message_ffi_name }} as Function)(futureHandle),
       (futureHandle: number) => (_exports.{{ async_method.free_ffi_name }} as Function)(futureHandle)
     );
-{%- if async_method.return_route.is_packed() %}
+{%- if async_method.return_route.is_async_scalar() %}
+    const result = (_exports.{{ async_method.complete_ffi_name }} as Function)(awaitedHandle){{ async_method.return_route.ts_cast() }};
+    (_exports.{{ async_method.free_ffi_name }} as Function)(awaitedHandle);
+    return result;
+{%- elif async_method.return_route.is_packed() %}
     const outPtr = _module.allocBufDescriptor();
     let completeCompleted = false;
     try {
@@ -192,7 +196,11 @@ export class {{ cls.class_name }} {
       (futureHandle: number) => (_exports.{{ async_method.panic_message_ffi_name }} as Function)(futureHandle),
       (futureHandle: number) => (_exports.{{ async_method.free_ffi_name }} as Function)(futureHandle)
     );
-{%- if async_method.return_route.is_packed() %}
+{%- if async_method.return_route.is_async_scalar() %}
+    const result = (_exports.{{ async_method.complete_ffi_name }} as Function)(awaitedHandle){{ async_method.return_route.ts_cast() }};
+    (_exports.{{ async_method.free_ffi_name }} as Function)(awaitedHandle);
+    return result;
+{%- elif async_method.return_route.is_packed() %}
     const outPtr = _module.allocBufDescriptor();
     let completeCompleted = false;
     try {
