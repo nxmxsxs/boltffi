@@ -12,6 +12,11 @@ on:
         required: false
         type: boolean
         default: false
+      skip_npm:
+        description: 'Skip npm publish'
+        required: false
+        type: boolean
+        default: false
 
 env:
   CARGO_TERM_COLOR: always
@@ -187,7 +192,7 @@ jobs:
   publish-npm:
     name: Publish to npm
     needs: [release, build-release]
-    if: ${{ !inputs.skip_publish }}
+    if: ${{ !inputs.skip_publish && !inputs.skip_npm }}
     runs-on: ubuntu-latest
     permissions:
       contents: read
