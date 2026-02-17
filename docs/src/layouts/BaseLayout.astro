@@ -22,5 +22,9 @@ const { title, description = "BoltFFI - Fast, safe Rust FFI binding generator fo
   </head>
   <body class="min-h-screen bg-background text-foreground antialiased">
     <slot />
+    <script>
+      import { inject } from '@vercel/analytics';
+      inject();
+    </script>
   </body>
 </html>

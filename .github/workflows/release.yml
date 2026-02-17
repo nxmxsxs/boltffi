@@ -52,6 +52,11 @@ jobs:
       - name: Bump versions
         run: cargo set-version --workspace ${{ inputs.version }}
 
+      - name: Bump npm runtime version
+        run: |
+          cd runtime/typescript
+          npm version ${{ inputs.version }} --no-git-tag-version
+
       - name: Commit, tag, and push
         run: |
           VERSION="${{ inputs.version }}"
@@ -177,3 +182,28 @@ jobs:
           cargo publish -p boltffi_bindgen --token ${{ secrets.CARGO_TOKEN }}
           cargo publish -p boltffi_verify --token ${{ secrets.CARGO_TOKEN }}
           cargo publish -p boltffi_cli --token ${{ secrets.CARGO_TOKEN }}
+
+  publish-npm:
+    name: Publish to npm
+    needs: [release, build-release]
+    if: ${{ !inputs.skip_publish }}
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      id-token: write
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          ref: v${{ needs.release.outputs.version }}
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '24'
+          registry-url: 'https://registry.npmjs.org'
+
+      - name: Build and publish runtime
+        run: |
+          cd runtime/typescript
+          npm ci
+          npm run build
+          npm publish --access public --provenance
