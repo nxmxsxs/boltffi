@@ -15,6 +15,8 @@ public class Benchmarks {
         var results: [BenchmarkResult] = []
         
         results.append(benchmarkNoop(iterations: iterations))
+        results.append(benchmarkCounterIncrement(iterations: iterations))
+        results.append(benchmarkCounterIncrementSingleThreaded(iterations: iterations))
         results.append(benchmarkSumRatings1k(iterations: iterations))
         results.append(benchmarkProcessLocations1k(iterations: iterations))
         results.append(benchmarkGenerateLocations1k(iterations: iterations))
@@ -56,6 +58,29 @@ public class Benchmarks {
             BenchUniffi.noop()
         }
         return BenchmarkResult(name: "noop", boltffiTimeNs: boltffiTime, uniffiTimeNs: uniffiTime)
+    }
+    
+    public static func benchmarkCounterIncrement(iterations: Int) -> BenchmarkResult {
+        let boltffiCounter = BenchBoltFFI.Counter()
+        let uniffiCounter = BenchUniffi.Counter()
+        
+        let boltffiTime = measure(iterations: iterations) {
+            boltffiCounter.increment()
+        }
+        let uniffiTime = measure(iterations: iterations) {
+            uniffiCounter.increment()
+        }
+        return BenchmarkResult(name: "counter_increment (mutex)", boltffiTimeNs: boltffiTime, uniffiTimeNs: uniffiTime)
+    }
+    
+    public static func benchmarkCounterIncrementSingleThreaded(iterations: Int) -> BenchmarkResult {
+        let counter = BenchBoltFFI.CounterSingleThreaded()
+        
+        let boltffiTime = measure(iterations: iterations) {
+            counter.increment()
+        }
+        // No UniFFI equivalent - report same time to show it's BoltFFI-only
+        return BenchmarkResult(name: "counter_increment (single_threaded, BoltFFI-only)", boltffiTimeNs: boltffiTime, uniffiTimeNs: boltffiTime)
     }
     
     public static func benchmarkSumRatings1k(iterations: Int) -> BenchmarkResult {

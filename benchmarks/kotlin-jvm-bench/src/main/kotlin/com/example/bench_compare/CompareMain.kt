@@ -84,7 +84,7 @@ fun main() = runBlocking {
         pairedBenchmark("process_locations_1k", boltffi = { processLocations(boltffiLocations1k) }, uniffi = { uniffi.bench_uniffi.processLocations(uniffiLocations1k) }),
         pairedBenchmark("process_locations_10k", boltffi = { processLocations(boltffiLocations10k) }, uniffi = { uniffi.bench_uniffi.processLocations(uniffiLocations10k) }),
         pairedBenchmark(
-            "counter_increment",
+            "counter_increment_mutex",
             boltffi = {
                 Counter().use { counter ->
                     repeat(1000) { counter.increment() }
@@ -93,6 +93,15 @@ fun main() = runBlocking {
             },
             uniffi = {
                 uniffi.bench_uniffi.Counter().use { counter ->
+                    repeat(1000) { counter.increment() }
+                    check(counter.get() == 1000uL)
+                }
+            },
+        ),
+        singleBenchmark(
+            "counter_increment_single_threaded",
+            boltffi = {
+                CounterSingleThreaded().use { counter ->
                     repeat(1000) { counter.increment() }
                     check(counter.get() == 1000uL)
                 }
@@ -118,7 +127,7 @@ fun main() = runBlocking {
             },
         ),
         pairedBenchmark(
-            "accumulator",
+            "accumulator_mutex",
             boltffi = {
                 Accumulator().use { accumulator ->
                     repeat(1000) { index -> accumulator.add(index.toLong()) }
@@ -128,6 +137,16 @@ fun main() = runBlocking {
             },
             uniffi = {
                 uniffi.bench_uniffi.Accumulator().use { accumulator ->
+                    repeat(1000) { index -> accumulator.add(index.toLong()) }
+                    accumulator.get()
+                    accumulator.reset()
+                }
+            },
+        ),
+        singleBenchmark(
+            "accumulator_single_threaded",
+            boltffi = {
+                AccumulatorSingleThreaded().use { accumulator ->
                     repeat(1000) { index -> accumulator.add(index.toLong()) }
                     accumulator.get()
                     accumulator.reset()
@@ -331,6 +350,12 @@ private fun pairedBenchmark(
     uniffi: () -> Unit,
 ): PairedBenchmark =
     PairedBenchmark(name, boltffi, uniffi)
+
+private fun singleBenchmark(
+    name: String,
+    boltffi: () -> Unit,
+): PairedBenchmark =
+    PairedBenchmark(name, boltffi, boltffi)
 
 private class PairedBenchmark(
     private val name: String,

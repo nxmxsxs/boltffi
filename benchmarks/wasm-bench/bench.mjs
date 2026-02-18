@@ -156,9 +156,26 @@ await runSuite('roundtrip_i32_vec_1k',
   }
 );
 
-await runSuite('counter_increment_1k',
+await runSuite('counter_increment_1k (mutex)',
   () => {
-    const counter = boltffi.Counter.new(0);
+    const counter = boltffi.Counter.new();
+    for (let i = 0; i < 1000; i++) counter.increment();
+    const v = counter.get();
+    counter.dispose();
+    return v;
+  },
+  () => {
+    const counter = new wasmbindgen.Counter();
+    for (let i = 0; i < 1000; i++) counter.increment();
+    const v = counter.get();
+    counter.free();
+    return v;
+  }
+);
+
+await runSuite('counter_increment_1k (single_threaded)',
+  () => {
+    const counter = boltffi.CounterSingleThreaded.new();
     for (let i = 0; i < 1000; i++) counter.increment();
     const v = counter.get();
     counter.dispose();
@@ -194,9 +211,28 @@ await runSuite('datastore_add_1k',
   }
 );
 
-await runSuite('accumulator_1k',
+await runSuite('accumulator_1k (mutex)',
   () => {
     const acc = boltffi.Accumulator.new();
+    for (let i = 0n; i < 1000n; i++) acc.add(i);
+    const v = acc.get();
+    acc.reset();
+    acc.dispose();
+    return v;
+  },
+  () => {
+    const acc = new wasmbindgen.Accumulator();
+    for (let i = 0n; i < 1000n; i++) acc.add(i);
+    const v = acc.get();
+    acc.reset();
+    acc.free();
+    return v;
+  }
+);
+
+await runSuite('accumulator_1k (single_threaded)',
+  () => {
+    const acc = boltffi.AccumulatorSingleThreaded.new();
     for (let i = 0n; i < 1000n; i++) acc.add(i);
     const v = acc.get();
     acc.reset();

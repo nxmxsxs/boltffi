@@ -104,13 +104,16 @@ fun runAllBenchmarks(onProgress: (name: String, progress: Float) -> Unit): List<
             boltffi = { countActiveUsers(boltffiUsers1k) },
             uniffi = { uniffi.bench_uniffi.countActiveUsers(uniffi.bench_uniffi.generateUserProfiles(1000)) }),
 
-        bench("counter_increment_1k", "7. Classes", 100,
+        bench("counter_increment_1k (mutex)", "7. Classes", 100,
             boltffi = {
                 Counter().use { c -> repeat(1000) { c.increment() } }
             },
             uniffi = {
                 uniffi.bench_uniffi.Counter().use { c -> repeat(1000) { c.increment() } }
             }),
+        benchBoltffiOnly("counter_increment_1k (single_threaded)", "7. Classes (BoltFFI-only)", 100) {
+            CounterSingleThreaded().use { c -> repeat(1000) { c.increment() } }
+        },
         bench("datastore_add_1k", "7. Classes", 50,
             boltffi = {
                 DataStore().use { s ->
@@ -126,7 +129,7 @@ fun runAllBenchmarks(onProgress: (name: String, progress: Float) -> Unit): List<
                     }
                 }
             }),
-        bench("accumulator_1k", "7. Classes", 100,
+        bench("accumulator_1k (mutex)", "7. Classes", 100,
             boltffi = {
                 Accumulator().use { a ->
                     repeat(1000) { i -> a.add(i.toLong()) }
@@ -141,6 +144,13 @@ fun runAllBenchmarks(onProgress: (name: String, progress: Float) -> Unit): List<
                     a.reset()
                 }
             }),
+        benchBoltffiOnly("accumulator_1k (single_threaded)", "7. Classes (BoltFFI-only)", 100) {
+            AccumulatorSingleThreaded().use { a ->
+                repeat(1000) { i -> a.add(i.toLong()) }
+                a.get()
+                a.reset()
+            }
+        },
 
         bench("simple_enum", "8. Enums", 5000,
             boltffi = {
@@ -198,6 +208,13 @@ private fun bench(
     boltffi: () -> Unit,
     uniffi: () -> Unit,
 ) = BenchSpec(name, category, iterations, boltffi, uniffi)
+
+private fun benchBoltffiOnly(
+    name: String,
+    category: String,
+    iterations: Int,
+    boltffi: () -> Unit,
+) = BenchSpec(name, category, iterations, boltffi, boltffi)
 
 private inline fun measureAvgNs(iterations: Int, block: () -> Unit): Long {
     val start = System.nanoTime()

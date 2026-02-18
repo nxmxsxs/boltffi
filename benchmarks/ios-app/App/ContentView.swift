@@ -346,13 +346,23 @@ func getAllBenchmarks() -> [Bench] {
               boltffiBlock: { _ = BenchBoltFFI.countActiveUsers(users: boltffiUsers1k) },
               uniffiBlock: { _ = BenchUniffi.countActiveUsers(users: uniffiUsers1k) }),
         
-        Bench(name: "counter_increment_1k", category: "7. Classes", iterations: 100,
+        Bench(name: "counter_increment_1k (mutex)", category: "7. Classes", iterations: 100,
               boltffiBlock: {
                   let counter = BenchBoltFFI.Counter()
                   for _ in 0..<1000 { counter.increment() }
               },
               uniffiBlock: {
                   let counter = BenchUniffi.Counter()
+                  for _ in 0..<1000 { counter.increment() }
+              }),
+        
+        Bench(name: "counter_increment_1k (single_threaded)", category: "7. Classes (BoltFFI-only)", iterations: 100,
+              boltffiBlock: {
+                  let counter = BenchBoltFFI.CounterSingleThreaded()
+                  for _ in 0..<1000 { counter.increment() }
+              },
+              uniffiBlock: {
+                  let counter = BenchBoltFFI.CounterSingleThreaded()
                   for _ in 0..<1000 { counter.increment() }
               }),
         
@@ -370,7 +380,7 @@ func getAllBenchmarks() -> [Bench] {
                   }
               }),
         
-        Bench(name: "accumulator_1k", category: "7. Classes", iterations: 100,
+        Bench(name: "accumulator_1k (mutex)", category: "7. Classes", iterations: 100,
               boltffiBlock: {
                   let acc = BenchBoltFFI.Accumulator()
                   for i: Int64 in 0..<1000 { acc.add(amount: i) }
@@ -379,6 +389,20 @@ func getAllBenchmarks() -> [Bench] {
               },
               uniffiBlock: {
                   let acc = BenchUniffi.Accumulator()
+                  for i: Int64 in 0..<1000 { acc.add(amount: i) }
+                  _ = acc.get()
+                  acc.reset()
+              }),
+        
+        Bench(name: "accumulator_1k (single_threaded)", category: "7. Classes (BoltFFI-only)", iterations: 100,
+              boltffiBlock: {
+                  let acc = BenchBoltFFI.AccumulatorSingleThreaded()
+                  for i: Int64 in 0..<1000 { acc.add(amount: i) }
+                  _ = acc.get()
+                  acc.reset()
+              },
+              uniffiBlock: {
+                  let acc = BenchBoltFFI.AccumulatorSingleThreaded()
                   for i: Int64 in 0..<1000 { acc.add(amount: i) }
                   _ = acc.get()
                   acc.reset()

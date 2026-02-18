@@ -390,7 +390,7 @@ open class BoltFFIVsUniffiBench {
     }
 
     @Benchmark
-    open fun boltffi_counter_increment(blackhole: Blackhole) {
+    open fun boltffi_counter_increment_mutex(blackhole: Blackhole) {
         Counter().use { counter ->
             repeat(1000) { counter.increment() }
             blackhole.consume(counter.get())
@@ -398,8 +398,16 @@ open class BoltFFIVsUniffiBench {
     }
 
     @Benchmark
-    open fun uniffi_counter_increment(blackhole: Blackhole) {
+    open fun uniffi_counter_increment_mutex(blackhole: Blackhole) {
         uniffi.bench_uniffi.Counter().use { counter ->
+            repeat(1000) { counter.increment() }
+            blackhole.consume(counter.get())
+        }
+    }
+
+    @Benchmark
+    open fun boltffi_counter_increment_single_threaded(blackhole: Blackhole) {
+        CounterSingleThreaded().use { counter ->
             repeat(1000) { counter.increment() }
             blackhole.consume(counter.get())
         }
@@ -426,7 +434,7 @@ open class BoltFFIVsUniffiBench {
     }
 
     @Benchmark
-    open fun boltffi_accumulator(blackhole: Blackhole) {
+    open fun boltffi_accumulator_mutex(blackhole: Blackhole) {
         Accumulator().use { accumulator ->
             repeat(1000) { index -> accumulator.add(index.toLong()) }
             blackhole.consume(accumulator.get())
@@ -435,8 +443,17 @@ open class BoltFFIVsUniffiBench {
     }
 
     @Benchmark
-    open fun uniffi_accumulator(blackhole: Blackhole) {
+    open fun uniffi_accumulator_mutex(blackhole: Blackhole) {
         uniffi.bench_uniffi.Accumulator().use { accumulator ->
+            repeat(1000) { index -> accumulator.add(index.toLong()) }
+            blackhole.consume(accumulator.get())
+            accumulator.reset()
+        }
+    }
+
+    @Benchmark
+    open fun boltffi_accumulator_single_threaded(blackhole: Blackhole) {
+        AccumulatorSingleThreaded().use { accumulator ->
             repeat(1000) { index -> accumulator.add(index.toLong()) }
             blackhole.consume(accumulator.get())
             accumulator.reset()

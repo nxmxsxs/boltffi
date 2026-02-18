@@ -169,7 +169,7 @@ benchmark("uniffi_process_locations_10k") {
     _ = BenchUniffi.processLocations(locations: uniffiLocations10k)
 }
 
-benchmark("boltffi_counter_increment") {
+benchmark("boltffi_counter_increment_mutex") {
     let counter = BenchBoltFFI.Counter()
     for _ in 0 ..< 1000 {
         counter.increment()
@@ -177,8 +177,16 @@ benchmark("boltffi_counter_increment") {
     precondition(counter.get() == 1000)
 }
 
-benchmark("uniffi_counter_increment") {
+benchmark("uniffi_counter_increment_mutex") {
     let counter = BenchUniffi.Counter()
+    for _ in 0 ..< 1000 {
+        counter.increment()
+    }
+    precondition(counter.get() == 1000)
+}
+
+benchmark("boltffi_counter_increment_single_threaded") {
+    let counter = BenchBoltFFI.CounterSingleThreaded()
     for _ in 0 ..< 1000 {
         counter.increment()
     }
@@ -202,7 +210,7 @@ benchmark("uniffi_datastore_add") {
     precondition(store.len() == 1000)
 }
 
-benchmark("boltffi_accumulator") {
+benchmark("boltffi_accumulator_mutex") {
     let acc = BenchBoltFFI.Accumulator()
     for i: Int64 in 0 ..< 1000 {
         acc.add(amount: i)
@@ -211,8 +219,17 @@ benchmark("boltffi_accumulator") {
     acc.reset()
 }
 
-benchmark("uniffi_accumulator") {
+benchmark("uniffi_accumulator_mutex") {
     let acc = BenchUniffi.Accumulator()
+    for i: Int64 in 0 ..< 1000 {
+        acc.add(amount: i)
+    }
+    _ = acc.get()
+    acc.reset()
+}
+
+benchmark("boltffi_accumulator_single_threaded") {
+    let acc = BenchBoltFFI.AccumulatorSingleThreaded()
     for i: Int64 in 0 ..< 1000 {
         acc.add(amount: i)
     }
