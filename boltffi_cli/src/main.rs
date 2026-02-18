@@ -15,7 +15,9 @@ use commands::check::CheckOptions;
 use commands::doctor::DoctorOptions;
 use commands::generate::{GenerateOptions, GenerateTarget, run_generate_with_output};
 use commands::init::InitOptions;
-use commands::pack::{PackAllOptions, PackAndroidOptions, PackAppleOptions, PackCommand, PackWasmOptions};
+use commands::pack::{
+    PackAllOptions, PackAndroidOptions, PackAppleOptions, PackCommand, PackWasmOptions,
+};
 use commands::verify::VerifyOptions;
 use commands::{run_build, run_check, run_doctor, run_init, run_pack, run_verify};
 use config::Config;
