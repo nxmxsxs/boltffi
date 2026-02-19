@@ -108,3 +108,42 @@ jobs:
           components: miri
       - run: cargo miri setup
       - run: cargo miri test -p boltffi -p boltffi_tests
+
+  cross-build:
+    name: Cross Build (${{ matrix.os }})
+    runs-on: ${{ matrix.os }}
+    defaults:
+      run:
+        working-directory: benchmarks/rust-boltffi
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [macos-latest, ubuntu-latest, windows-latest]
+    steps:
+      - uses: actions/checkout@v6
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+        with:
+          cache-on-failure: true
+          key: cross-${{ matrix.os }}
+          workspaces: |
+            .
+            benchmarks/rust-boltffi
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+      - run: npm install -g typescript
+      - uses: Aandreba/setup-binaryen@v1.0.0
+        with:
+          token: ${{ github.token }}
+      - run: cargo install --path ../../boltffi_cli
+      - if: matrix.os == 'macos-latest'
+        run: boltffi check --fix
+      - if: matrix.os == 'macos-latest'
+        run: boltffi -v pack all
+      - if: matrix.os != 'macos-latest'
+        run: boltffi check --android --wasm --fix
+      - if: matrix.os != 'macos-latest'
+        run: boltffi -v pack android
+      - if: matrix.os != 'macos-latest'
+        run: boltffi -v pack wasm

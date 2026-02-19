@@ -583,7 +583,13 @@ fn transpile_typescript_bundle(
     source_file: &Path,
     output_dir: &Path,
 ) -> Result<()> {
-    let mut command = Command::new("tsc");
+    let mut command = if cfg!(windows) {
+        let mut cmd = Command::new("cmd");
+        cmd.args(["/C", "npx", "tsc"]);
+        cmd
+    } else {
+        Command::new("tsc")
+    };
     command
         .arg(source_file)
         .arg("--target")
