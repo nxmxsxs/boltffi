@@ -70,8 +70,8 @@ mod tests {
 
     #[test]
     fn bool_roundtrip() {
-        assert_eq!(unsafe { bool::unpack(true.pack()) }, true);
-        assert_eq!(unsafe { bool::unpack(false.pack()) }, false);
+        assert!(unsafe { bool::unpack(true.pack()) });
+        assert!(!unsafe { bool::unpack(false.pack()) });
     }
 
     #[test]

@@ -33,6 +33,9 @@ pub enum ReturnAbi {
         rust_type: syn::Type,
         strategy: EncodedReturnStrategy,
     },
+    Passable {
+        rust_type: syn::Type,
+    },
 }
 
 pub fn extract_vec_inner(ty: &Type) -> Option<syn::Type> {
@@ -213,10 +216,7 @@ pub fn lower_return_abi(kind: ReturnKind) -> ReturnAbi {
             rust_type: result_rust_type(syn::parse_quote!(()), err),
             strategy: EncodedReturnStrategy::WireEncoded,
         },
-        ReturnKind::WireEncoded(rust_type) => ReturnAbi::Encoded {
-            rust_type,
-            strategy: EncodedReturnStrategy::WireEncoded,
-        },
+        ReturnKind::WireEncoded(rust_type) => ReturnAbi::Passable { rust_type },
     }
 }
 
@@ -230,13 +230,18 @@ impl ReturnAbi {
             Self::Unit => quote! { () },
             Self::Scalar { rust_type } => quote! { #rust_type },
             Self::Encoded { .. } => quote! { ::boltffi::__private::FfiBuf<u8> },
+            Self::Passable { rust_type } => {
+                quote! { <#rust_type as ::boltffi::__private::Passable>::Out }
+            }
         }
     }
 
     pub fn async_rust_return_type(&self) -> proc_macro2::TokenStream {
         match self {
             Self::Unit => quote! { () },
-            Self::Scalar { rust_type } | Self::Encoded { rust_type, .. } => {
+            Self::Scalar { rust_type }
+            | Self::Encoded { rust_type, .. }
+            | Self::Passable { rust_type } => {
                 quote! { #rust_type }
             }
         }
@@ -269,6 +274,10 @@ impl ReturnAbi {
                     #encode_expression
                 }
             }
+            Self::Passable { .. } => quote! {
+                if !out_status.is_null() { *out_status = ::boltffi::__private::FfiStatus::OK; }
+                ::boltffi::__private::Passable::pack(result)
+            },
         }
     }
 
@@ -277,6 +286,7 @@ impl ReturnAbi {
             Self::Unit => quote! { () },
             Self::Scalar { .. } => quote! { Default::default() },
             Self::Encoded { .. } => quote! { ::boltffi::__private::FfiBuf::default() },
+            Self::Passable { .. } => quote! { Default::default() },
         }
     }
 }

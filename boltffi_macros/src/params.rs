@@ -11,6 +11,32 @@ use crate::util::{
     ParamTransform, WireEncodedParam, WireEncodedParamKind, classify_param_transform,
     foreign_trait_path, is_primitive_vec_inner, len_ident, ptr_ident,
 };
+
+fn lower_passable_param_transform(
+    acc: &mut ParamLoweringState,
+    name: &syn::Ident,
+    ty: &syn::Type,
+    mode: ParamExecutionMode,
+) {
+    acc.ffi_params
+        .push(quote! { #name: <#ty as ::boltffi::__private::Passable>::In });
+
+    let conversion = quote! {
+        let #name: #ty = unsafe { <#ty as ::boltffi::__private::Passable>::unpack(#name) };
+    };
+
+    match mode {
+        ParamExecutionMode::Sync => {
+            acc.setup.push(conversion);
+        }
+        ParamExecutionMode::Async => {
+            acc.setup.push(conversion);
+            acc.move_vars.push(name.clone());
+        }
+    }
+
+    acc.call_args.push(quote! { #name });
+}
 use boltffi_ffi_rules::callback as cb_naming;
 
 fn generate_wasm_closure_codegen(
@@ -470,6 +496,7 @@ fn unsupported_async_param(transform: &ParamTransform) -> Option<UnsupportedAsyn
         | ParamTransform::SliceRef(_)
         | ParamTransform::VecPrimitive(_)
         | ParamTransform::WireEncoded(_)
+        | ParamTransform::Passable(_)
         | ParamTransform::ImplTrait(_)
         | ParamTransform::PassThrough => None,
     }
@@ -1051,6 +1078,9 @@ fn transform_params_with_mode(
                         custom_types,
                         mode,
                     ),
+                    ParamTransform::Passable(ty) => {
+                        lower_passable_param_transform(&mut acc, &name, &ty, mode)
+                    }
                     ParamTransform::ImplTrait(trait_path) => {
                         lower_impl_trait_param_transform(
                             &mut acc,

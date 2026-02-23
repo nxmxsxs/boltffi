@@ -38,6 +38,7 @@ pub enum ParamTransform {
     ImplTrait(syn::Path),
     VecPrimitive(syn::Type),
     WireEncoded(WireEncodedParam),
+    Passable(syn::Type),
 }
 
 #[derive(Clone)]
@@ -442,10 +443,7 @@ pub fn classify_param_transform(ty: &Type) -> ParamTransform {
     } else if type_str == "String" || type_str == "std::string::String" {
         ParamTransform::OwnedString
     } else if is_record_type(&type_str) {
-        ParamTransform::WireEncoded(WireEncodedParam {
-            kind: WireEncodedParamKind::Record,
-            rust_type: ty.clone(),
-        })
+        ParamTransform::Passable(ty.clone())
     } else {
         ParamTransform::PassThrough
     }
