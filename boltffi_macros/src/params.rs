@@ -315,6 +315,7 @@ fn utf8_string_expression(
 
 fn wire_empty_value_expression(kind: WireEncodedParamKind) -> proc_macro2::TokenStream {
     match kind {
+        WireEncodedParamKind::Record => quote! { unreachable!() },
         WireEncodedParamKind::Vec => quote! { Vec::new() },
         WireEncodedParamKind::Option => quote! { None },
     }
@@ -327,6 +328,7 @@ fn wire_decode_conversion(
     len_name: &syn::Ident,
     custom_types: &CustomTypeRegistry,
     requires_unsafe: bool,
+    on_wire_record_error: &proc_macro2::TokenStream,
 ) -> proc_macro2::TokenStream {
     let rust_type = &wire_param.rust_type;
     let bytes_expr = wire_bytes_expression(ptr_name, len_name, requires_unsafe);
@@ -335,6 +337,39 @@ fn wire_decode_conversion(
         let wire_ty = wire_type_for(rust_type, custom_types);
         let wire_value_ident = syn::Ident::new("__boltffi_wire_value", name.span());
         let from_wire = from_wire_expr_owned(rust_type, custom_types, &wire_value_ident);
+
+        if matches!(wire_param.kind, WireEncodedParamKind::Record) {
+            return quote! {
+                let #name: #rust_type = {
+                    if #ptr_name.is_null() && #len_name > 0 {
+                        ::boltffi::__private::set_last_error(format!(
+                            "{}: null pointer with non-zero length (buf_len={})",
+                            stringify!(#name),
+                            #len_name
+                        ));
+                        return #on_wire_record_error;
+                    }
+                    let __bytes: &[u8] = if #len_name == 0 {
+                        &[]
+                    } else {
+                        #bytes_expr
+                    };
+                    let #wire_value_ident: #wire_ty = match ::boltffi::__private::wire::decode(__bytes) {
+                        Ok(value) => value,
+                        Err(error) => {
+                            ::boltffi::__private::set_last_error(format!(
+                                "{}: wire decode failed: {} (buf_len={})",
+                                stringify!(#name),
+                                error,
+                                #len_name
+                            ));
+                            return #on_wire_record_error;
+                        }
+                    };
+                    #from_wire
+                };
+            };
+        }
 
         let empty_value = wire_empty_value_expression(wire_param.kind);
         return quote! {
@@ -352,6 +387,38 @@ fn wire_decode_conversion(
                             #len_name
                         ));
                         #empty_value
+                    }
+                }
+            };
+        };
+    }
+
+    if matches!(wire_param.kind, WireEncodedParamKind::Record) {
+        return quote! {
+            let #name: #rust_type = {
+                if #ptr_name.is_null() && #len_name > 0 {
+                    ::boltffi::__private::set_last_error(format!(
+                        "{}: null pointer with non-zero length (buf_len={})",
+                        stringify!(#name),
+                        #len_name
+                    ));
+                    return #on_wire_record_error;
+                }
+                let __bytes: &[u8] = if #len_name == 0 {
+                    &[]
+                } else {
+                    #bytes_expr
+                };
+                match ::boltffi::__private::wire::decode(__bytes) {
+                    Ok(value) => value,
+                    Err(error) => {
+                        ::boltffi::__private::set_last_error(format!(
+                            "{}: wire decode failed: {} (buf_len={})",
+                            stringify!(#name),
+                            error,
+                            #len_name
+                        ));
+                        return #on_wire_record_error;
                     }
                 }
             };
@@ -387,6 +454,7 @@ fn push_wire_encoded_param(
     wire_param: &WireEncodedParam,
     custom_types: &CustomTypeRegistry,
     requires_unsafe: bool,
+    on_wire_record_error: &proc_macro2::TokenStream,
 ) {
     let ptr_name = ptr_ident(name);
     let len_name = len_ident(name);
@@ -399,6 +467,7 @@ fn push_wire_encoded_param(
         &len_name,
         custom_types,
         requires_unsafe,
+        on_wire_record_error,
     ));
 }
 
@@ -852,6 +921,7 @@ fn lower_wire_encoded_param_transform(
     wire_param: &WireEncodedParam,
     custom_types: &CustomTypeRegistry,
     mode: ParamExecutionMode,
+    on_wire_record_error: &proc_macro2::TokenStream,
 ) {
     push_wire_encoded_param(
         &mut acc.ffi_params,
@@ -860,6 +930,7 @@ fn lower_wire_encoded_param_transform(
         wire_param,
         custom_types,
         mode.requires_unsafe_wire_decode(),
+        on_wire_record_error,
     );
     if matches!(mode, ParamExecutionMode::Async) {
         acc.move_vars.push(name.clone());
@@ -947,6 +1018,7 @@ fn transform_params_with_mode(
     custom_types: &CustomTypeRegistry,
     callback_registry: &CallbackTraitRegistry,
     mode: ParamExecutionMode,
+    on_wire_record_error: &proc_macro2::TokenStream,
 ) -> ParamLoweringState {
     inputs
         .iter()
@@ -1026,7 +1098,22 @@ fn transform_params_with_mode(
                         &wire_param,
                         custom_types,
                         mode,
+                        on_wire_record_error,
                     ),
+                    ParamTransform::Passable(ref ty) if contains_custom_types(ty, custom_types) => {
+                        let wire_param = WireEncodedParam {
+                            kind: WireEncodedParamKind::Record,
+                            rust_type: ty.clone(),
+                        };
+                        lower_wire_encoded_param_transform(
+                            &mut acc,
+                            &name,
+                            &wire_param,
+                            custom_types,
+                            mode,
+                            on_wire_record_error,
+                        )
+                    }
                     ParamTransform::Passable(ty) => {
                         lower_passable_param_transform(&mut acc, &name, &ty, mode)
                     }
@@ -1053,12 +1140,14 @@ pub fn transform_params(
     inputs: &syn::punctuated::Punctuated<FnArg, syn::Token![,]>,
     custom_types: &CustomTypeRegistry,
     callback_registry: &CallbackTraitRegistry,
+    on_wire_record_error: &proc_macro2::TokenStream,
 ) -> FfiParams {
     transform_params_with_mode(
         inputs,
         custom_types,
         callback_registry,
         ParamExecutionMode::Sync,
+        on_wire_record_error,
     )
     .into_sync()
 }
@@ -1067,6 +1156,7 @@ pub fn transform_params_async(
     inputs: &syn::punctuated::Punctuated<FnArg, syn::Token![,]>,
     custom_types: &CustomTypeRegistry,
     callback_registry: &CallbackTraitRegistry,
+    on_wire_record_error: &proc_macro2::TokenStream,
 ) -> syn::Result<AsyncFfiParams> {
     validate_async_params(inputs)?;
     Ok(transform_params_with_mode(
@@ -1074,6 +1164,7 @@ pub fn transform_params_async(
         custom_types,
         callback_registry,
         ParamExecutionMode::Async,
+        on_wire_record_error,
     )
     .into_async())
 }
@@ -1082,18 +1173,30 @@ pub fn transform_method_params(
     inputs: impl Iterator<Item = syn::FnArg>,
     custom_types: &CustomTypeRegistry,
     callback_registry: &CallbackTraitRegistry,
+    on_wire_record_error: &proc_macro2::TokenStream,
 ) -> FfiParams {
     let function_like_inputs: syn::punctuated::Punctuated<FnArg, syn::Token![,]> = inputs.collect();
-    transform_params(&function_like_inputs, custom_types, callback_registry)
+    transform_params(
+        &function_like_inputs,
+        custom_types,
+        callback_registry,
+        on_wire_record_error,
+    )
 }
 
 pub fn transform_method_params_async(
     inputs: impl Iterator<Item = syn::FnArg>,
     custom_types: &CustomTypeRegistry,
     callback_registry: &CallbackTraitRegistry,
+    on_wire_record_error: &proc_macro2::TokenStream,
 ) -> syn::Result<AsyncFfiParams> {
     let function_like_inputs: syn::punctuated::Punctuated<FnArg, syn::Token![,]> = inputs.collect();
-    transform_params_async(&function_like_inputs, custom_types, callback_registry)
+    transform_params_async(
+        &function_like_inputs,
+        custom_types,
+        callback_registry,
+        on_wire_record_error,
+    )
 }
 
 #[cfg(test)]
