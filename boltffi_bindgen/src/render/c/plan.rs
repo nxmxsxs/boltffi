@@ -5,7 +5,7 @@ pub struct CField {
 
 pub struct CEnumVariant<'a> {
     pub name: &'a str,
-    pub discriminant: i64,
+    pub discriminant: i128,
 }
 
 pub struct CCallbackMethod {

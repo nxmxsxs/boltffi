@@ -7,19 +7,19 @@ use std::collections::HashMap;
 
 use super::emit;
 use super::plan::{
-    CompositeFieldMapping, DirectBufferCompositeMapping, SwiftAsyncConversion, SwiftAsyncResult, SwiftCallMode, SwiftCallback,
-    SwiftCallbackMethod, SwiftCallbackParam, SwiftClass, SwiftClosureTrampoline,
-    SwiftClosureTrampolineParam, SwiftConstructor, SwiftConversion, SwiftCustomType, SwiftEnum,
-    SwiftEnumStyle, SwiftField, SwiftFunction, SwiftMethod, SwiftModule, SwiftNativeConversion,
-    SwiftNativeMapping, SwiftParam, SwiftRecord, SwiftReturn, SwiftStream, SwiftStreamMode,
-    SwiftVariant, SwiftVariantPayload,
+    CompositeFieldMapping, DirectBufferCompositeMapping, SwiftAsyncConversion, SwiftAsyncResult,
+    SwiftCallMode, SwiftCallback, SwiftCallbackMethod, SwiftCallbackParam, SwiftClass,
+    SwiftClosureTrampoline, SwiftClosureTrampolineParam, SwiftConstructor, SwiftConversion,
+    SwiftCustomType, SwiftEnum, SwiftEnumStyle, SwiftField, SwiftFunction, SwiftMethod,
+    SwiftModule, SwiftNativeConversion, SwiftNativeMapping, SwiftParam, SwiftRecord, SwiftReturn,
+    SwiftStream, SwiftStreamMode, SwiftVariant, SwiftVariantPayload,
 };
-use crate::ir::codec::CodecPlan;
 use crate::ir::abi::{
     AbiCall, AbiCallbackInvocation, AbiContract, AbiEnum, AbiEnumField, AbiEnumPayload,
-    AbiEnumVariant, AbiParam, AbiRecord, AbiStream, CallId, CallMode, ErrorTransport,
-    ParamRole, ReturnShape, StreamItemTransport,
+    AbiEnumVariant, AbiParam, AbiRecord, AbiStream, CallId, CallMode, ErrorTransport, ParamRole,
+    ReturnShape, StreamItemTransport,
 };
+use crate::ir::codec::CodecPlan;
 use crate::ir::contract::FfiContract;
 use crate::ir::definitions::{
     CallbackKind, ConstructorDef, DefaultValue, EnumRepr, ParamDef, Receiver, ReturnDef, StreamDef,
@@ -30,7 +30,9 @@ use crate::ir::ops::{
     FieldReadOp, OffsetExpr, ReadOp, ReadSeq, SizeExpr, ValueExpr, WireShape, WriteOp, WriteSeq,
     remap_root_in_seq,
 };
-use crate::ir::plan::{AbiType, CallbackStyle, CompositeLayout, Mutability, ScalarOrigin, SpanContent, Transport};
+use crate::ir::plan::{
+    AbiType, CallbackStyle, CompositeLayout, Mutability, ScalarOrigin, SpanContent, Transport,
+};
 use crate::ir::types::{PrimitiveType, TypeExpr};
 use crate::render::{TypeConversion, TypeMappings};
 
@@ -343,6 +345,10 @@ impl<'a> SwiftLowerer<'a> {
                     name: self.swift_name_for_enum(&def.id),
                     variants,
                     style,
+                    c_style_tag_type: match &def.repr {
+                        EnumRepr::CStyle { tag_type, .. } => Some(*tag_type),
+                        _ => None,
+                    },
                     is_error: def.is_error,
                     doc: def.doc.clone(),
                 }
@@ -674,10 +680,15 @@ impl<'a> SwiftLowerer<'a> {
     fn lower_callback_param(&self, def: &ParamDef, param: &AbiParam) -> SwiftCallbackParam {
         let label = camel_case(param.name.as_str());
         let (swift_type, ffi_args, decode_prelude) = match &param.role {
-            ParamRole::Input { transport: Transport::Scalar(_), .. } => {
-                (self.swift_type(&def.type_expr), vec![label.clone()], None)
-            }
-            ParamRole::Input { transport: Transport::Span(SpanContent::Encoded(_)), decode_ops: Some(decode_ops), .. } => {
+            ParamRole::Input {
+                transport: Transport::Scalar(_),
+                ..
+            } => (self.swift_type(&def.type_expr), vec![label.clone()], None),
+            ParamRole::Input {
+                transport: Transport::Span(SpanContent::Encoded(_)),
+                decode_ops: Some(decode_ops),
+                ..
+            } => {
                 let len_name = format!("{}Len", label);
                 let reader_decode = emit::emit_reader_read(decode_ops);
                 (
@@ -752,18 +763,24 @@ impl<'a> SwiftLowerer<'a> {
         let swift_name = camel_case(param.name.as_str());
 
         let (swift_type, conversion) = match &abi_param.role {
-            ParamRole::Input { transport: Transport::Scalar(origin), .. } => {
-                match origin {
-                    ScalarOrigin::CStyleEnum { enum_id, .. } => {
-                        let swift_enum = self.swift_name_for_enum(enum_id);
-                        (swift_enum, SwiftConversion::CStyleEnumRawValue)
-                    }
-                    ScalarOrigin::Primitive(p) => {
-                        (self.abi_to_swift(&AbiType::from(*p)), SwiftConversion::Direct)
-                    }
+            ParamRole::Input {
+                transport: Transport::Scalar(origin),
+                ..
+            } => match origin {
+                ScalarOrigin::CStyleEnum { enum_id, .. } => {
+                    let swift_enum = self.swift_name_for_enum(enum_id);
+                    (swift_enum, SwiftConversion::CStyleEnumRawValue)
                 }
-            }
-            ParamRole::Input { transport: Transport::Span(SpanContent::Scalar(origin)), mutability, .. } => {
+                ScalarOrigin::Primitive(p) => (
+                    self.abi_to_swift(&AbiType::from(*p)),
+                    SwiftConversion::Direct,
+                ),
+            },
+            ParamRole::Input {
+                transport: Transport::Span(SpanContent::Scalar(origin)),
+                mutability,
+                ..
+            } => {
                 let primitive = origin.primitive();
                 let element_abi = AbiType::from(primitive);
                 let element_type = self.abi_to_swift(&element_abi);
@@ -790,18 +807,25 @@ impl<'a> SwiftLowerer<'a> {
                     (format!("[{}]", element_type), conversion)
                 }
             }
-            ParamRole::Input { transport: Transport::Span(SpanContent::Utf8), .. } => {
-                ("String".to_string(), SwiftConversion::ToString)
-            }
-            ParamRole::Input { transport: Transport::Span(SpanContent::Encoded(codec)), encode_ops: Some(encode_ops), .. } => {
-                (
-                    self.swift_type_from_codec(codec),
-                    SwiftConversion::ToWireBuffer {
-                        encode: encode_ops.clone(),
-                    },
-                )
-            }
-            ParamRole::Input { transport: Transport::Span(_), mutability: Mutability::Mutable, .. } => {
+            ParamRole::Input {
+                transport: Transport::Span(SpanContent::Utf8),
+                ..
+            } => ("String".to_string(), SwiftConversion::ToString),
+            ParamRole::Input {
+                transport: Transport::Span(SpanContent::Encoded(codec)),
+                encode_ops: Some(encode_ops),
+                ..
+            } => (
+                self.swift_type_from_codec(codec),
+                SwiftConversion::ToWireBuffer {
+                    encode: encode_ops.clone(),
+                },
+            ),
+            ParamRole::Input {
+                transport: Transport::Span(_),
+                mutability: Mutability::Mutable,
+                ..
+            } => {
                 let element_type = self.buffer_element_swift_type(&param.type_expr);
                 (
                     format!("[{}]", element_type),
@@ -810,7 +834,10 @@ impl<'a> SwiftLowerer<'a> {
                     },
                 )
             }
-            ParamRole::Input { transport: Transport::Handle { class_id, nullable }, .. } => {
+            ParamRole::Input {
+                transport: Transport::Handle { class_id, nullable },
+                ..
+            } => {
                 let class_name = self.swift_name_for_class(class_id);
                 let swift_type = if *nullable {
                     format!("{}?", class_name)
@@ -825,33 +852,45 @@ impl<'a> SwiftLowerer<'a> {
                     },
                 )
             }
-            ParamRole::Input { transport: Transport::Callback { callback_id, nullable, style }, .. } => {
-                match style {
-                    CallbackStyle::BoxedDyn => {
-                        let protocol = pascal_case(callback_id.as_str());
-                        let swift_type = if *nullable {
-                            format!("(any {})?", protocol)
-                        } else {
-                            format!("any {}", protocol)
-                        };
-                        (
-                            swift_type,
-                            SwiftConversion::WrapCallback { protocol, nullable: *nullable },
-                        )
-                    }
-                    CallbackStyle::ImplTrait => {
-                        let closure_plan = self.build_closure_trampoline(callback_id, &swift_name);
-                        let swift_type = format!("@escaping {}", closure_plan.swift_type);
-                        (
-                            swift_type,
-                            SwiftConversion::InlineClosure {
-                                closure: closure_plan,
-                            },
-                        )
-                    }
+            ParamRole::Input {
+                transport:
+                    Transport::Callback {
+                        callback_id,
+                        nullable,
+                        style,
+                    },
+                ..
+            } => match style {
+                CallbackStyle::BoxedDyn => {
+                    let protocol = pascal_case(callback_id.as_str());
+                    let swift_type = if *nullable {
+                        format!("(any {})?", protocol)
+                    } else {
+                        format!("any {}", protocol)
+                    };
+                    (
+                        swift_type,
+                        SwiftConversion::WrapCallback {
+                            protocol,
+                            nullable: *nullable,
+                        },
+                    )
                 }
-            }
-            ParamRole::Input { transport: Transport::Composite(layout), .. } => {
+                CallbackStyle::ImplTrait => {
+                    let closure_plan = self.build_closure_trampoline(callback_id, &swift_name);
+                    let swift_type = format!("@escaping {}", closure_plan.swift_type);
+                    (
+                        swift_type,
+                        SwiftConversion::InlineClosure {
+                            closure: closure_plan,
+                        },
+                    )
+                }
+            },
+            ParamRole::Input {
+                transport: Transport::Composite(layout),
+                ..
+            } => {
                 let c_type = format!("___{}", layout.record_id.as_str());
                 let fields = self.composite_field_mappings(layout);
                 (
@@ -876,18 +915,21 @@ impl<'a> SwiftLowerer<'a> {
             CodecPlan::Enum { id, .. } => self.swift_name_for_enum(id),
             CodecPlan::Vec { element, .. } => format!("[{}]", self.swift_type_from_codec(element)),
             CodecPlan::Option(inner) => format!("{}?", self.swift_type_from_codec(inner)),
-            CodecPlan::Result { ok, err } => format!("Result<{}, {}>", self.swift_type_from_codec(ok), self.swift_type_from_codec(err)),
+            CodecPlan::Result { ok, err } => format!(
+                "Result<{}, {}>",
+                self.swift_type_from_codec(ok),
+                self.swift_type_from_codec(err)
+            ),
             CodecPlan::String => "String".to_string(),
             CodecPlan::Bytes => "Data".to_string(),
             CodecPlan::Primitive(p) => self.abi_to_swift(&AbiType::from(*p)),
             CodecPlan::Void => "Void".to_string(),
             CodecPlan::Builtin(id) => pascal_case(id.as_str()),
-            CodecPlan::Custom { id, .. } => {
-                self.type_mappings
-                    .get(id.as_str())
-                    .map(|m| m.native_type.clone())
-                    .unwrap_or_else(|| pascal_case(id.as_str()))
-            }
+            CodecPlan::Custom { id, .. } => self
+                .type_mappings
+                .get(id.as_str())
+                .map(|m| m.native_type.clone())
+                .unwrap_or_else(|| pascal_case(id.as_str())),
         }
     }
 
@@ -923,16 +965,14 @@ impl<'a> SwiftLowerer<'a> {
     ) -> SwiftReturn {
         let base = match &return_shape.transport {
             None => SwiftReturn::Void,
-            Some(Transport::Scalar(origin)) => {
-                match origin {
-                    ScalarOrigin::CStyleEnum { enum_id, .. } => SwiftReturn::CStyleEnumFromRawValue {
-                        swift_type: self.swift_name_for_enum(enum_id),
-                    },
-                    ScalarOrigin::Primitive(_) => SwiftReturn::Direct {
-                        swift_type: self.swift_return_value_type(returns),
-                    },
-                }
-            }
+            Some(Transport::Scalar(origin)) => match origin {
+                ScalarOrigin::CStyleEnum { enum_id, .. } => SwiftReturn::CStyleEnumFromRawValue {
+                    swift_type: self.swift_name_for_enum(enum_id),
+                },
+                ScalarOrigin::Primitive(_) => SwiftReturn::Direct {
+                    swift_type: self.swift_return_value_type(returns),
+                },
+            },
             Some(Transport::Composite(layout)) => {
                 let c_type = format!("___{}", layout.record_id.as_str());
                 let fields = self.composite_field_mappings(layout);
@@ -942,9 +982,7 @@ impl<'a> SwiftLowerer<'a> {
                     fields,
                 }
             }
-            Some(Transport::Span(SpanContent::Scalar(origin)))
-                if !matches!(origin.primitive(), PrimitiveType::U8) =>
-            {
+            Some(Transport::Span(SpanContent::Scalar(origin))) => {
                 let primitive = origin.primitive();
                 let element_swift_type = self.abi_to_swift(&AbiType::from(primitive));
                 let enum_mapping = match origin {
@@ -994,7 +1032,11 @@ impl<'a> SwiftLowerer<'a> {
                     nullable: *nullable,
                 }
             }
-            Some(Transport::Callback { callback_id, nullable, .. }) => {
+            Some(Transport::Callback {
+                callback_id,
+                nullable,
+                ..
+            }) => {
                 let protocol = pascal_case(callback_id.as_str());
                 let swift_type = if *nullable {
                     format!("(any {})?", protocol)
@@ -1108,7 +1150,11 @@ impl<'a> SwiftLowerer<'a> {
 
     fn is_c_style_enum_return(&self, returns: &ReturnDef) -> bool {
         let enum_id = match returns {
-            ReturnDef::Value(TypeExpr::Enum(id)) | ReturnDef::Result { ok: TypeExpr::Enum(id), .. } => id,
+            ReturnDef::Value(TypeExpr::Enum(id))
+            | ReturnDef::Result {
+                ok: TypeExpr::Enum(id),
+                ..
+            } => id,
             _ => return false,
         };
         self.contract
@@ -1363,13 +1409,15 @@ impl<'a> SwiftLowerer<'a> {
         let abi_params: Vec<&AbiParam> = abi_method
             .params
             .iter()
-            .filter(|param| matches!(
-                param.role,
-                ParamRole::Input {
-                    transport: Transport::Scalar(_) | Transport::Span(SpanContent::Encoded(_)),
-                    ..
-                }
-            ))
+            .filter(|param| {
+                matches!(
+                    param.role,
+                    ParamRole::Input {
+                        transport: Transport::Scalar(_) | Transport::Span(SpanContent::Encoded(_)),
+                        ..
+                    }
+                )
+            })
             .collect();
         let trampoline_params: Vec<SwiftClosureTrampolineParam> = method
             .params
@@ -1400,7 +1448,11 @@ impl<'a> SwiftLowerer<'a> {
         abi_param: &AbiParam,
     ) -> SwiftClosureTrampolineParam {
         match &abi_param.role {
-            ParamRole::Input { transport: Transport::Span(SpanContent::Encoded(_)), decode_ops: Some(decode_ops), .. } => {
+            ParamRole::Input {
+                transport: Transport::Span(SpanContent::Encoded(_)),
+                decode_ops: Some(decode_ops),
+                ..
+            } => {
                 let ptr_name = format!("ptr{}", idx);
                 let len_name = format!("len{}", idx);
                 let reader_decode = emit::emit_reader_read(decode_ops);
@@ -1414,7 +1466,10 @@ impl<'a> SwiftLowerer<'a> {
                     decode_expr,
                 }
             }
-            ParamRole::Input { transport: Transport::Scalar(_), .. } => {
+            ParamRole::Input {
+                transport: Transport::Scalar(_),
+                ..
+            } => {
                 let arg_name = format!("arg{}", idx);
                 SwiftClosureTrampolineParam {
                     name: arg_name.clone(),
@@ -1445,7 +1500,9 @@ impl<'a> SwiftLowerer<'a> {
             AbiType::USize => "UInt".to_string(),
             AbiType::F32 => "Float".to_string(),
             AbiType::F64 => "Double".to_string(),
-            AbiType::Pointer(_) | AbiType::InlineCallbackFn(_) | AbiType::Handle(_) => "OpaquePointer".to_string(),
+            AbiType::Pointer(_) | AbiType::InlineCallbackFn(_) | AbiType::Handle(_) => {
+                "OpaquePointer".to_string()
+            }
             AbiType::CallbackHandle => "BoltFFICallbackHandle".to_string(),
             AbiType::Struct(id) => format!("___{}", id.as_str()),
         }
@@ -1498,9 +1555,7 @@ impl<'a> SwiftLowerer<'a> {
                 swift_type: self.abi_to_swift(&AbiType::from(origin.primitive())),
                 conversion: SwiftAsyncConversion::None,
             },
-            Some(Transport::Span(SpanContent::Scalar(origin)))
-                if !matches!(origin.primitive(), PrimitiveType::U8) =>
-            {
+            Some(Transport::Span(SpanContent::Scalar(origin))) => {
                 let primitive = origin.primitive();
                 let element_swift_type = self.abi_to_swift(&AbiType::from(primitive));
                 let enum_mapping = match origin {
@@ -1557,7 +1612,11 @@ impl<'a> SwiftLowerer<'a> {
                     nullable: *nullable,
                 },
             },
-            Some(Transport::Callback { callback_id, nullable, .. }) => SwiftAsyncResult::Direct {
+            Some(Transport::Callback {
+                callback_id,
+                nullable,
+                ..
+            }) => SwiftAsyncResult::Direct {
                 swift_type: if *nullable {
                     format!("(any {})?", pascal_case(callback_id.as_str()))
                 } else {
@@ -1656,8 +1715,6 @@ impl<'a> SwiftLowerer<'a> {
     }
 }
 
-
-
 fn swift_default_literal(default: &DefaultValue) -> String {
     match default {
         DefaultValue::Bool(true) => "true".to_string(),
@@ -1717,6 +1774,7 @@ mod tests {
     fn blittable_record_is_detected() {
         let mut contract = empty_contract();
         contract.catalog.insert_record(RecordDef {
+            is_repr_c: true,
             id: RecordId::new("Point"),
             fields: vec![
                 FieldDef {
@@ -1751,6 +1809,7 @@ mod tests {
     fn non_blittable_record_with_string() {
         let mut contract = empty_contract();
         contract.catalog.insert_record(RecordDef {
+            is_repr_c: true,
             id: RecordId::new("User"),
             fields: vec![
                 FieldDef {
@@ -1785,6 +1844,7 @@ mod tests {
     fn non_blittable_record_with_vec() {
         let mut contract = empty_contract();
         contract.catalog.insert_record(RecordDef {
+            is_repr_c: true,
             id: RecordId::new("Scores"),
             fields: vec![FieldDef {
                 name: FieldName::new("values"),
@@ -1810,6 +1870,7 @@ mod tests {
     fn field_names_are_camel_case() {
         let mut contract = empty_contract();
         contract.catalog.insert_record(RecordDef {
+            is_repr_c: true,
             id: RecordId::new("Config"),
             fields: vec![
                 FieldDef {
@@ -1840,6 +1901,7 @@ mod tests {
     fn primitive_types_map_correctly() {
         let mut contract = empty_contract();
         contract.catalog.insert_record(RecordDef {
+            is_repr_c: true,
             id: RecordId::new("AllPrimitives"),
             fields: vec![
                 FieldDef {
@@ -2013,6 +2075,7 @@ mod tests {
     fn blittable_struct_has_c_offsets() {
         let mut contract = empty_contract();
         contract.catalog.insert_record(RecordDef {
+            is_repr_c: true,
             id: RecordId::new("Aligned"),
             fields: vec![
                 FieldDef {
@@ -2051,6 +2114,7 @@ mod tests {
     fn option_type_maps_to_swift_optional() {
         let mut contract = empty_contract();
         contract.catalog.insert_record(RecordDef {
+            is_repr_c: true,
             id: RecordId::new("MaybeValue"),
             fields: vec![FieldDef {
                 name: FieldName::new("value"),
@@ -2072,6 +2136,7 @@ mod tests {
     fn vec_type_maps_to_swift_array() {
         let mut contract = empty_contract();
         contract.catalog.insert_record(RecordDef {
+            is_repr_c: true,
             id: RecordId::new("Numbers"),
             fields: vec![FieldDef {
                 name: FieldName::new("items"),
@@ -2093,6 +2158,7 @@ mod tests {
     fn nested_record_type_maps_correctly() {
         let mut contract = empty_contract();
         contract.catalog.insert_record(RecordDef {
+            is_repr_c: true,
             id: RecordId::new("Inner"),
             fields: vec![FieldDef {
                 name: FieldName::new("value"),
@@ -2104,6 +2170,7 @@ mod tests {
             deprecated: None,
         });
         contract.catalog.insert_record(RecordDef {
+            is_repr_c: true,
             id: RecordId::new("Outer"),
             fields: vec![FieldDef {
                 name: FieldName::new("inner"),
@@ -2200,6 +2267,7 @@ mod tests {
     fn record_field_default_expr_propagates() {
         let mut contract = empty_contract();
         contract.catalog.insert_record(RecordDef {
+            is_repr_c: true,
             id: RecordId::new("Config"),
             fields: vec![
                 FieldDef {
@@ -2236,6 +2304,7 @@ mod tests {
     fn contract_with_blittable_point() -> FfiContract {
         let mut contract = empty_contract();
         contract.catalog.insert_record(RecordDef {
+            is_repr_c: true,
             id: RecordId::new("Point"),
             fields: vec![
                 FieldDef {
@@ -2326,7 +2395,9 @@ mod tests {
 
         let convert = func.returns.composite_convert_expr("_raw").unwrap();
         assert!(
-            convert.contains("Point(") && convert.contains("x: _raw.x") && convert.contains("y: _raw.y"),
+            convert.contains("Point(")
+                && convert.contains("x: _raw.x")
+                && convert.contains("y: _raw.y"),
             "convert expr should construct Point from C fields, got: {}",
             convert
         );

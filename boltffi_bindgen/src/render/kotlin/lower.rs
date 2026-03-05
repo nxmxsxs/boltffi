@@ -22,16 +22,15 @@ use crate::ir::ops::{
 };
 use crate::ir::plan::{AbiType, ScalarOrigin, SpanContent, Transport};
 use crate::ir::types::{PrimitiveType, TypeExpr};
-use crate::render::TypeMappings;
 use crate::render::kotlin::emit;
 use crate::render::kotlin::plan::*;
 use crate::render::kotlin::templates::{AsyncMethodTemplate, WireMethodTemplate};
 use crate::render::kotlin::{
     FactoryStyle, KotlinApiStyle as KotlinInputApiStyle, KotlinOptions, NamingConvention,
 };
+use crate::render::{TypeConversion, TypeMappings};
 use askama::Template;
 use boltffi_ffi_rules::naming;
-
 
 struct KotlinReturnMeta {
     is_unit: bool,
@@ -336,15 +335,45 @@ impl<'a> KotlinLowerer<'a> {
         let custom_write_seq = self.custom_write_seq(custom);
         let repr_encode_expr = emit::emit_write_expr(&custom_write_seq);
         let repr_size_expr = emit::emit_size_expr_for_write_seq(&custom_write_seq);
-        let has_native_mapping = self.type_mappings.contains_key(custom.id.as_str());
+        let mapping = self.type_mappings.get(custom.id.as_str());
+        let (native_type, native_decode_expr, native_encode_expr) = mapping
+            .map(|mapping| {
+                let (decode_wrapper, encode_wrapper) =
+                    self.custom_native_conversion_wrappers(mapping);
+                (
+                    Some(mapping.native_type.clone()),
+                    Some(decode_wrapper.replace("$0", &repr_decode_expr)),
+                    Some(encode_wrapper.replace("$0", "this")),
+                )
+            })
+            .unwrap_or((None, None, None));
+        let has_native_mapping = mapping.is_some();
 
         KotlinCustomType {
             class_name,
+            native_type,
             repr_kotlin_type,
             repr_size_expr,
             repr_encode_expr,
             repr_decode_expr,
+            native_decode_expr,
+            native_encode_expr,
             has_native_mapping,
+        }
+    }
+
+    fn custom_native_conversion_wrappers(
+        &self,
+        mapping: &crate::render::TypeMapping,
+    ) -> (String, String) {
+        match mapping.conversion {
+            TypeConversion::UuidString => (
+                "UUID.fromString($0)".to_string(),
+                "$0.toString()".to_string(),
+            ),
+            TypeConversion::UrlString => {
+                ("URI.create($0)".to_string(), "$0.toString()".to_string())
+            }
         }
     }
 
@@ -509,6 +538,10 @@ impl<'a> KotlinLowerer<'a> {
     fn lower_enum(&self, enumeration: &EnumDef) -> KotlinEnum {
         let abi_enum = self.abi_enum_for(enumeration);
         let class_name = NamingConvention::class_name(enumeration.id.as_str());
+        let c_style_value_type = match &enumeration.repr {
+            EnumRepr::CStyle { tag_type, .. } => Some(self.primitive_jni_type(*tag_type)),
+            _ => None,
+        };
         let kind = if enumeration.is_error {
             KotlinEnumKind::Error
         } else if abi_enum.is_c_style {
@@ -536,6 +569,7 @@ impl<'a> KotlinLowerer<'a> {
             class_name,
             variants,
             kind,
+            c_style_value_type,
             doc: enumeration.doc.clone(),
         }
     }
@@ -1269,10 +1303,7 @@ impl<'a> KotlinLowerer<'a> {
                 jni_type: "ByteBuffer".to_string(),
                 conversion: self.callback_encoded_conversion(decode_ops, &name),
             },
-            _ => unreachable!(
-                "unsupported callback param role: {:?}",
-                param.role
-            ),
+            _ => unreachable!("unsupported callback param role: {:?}", param.role),
         }
     }
 
@@ -1328,12 +1359,18 @@ impl<'a> KotlinLowerer<'a> {
             Some(Transport::Span(SpanContent::Encoded(_)))
             | Some(Transport::Composite(_))
             | Some(Transport::Span(_)) => {
-                let encode_ops = ret_shape.encode_ops.as_ref().expect("encode_ops for encoded return");
-                (
-                    "ByteArray".to_string(),
-                    "byteArrayOf()".to_string(),
-                    self.callback_return_wire_encode(encode_ops),
-                )
+                let to_jni = ret_shape
+                    .encode_ops
+                    .as_ref()
+                    .map(|encode_ops| self.callback_return_wire_encode(encode_ops))
+                    .or_else(|| self.callback_direct_span_wire_encode(returns, ret_shape))
+                    .or_else(|| {
+                        let return_type = self.callback_return_type(returns)?;
+                        let encode_ops = self.find_write_seq_for_type(return_type)?;
+                        Some(self.callback_return_wire_encode(&encode_ops))
+                    })
+                    .unwrap_or_default();
+                ("ByteArray".to_string(), "byteArrayOf()".to_string(), to_jni)
             }
             Some(Transport::Handle { class_id, nullable }) => (
                 "Long".to_string(),
@@ -1366,7 +1403,7 @@ impl<'a> KotlinLowerer<'a> {
             }
             _ => (None, false),
         };
-        let to_jni_result = self.build_result_wire_encode(ret_shape, error);
+        let to_jni_result = self.build_result_wire_encode(returns, ret_shape, error);
         Some(KotlinCallbackReturn {
             kotlin_type,
             jni_type,
@@ -1376,6 +1413,72 @@ impl<'a> KotlinLowerer<'a> {
             error_type,
             error_is_throwable,
         })
+    }
+
+    fn callback_return_type<'b>(&self, returns: &'b ReturnDef) -> Option<&'b TypeExpr> {
+        match returns {
+            ReturnDef::Void => None,
+            ReturnDef::Value(ty) => Some(ty),
+            ReturnDef::Result { ok, .. } => Some(ok),
+        }
+    }
+
+    fn callback_direct_span_wire_encode(
+        &self,
+        returns: &ReturnDef,
+        ret_shape: &ReturnShape,
+    ) -> Option<String> {
+        match (returns, &ret_shape.transport) {
+            (
+                ReturnDef::Value(TypeExpr::Bytes),
+                Some(Transport::Span(SpanContent::Scalar(ScalarOrigin::Primitive(
+                    PrimitiveType::U8,
+                )))),
+            ) => Some(
+                ".let { value -> run { val writer = WireWriterPool.acquire(4 + value.size); try { val wire = writer.writer; wire.writeBytes(value); wire.toByteArray() } finally { writer.close() } } }".to_string(),
+            ),
+            (
+                ReturnDef::Value(TypeExpr::Vec(inner)),
+                Some(Transport::Span(SpanContent::Scalar(origin))),
+            ) => self.callback_direct_scalar_vec_wire_encode(inner.as_ref(), origin),
+            (
+                ReturnDef::Value(TypeExpr::Vec(_)),
+                Some(Transport::Span(SpanContent::Composite(layout))),
+            ) => {
+                let writer_name = format!("{}Writer", layout.record_id.as_str());
+                Some(format!(
+                    ".let {{ value -> run {{ val writer = WireWriterPool.acquire(4 + value.size * {}.STRUCT_SIZE); try {{ val wire = writer.writer; wire.writeU32(value.size.toUInt()); {}.writeAllToWire(wire, value); wire.toByteArray() }} finally {{ writer.close() }} }} }}",
+                    writer_name, writer_name
+                ))
+            }
+            _ => None,
+        }
+    }
+
+    fn callback_direct_scalar_vec_wire_encode(
+        &self,
+        element_type: &TypeExpr,
+        origin: &ScalarOrigin,
+    ) -> Option<String> {
+        match (element_type, origin) {
+            (TypeExpr::Primitive(primitive), ScalarOrigin::Primitive(origin_primitive))
+                if primitive == origin_primitive =>
+            {
+                let element_size = primitive.wire_size_bytes();
+                Some(format!(
+                    ".let {{ value -> run {{ val writer = WireWriterPool.acquire(4 + value.size * {element_size}); try {{ val wire = writer.writer; wire.writePrimitiveList(value); wire.toByteArray() }} finally {{ writer.close() }} }} }}"
+                ))
+            }
+            (TypeExpr::Enum(_), ScalarOrigin::CStyleEnum { tag_type, .. }) => {
+                let element_size = tag_type.wire_size_bytes();
+                let write_method = self.kotlin_wire_write_method_for_primitive(*tag_type);
+                let element_expr = self.kotlin_integral_cast_expr(*tag_type, "item.value");
+                Some(format!(
+                    ".let {{ value -> run {{ val writer = WireWriterPool.acquire(4 + value.size * {element_size}); try {{ val wire = writer.writer; wire.writeU32(value.size.toUInt()); value.forEach {{ item -> wire.{write_method}({element_expr}) }}; wire.toByteArray() }} finally {{ writer.close() }} }} }}"
+                ))
+            }
+            _ => None,
+        }
     }
 
     fn callback_direct_conversion(&self, ty: &TypeExpr, name: &str) -> String {
@@ -1451,12 +1554,40 @@ impl<'a> KotlinLowerer<'a> {
         )
     }
 
+    fn throws_success_encode_ops(
+        &self,
+        returns: &ReturnDef,
+        ret_shape: &ReturnShape,
+    ) -> Option<WriteSeq> {
+        match returns {
+            ReturnDef::Result { .. } => {
+                ret_shape
+                    .encode_ops
+                    .as_ref()
+                    .and_then(|encode_ops| match encode_ops.ops.first() {
+                        Some(WriteOp::Result { ok, .. }) => {
+                            Some(remap_root_in_seq(ok, ValueExpr::Var("okVal".to_string())))
+                        }
+                        _ => None,
+                    })
+            }
+            _ => None,
+        }
+    }
+
     fn build_result_wire_encode(
         &self,
+        returns: &ReturnDef,
         ret_shape: &ReturnShape,
         error: &ErrorTransport,
     ) -> Option<String> {
-        let ok_encode_ops = ret_shape.encode_ops.as_ref()?;
+        let ok_seq = self
+            .throws_success_encode_ops(returns, ret_shape)
+            .or_else(|| {
+                ret_shape.encode_ops.as_ref().map(|ok_encode_ops| {
+                    remap_root_in_seq(ok_encode_ops, ValueExpr::Var("okVal".to_string()))
+                })
+            })?;
         let err_encode_ops = match error {
             ErrorTransport::Encoded {
                 encode_ops: Some(err_encode_ops),
@@ -1465,7 +1596,6 @@ impl<'a> KotlinLowerer<'a> {
             _ => return None,
         };
 
-        let ok_seq = remap_root_in_seq(ok_encode_ops, ValueExpr::Var("okVal".to_string()));
         let err_seq = remap_root_in_seq(err_encode_ops, ValueExpr::Var("errVal".to_string()));
         let ok_size = Self::size_expr_for_write_seq(&ok_seq);
         let err_size = Self::size_expr_for_write_seq(&err_seq);
@@ -1726,10 +1856,10 @@ impl<'a> KotlinLowerer<'a> {
     fn jni_type_for_return_shape(&self, ret_shape: &ReturnShape) -> String {
         match &ret_shape.transport {
             None => "Unit".to_string(),
-            Some(Transport::Scalar(origin)) => self.jni_type_for_abi(&AbiType::from(origin.primitive())),
-            Some(Transport::Handle { .. }) | Some(Transport::Callback { .. }) => {
-                "Long".to_string()
+            Some(Transport::Scalar(origin)) => {
+                self.jni_type_for_abi(&AbiType::from(origin.primitive()))
             }
+            Some(Transport::Handle { .. }) | Some(Transport::Callback { .. }) => "Long".to_string(),
             _ => "ByteArray?".to_string(),
         }
     }
@@ -1749,17 +1879,16 @@ impl<'a> KotlinLowerer<'a> {
             AbiType::USize => "Long".to_string(),
             AbiType::F32 => "Float".to_string(),
             AbiType::F64 => "Double".to_string(),
-            AbiType::Pointer(_) | AbiType::InlineCallbackFn(_) | AbiType::Handle(_) | AbiType::CallbackHandle => "Long".to_string(),
+            AbiType::Pointer(_)
+            | AbiType::InlineCallbackFn(_)
+            | AbiType::Handle(_)
+            | AbiType::CallbackHandle => "Long".to_string(),
             AbiType::Struct(_) => "Long".to_string(),
             AbiType::Void => "Unit".to_string(),
         }
     }
 
-    fn jni_param_mapping(
-        &self,
-        param: &AbiParam,
-        type_expr: Option<&TypeExpr>,
-    ) -> JniParamMapping {
+    fn jni_param_mapping(&self, param: &AbiParam, type_expr: Option<&TypeExpr>) -> JniParamMapping {
         match &param.role {
             ParamRole::Input {
                 transport: Transport::Scalar(_),
@@ -2081,7 +2210,10 @@ impl<'a> KotlinLowerer<'a> {
             AbiType::USize => "ULong".to_string(),
             AbiType::F32 => "Float".to_string(),
             AbiType::F64 => "Double".to_string(),
-            AbiType::Pointer(_) | AbiType::InlineCallbackFn(_) | AbiType::Handle(_) | AbiType::CallbackHandle => "Long".to_string(),
+            AbiType::Pointer(_)
+            | AbiType::InlineCallbackFn(_)
+            | AbiType::Handle(_)
+            | AbiType::CallbackHandle => "Long".to_string(),
             AbiType::Struct(_) => "Long".to_string(),
             AbiType::Void => "Unit".to_string(),
         }
@@ -2103,10 +2235,7 @@ impl<'a> KotlinLowerer<'a> {
         }
     }
 
-    fn kotlin_return_meta(
-        &self,
-        ret_shape: &ReturnShape,
-    ) -> KotlinReturnMeta {
+    fn kotlin_return_meta(&self, ret_shape: &ReturnShape) -> KotlinReturnMeta {
         match &ret_shape.transport {
             None => KotlinReturnMeta {
                 is_unit: true,
@@ -2248,9 +2377,17 @@ impl<'a> KotlinLowerer<'a> {
             JniParamRole::StringParam => format!("{}.toByteArray(Charsets.UTF_8)", name),
             JniParamRole::Buffer { .. } => match &param.role {
                 ParamRole::Input {
-                    transport: Transport::Span(SpanContent::Scalar(ScalarOrigin::CStyleEnum { .. })),
+                    transport:
+                        Transport::Span(SpanContent::Scalar(ScalarOrigin::CStyleEnum {
+                            tag_type, ..
+                        })),
                     ..
-                } => format!("IntArray({}.size) {{ {}[it].value }}", name, name),
+                } => {
+                    let array_type = self.kotlin_array_type_for_primitive(*tag_type);
+                    let element_expr =
+                        self.kotlin_integral_cast_expr(*tag_type, &format!("{}[it].value", name));
+                    format!("{}({}.size) {{ {} }}", array_type, name, element_expr)
+                }
                 _ => name,
             },
             JniParamRole::Encoded => writers
@@ -2421,7 +2558,8 @@ impl<'a> KotlinLowerer<'a> {
                 ok: TypeExpr::Void, ..
             } => "Unit".to_string(),
             ReturnDef::Result {
-                ok: TypeExpr::Enum(id), ..
+                ok: TypeExpr::Enum(id),
+                ..
             } if self
                 .contract
                 .catalog
@@ -2478,11 +2616,7 @@ impl<'a> KotlinLowerer<'a> {
             return false;
         }
         match &ret_shape.transport {
-            Some(Transport::Span(SpanContent::Scalar(origin)))
-                if !matches!(origin.primitive(), PrimitiveType::U8) =>
-            {
-                true
-            }
+            Some(Transport::Span(SpanContent::Scalar(_))) => true,
             Some(Transport::Span(SpanContent::Composite(_))) => true,
             _ => ret_shape
                 .decode_ops
@@ -2494,9 +2628,7 @@ impl<'a> KotlinLowerer<'a> {
 
     fn decode_direct_buffer_return(&self, ret_shape: &ReturnShape) -> Option<String> {
         match &ret_shape.transport {
-            Some(Transport::Span(SpanContent::Scalar(origin)))
-                if !matches!(origin.primitive(), PrimitiveType::U8) =>
-            {
+            Some(Transport::Span(SpanContent::Scalar(origin))) => {
                 Some(self.decode_direct_scalar_vec(origin))
             }
             Some(Transport::Span(SpanContent::Composite(layout))) => {
@@ -2513,11 +2645,12 @@ impl<'a> KotlinLowerer<'a> {
     fn decode_direct_scalar_vec(&self, origin: &ScalarOrigin) -> String {
         match origin {
             ScalarOrigin::Primitive(p) => self.decode_direct_primitive_vec(*p),
-            ScalarOrigin::CStyleEnum { enum_id, .. } => {
+            ScalarOrigin::CStyleEnum { enum_id, tag_type } => {
                 let class_name = NamingConvention::class_name(enum_id.as_str());
+                let array_view = self.kotlin_buffer_view_for_primitive(*tag_type);
                 format!(
-                    "buffer.asIntBuffer().let {{ ib -> List(ib.remaining()) {{ {}.fromValue(ib.get()) }} }}",
-                    class_name
+                    "{}.let {{ values -> List(values.size) {{ {}.fromValue(values[it]) }} }}",
+                    array_view, class_name
                 )
             }
         }
@@ -2525,7 +2658,7 @@ impl<'a> KotlinLowerer<'a> {
 
     fn decode_direct_primitive_vec(&self, primitive: PrimitiveType) -> String {
         match primitive {
-            PrimitiveType::I8 => "ByteArray(buffer.remaining()).also { buffer.get(it) }.toList()".to_string(),
+            PrimitiveType::I8 => "ByteArray(buffer.remaining()).also { buffer.get(it) }".to_string(),
             PrimitiveType::U8 => "buffer.remaining().let { n -> ByteArray(n).also { buffer.get(it) } }".to_string(),
             PrimitiveType::I16 => "buffer.asShortBuffer().let { sb -> ShortArray(sb.remaining()).also { sb.get(it) } }".to_string(),
             PrimitiveType::U16 => "buffer.asShortBuffer().let { sb -> ShortArray(sb.remaining()).also { sb.get(it) } }".to_string(),
@@ -2968,6 +3101,83 @@ impl<'a> KotlinLowerer<'a> {
         }
     }
 
+    fn kotlin_array_type_for_primitive(&self, primitive: PrimitiveType) -> &'static str {
+        match primitive {
+            PrimitiveType::I8 | PrimitiveType::U8 => "ByteArray",
+            PrimitiveType::I16 | PrimitiveType::U16 => "ShortArray",
+            PrimitiveType::I32 | PrimitiveType::U32 => "IntArray",
+            PrimitiveType::I64
+            | PrimitiveType::U64
+            | PrimitiveType::ISize
+            | PrimitiveType::USize => "LongArray",
+            PrimitiveType::F32 => "FloatArray",
+            PrimitiveType::F64 => "DoubleArray",
+            PrimitiveType::Bool => "BooleanArray",
+        }
+    }
+
+    fn kotlin_integral_cast_expr(&self, primitive: PrimitiveType, value: &str) -> String {
+        match primitive {
+            PrimitiveType::I8 | PrimitiveType::U8 => format!("({}).toByte()", value),
+            PrimitiveType::I16 | PrimitiveType::U16 => format!("({}).toShort()", value),
+            PrimitiveType::I32 | PrimitiveType::U32 => format!("({}).toInt()", value),
+            PrimitiveType::I64
+            | PrimitiveType::U64
+            | PrimitiveType::ISize
+            | PrimitiveType::USize => {
+                format!("({}).toLong()", value)
+            }
+            _ => value.to_string(),
+        }
+    }
+
+    fn kotlin_wire_write_method_for_primitive(&self, primitive: PrimitiveType) -> &'static str {
+        match primitive {
+            PrimitiveType::I8 | PrimitiveType::U8 => "writeI8",
+            PrimitiveType::I16 | PrimitiveType::U16 => "writeI16",
+            PrimitiveType::I32 | PrimitiveType::U32 => "writeI32",
+            PrimitiveType::I64
+            | PrimitiveType::U64
+            | PrimitiveType::ISize
+            | PrimitiveType::USize => "writeI64",
+            PrimitiveType::Bool => "writeBool",
+            PrimitiveType::F32 => "writeF32",
+            PrimitiveType::F64 => "writeF64",
+        }
+    }
+
+    fn kotlin_buffer_view_for_primitive(&self, primitive: PrimitiveType) -> String {
+        match primitive {
+            PrimitiveType::I8 | PrimitiveType::U8 => {
+                "ByteArray(buffer.remaining()).also { buffer.get(it) }".to_string()
+            }
+            PrimitiveType::I16 | PrimitiveType::U16 => {
+                "buffer.asShortBuffer().let { sb -> ShortArray(sb.remaining()).also { sb.get(it) } }"
+                    .to_string()
+            }
+            PrimitiveType::I32 | PrimitiveType::U32 => {
+                "buffer.asIntBuffer().let { ib -> IntArray(ib.remaining()).also { ib.get(it) } }"
+                    .to_string()
+            }
+            PrimitiveType::I64 | PrimitiveType::U64 | PrimitiveType::ISize | PrimitiveType::USize => {
+                "buffer.asLongBuffer().let { lb -> LongArray(lb.remaining()).also { lb.get(it) } }"
+                    .to_string()
+            }
+            PrimitiveType::Bool => {
+                "ByteArray(buffer.remaining()).also { buffer.get(it) }.map { it != 0.toByte() }.toBooleanArray()"
+                    .to_string()
+            }
+            PrimitiveType::F32 => {
+                "buffer.asFloatBuffer().let { fb -> FloatArray(fb.remaining()).also { fb.get(it) } }"
+                    .to_string()
+            }
+            PrimitiveType::F64 => {
+                "buffer.asDoubleBuffer().let { db -> DoubleArray(db.remaining()).also { db.get(it) } }"
+                    .to_string()
+            }
+        }
+    }
+
     fn find_custom_read_seq(&self, custom: &CustomTypeId) -> Option<ReadSeq> {
         self.read_seqs()
             .into_iter()
@@ -3203,19 +3413,37 @@ impl<'a> KotlinLowerer<'a> {
     }
 
     fn blittable_return_record_ids(&self) -> HashSet<String> {
-        let sync_returns = self.abi.calls.iter().filter_map(|call| {
+        let sync_returns_from_decode = self.abi.calls.iter().filter_map(|call| {
             self.output_read_ops(&call.returns)
                 .and_then(|seq| self.blittable_record_id_from_read_seq(&seq))
         });
 
-        let async_returns = self.abi.calls.iter().filter_map(|call| match &call.mode {
+        let sync_returns_from_transport = self
+            .abi
+            .calls
+            .iter()
+            .filter_map(|call| self.blittable_record_id_from_transport(&call.returns));
+
+        let async_returns_from_decode = self.abi.calls.iter().filter_map(|call| match &call.mode {
             CallMode::Async(async_call) => self
                 .output_read_ops(&async_call.result)
                 .and_then(|seq| self.blittable_record_id_from_read_seq(&seq)),
             CallMode::Sync => None,
         });
 
-        sync_returns.chain(async_returns).collect()
+        let async_returns_from_transport =
+            self.abi.calls.iter().filter_map(|call| match &call.mode {
+                CallMode::Async(async_call) => {
+                    self.blittable_record_id_from_transport(&async_call.result)
+                }
+                CallMode::Sync => None,
+            });
+
+        sync_returns_from_decode
+            .chain(sync_returns_from_transport)
+            .chain(async_returns_from_decode)
+            .chain(async_returns_from_transport)
+            .collect()
     }
 
     fn blittable_record_from_decode_ops(&self, ret_shape: &ReturnShape) -> Option<String> {
@@ -3249,6 +3477,22 @@ impl<'a> KotlinLowerer<'a> {
             .resolve_record(&RecordId::new(record_id))
             .map(|record| record.is_blittable())
             .unwrap_or(false)
+    }
+
+    fn blittable_record_id_from_transport(&self, ret_shape: &ReturnShape) -> Option<String> {
+        match &ret_shape.transport {
+            Some(Transport::Composite(layout))
+                if self.is_record_blittable(layout.record_id.as_str()) =>
+            {
+                Some(layout.record_id.as_str().to_string())
+            }
+            Some(Transport::Span(SpanContent::Composite(layout)))
+                if self.is_record_blittable(layout.record_id.as_str()) =>
+            {
+                Some(layout.record_id.as_str().to_string())
+            }
+            _ => None,
+        }
     }
 
     fn blittable_vec_param_records(&self) -> HashSet<String> {
@@ -3342,7 +3586,10 @@ impl<'a> KotlinLowerer<'a> {
         match &param.role {
             ParamRole::OutDirect => {
                 let decode_ops = match &param.role {
-                    ParamRole::Input { decode_ops: Some(d), .. } => d,
+                    ParamRole::Input {
+                        decode_ops: Some(d),
+                        ..
+                    } => d,
                     _ => return None,
                 };
                 match decode_ops.ops.first() {
@@ -3360,14 +3607,20 @@ impl<'a> KotlinLowerer<'a> {
 
     fn input_read_ops(&self, param: &AbiParam) -> Option<ReadSeq> {
         match &param.role {
-            ParamRole::Input { decode_ops: Some(decode_ops), .. } => Some(decode_ops.clone()),
+            ParamRole::Input {
+                decode_ops: Some(decode_ops),
+                ..
+            } => Some(decode_ops.clone()),
             _ => None,
         }
     }
 
     fn input_write_ops(&self, param: &AbiParam) -> Option<WriteSeq> {
         match &param.role {
-            ParamRole::Input { encode_ops: Some(encode_ops), .. } => Some(encode_ops.clone()),
+            ParamRole::Input {
+                encode_ops: Some(encode_ops),
+                ..
+            } => Some(encode_ops.clone()),
             _ => None,
         }
     }

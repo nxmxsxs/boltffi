@@ -71,7 +71,10 @@ pub enum SpanContent {
 #[derive(Debug, Clone)]
 pub enum ScalarOrigin {
     Primitive(PrimitiveType),
-    CStyleEnum { tag_type: PrimitiveType, enum_id: EnumId },
+    CStyleEnum {
+        tag_type: PrimitiveType,
+        enum_id: EnumId,
+    },
 }
 
 impl ScalarOrigin {
@@ -156,8 +159,5 @@ pub enum CallbackStyle {
 pub enum ReturnPlan {
     Void,
     Value(Transport),
-    Fallible {
-        ok: Transport,
-        err_codec: CodecPlan,
-    },
+    Fallible { ok: Transport, err_codec: CodecPlan },
 }

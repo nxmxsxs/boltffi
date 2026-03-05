@@ -9,14 +9,14 @@ use crate::ir::abi::{
 };
 use crate::ir::contract::FfiContract;
 use crate::ir::definitions::{
-    CallbackKind, CallbackTraitDef, ClassDef, ConstructorDef, EnumDef, FunctionDef, MethodDef,
-    ParamDef, Receiver, RecordDef, ReturnDef,
+    CallbackKind, CallbackTraitDef, ClassDef, ConstructorDef, EnumDef, EnumRepr, FunctionDef,
+    MethodDef, ParamDef, Receiver, RecordDef, ReturnDef,
 };
 use crate::ir::ids::{CallbackId, EnumId, FieldName, RecordId};
 use crate::ir::ops::{
     FieldWriteOp, ReadOp, ReadSeq, SizeExpr, ValueExpr, WireShape, WriteOp, WriteSeq,
 };
-use crate::ir::plan::{AbiType, SpanContent, Transport};
+use crate::ir::plan::{AbiType, ScalarOrigin, SpanContent, Transport};
 use crate::ir::types::{PrimitiveType, TypeExpr};
 use crate::render::typescript::emit;
 use crate::render::typescript::plan::*;
@@ -330,6 +330,10 @@ impl<'a> TypeScriptLowerer<'a> {
             name,
             variants,
             kind,
+            c_style_tag_type: match &def.repr {
+                EnumRepr::CStyle { tag_type, .. } => Some(*tag_type),
+                _ => None,
+            },
             doc: def.doc.clone(),
         }
     }
@@ -436,9 +440,7 @@ impl<'a> TypeScriptLowerer<'a> {
                 let ParamRole::Input { transport, .. } = &parameter.role else {
                     return false;
                 };
-                if !is_static
-                    && *param_index == 0
-                    && matches!(transport, Transport::Handle { .. })
+                if !is_static && *param_index == 0 && matches!(transport, Transport::Handle { .. })
                 {
                     return false;
                 }
@@ -568,7 +570,9 @@ impl<'a> TypeScriptLowerer<'a> {
                     .collect();
 
                 let return_kind = match &abi_method.returns {
-                    ReturnShape { transport: None, .. } => TsCallbackReturnKind::Void,
+                    ReturnShape {
+                        transport: None, ..
+                    } => TsCallbackReturnKind::Void,
                     ReturnShape {
                         transport: Some(Transport::Scalar(origin)),
                         decode_ops: None,
@@ -688,7 +692,9 @@ impl<'a> TypeScriptLowerer<'a> {
                     direct_write_value_expr,
                     direct_size,
                 ) = match &abi_method.returns {
-                    ReturnShape { transport: None, .. } => (None, None, None, None, None, None),
+                    ReturnShape {
+                        transport: None, ..
+                    } => (None, None, None, None, None, None),
                     ReturnShape {
                         transport: Some(Transport::Scalar(origin)),
                         encode_ops: None,
@@ -943,8 +949,7 @@ impl<'a> TypeScriptLowerer<'a> {
                 }
             }
             ParamRole::Input {
-                transport:
-                    Transport::Span(SpanContent::Composite(_) | SpanContent::Encoded(_)),
+                transport: Transport::Span(SpanContent::Composite(_) | SpanContent::Encoded(_)),
                 ..
             } => {
                 let ts_type = param_def
@@ -1017,7 +1022,9 @@ impl<'a> TypeScriptLowerer<'a> {
         execution_model: TsExecutionModel,
     ) -> (Option<String>, TsOutputRoute) {
         match returns {
-            ReturnShape { transport: None, .. } => (None, TsOutputRoute::void()),
+            ReturnShape {
+                transport: None, ..
+            } => (None, TsOutputRoute::void()),
             ReturnShape {
                 transport: Some(Transport::Scalar(origin)),
                 decode_ops: None,
@@ -1038,14 +1045,24 @@ impl<'a> TypeScriptLowerer<'a> {
                 transport: Some(Transport::Span(SpanContent::Scalar(origin))),
                 decode_ops: None,
                 ..
-            } => self.direct_vec_output_route(origin.primitive(), execution_model),
+            } => self.direct_vec_output_route(origin, execution_model),
             ReturnShape {
                 transport: Some(Transport::Span(SpanContent::Composite(layout))),
                 decode_ops: None,
                 ..
             } => {
-                let ts_type = naming::to_upper_camel_case(layout.record_id.as_str());
-                (Some(format!("{}[]", ts_type)), TsOutputRoute::void())
+                let pascal = naming::to_upper_camel_case(layout.record_id.as_str());
+                let ts_type = format!("{pascal}[]");
+                match execution_model {
+                    TsExecutionModel::Sync => {
+                        let decode = emit::composite_slot_decode_expr(layout);
+                        (Some(ts_type), TsOutputRoute::void_slot(decode))
+                    }
+                    TsExecutionModel::Async => {
+                        let decode = emit::composite_buf_decode_expr(layout);
+                        (Some(ts_type), TsOutputRoute::packed(decode))
+                    }
+                }
             }
             ReturnShape {
                 decode_ops: Some(decode_ops),
@@ -1107,24 +1124,79 @@ impl<'a> TypeScriptLowerer<'a> {
 
     fn direct_vec_output_route(
         &self,
-        primitive: PrimitiveType,
+        origin: &ScalarOrigin,
         execution_model: TsExecutionModel,
     ) -> (Option<String>, TsOutputRoute) {
+        let primitive = origin.primitive();
         let slot_decode = match primitive {
-            PrimitiveType::U8 => Some("_module.takeSlotU8Array()"),
-            PrimitiveType::I8 => Some("_module.takeSlotI8Array()"),
-            PrimitiveType::I32 => Some("_module.takeSlotI32Array()"),
-            PrimitiveType::U32 => Some("_module.takeSlotU32Array()"),
-            PrimitiveType::F32 => Some("_module.takeSlotF32Array()"),
-            PrimitiveType::F64 => Some("_module.takeSlotF64Array()"),
-            _ => None,
+            PrimitiveType::U8 => "_module.takeSlotU8Array()",
+            PrimitiveType::I8 => "_module.takeSlotI8Array()",
+            PrimitiveType::I16 => "_module.takeSlotI16Array()",
+            PrimitiveType::U16 => "_module.takeSlotU16Array()",
+            PrimitiveType::I32 => "_module.takeSlotI32Array()",
+            PrimitiveType::U32 => "_module.takeSlotU32Array()",
+            PrimitiveType::I64 => "_module.takeSlotI64Array()",
+            PrimitiveType::U64 => "_module.takeSlotU64Array()",
+            PrimitiveType::F32 => "_module.takeSlotF32Array()",
+            PrimitiveType::F64 => "_module.takeSlotF64Array()",
+            PrimitiveType::Bool => "_module.takeSlotBoolArray()",
+            PrimitiveType::ISize => "_module.takeSlotI32Array()",
+            PrimitiveType::USize => "_module.takeSlotU32Array()",
         };
-        let ts_type = primitive_buffer_ts_type(&AbiType::from(primitive));
-        match (execution_model, slot_decode) {
-            (TsExecutionModel::Sync, Some(decode)) =>
-                (Some(ts_type), TsOutputRoute::void_slot(decode.to_string())),
-            _ =>
-                (Some(ts_type), TsOutputRoute::void()),
+        let buf_decode = match primitive {
+            PrimitiveType::U8 => "_module.takeBufU8Array(outPtr)",
+            PrimitiveType::I8 => "_module.takeBufI8Array(outPtr)",
+            PrimitiveType::I16 => "_module.takeBufI16Array(outPtr)",
+            PrimitiveType::U16 => "_module.takeBufU16Array(outPtr)",
+            PrimitiveType::I32 => "_module.takeBufI32Array(outPtr)",
+            PrimitiveType::U32 => "_module.takeBufU32Array(outPtr)",
+            PrimitiveType::I64 => "_module.takeBufI64Array(outPtr)",
+            PrimitiveType::U64 => "_module.takeBufU64Array(outPtr)",
+            PrimitiveType::F32 => "_module.takeBufF32Array(outPtr)",
+            PrimitiveType::F64 => "_module.takeBufF64Array(outPtr)",
+            PrimitiveType::Bool => "_module.takeBufBoolArray(outPtr)",
+            PrimitiveType::ISize => "_module.takeBufI32Array(outPtr)",
+            PrimitiveType::USize => "_module.takeBufU32Array(outPtr)",
+        };
+        let (ts_type, enum_cast) = match origin {
+            ScalarOrigin::CStyleEnum { enum_id, .. } => {
+                let pascal = naming::to_upper_camel_case(enum_id.as_str());
+                (format!("{pascal}[]"), true)
+            }
+            ScalarOrigin::Primitive(_) => {
+                (primitive_buffer_ts_type(&AbiType::from(primitive)), false)
+            }
+        };
+        let enum_needs_number_cast = matches!(
+            primitive,
+            PrimitiveType::I64 | PrimitiveType::U64 | PrimitiveType::ISize | PrimitiveType::USize
+        );
+        match execution_model {
+            TsExecutionModel::Sync => {
+                let decode = if enum_cast {
+                    if enum_needs_number_cast {
+                        format!("Array.from({slot_decode}, (value) => Number(value)) as {ts_type}")
+                    } else {
+                        format!("Array.from({slot_decode}) as {ts_type}")
+                    }
+                } else {
+                    slot_decode.to_string()
+                };
+                (Some(ts_type), TsOutputRoute::void_slot(decode))
+            }
+            TsExecutionModel::Async => {
+                let decode_expr = buf_decode;
+                let decode = if enum_cast {
+                    if enum_needs_number_cast {
+                        format!("Array.from({decode_expr}, (value) => Number(value)) as {ts_type}")
+                    } else {
+                        format!("Array.from({decode_expr}) as {ts_type}")
+                    }
+                } else {
+                    decode_expr.to_string()
+                };
+                (Some(ts_type), TsOutputRoute::packed(decode))
+            }
         }
     }
 
@@ -1205,8 +1277,7 @@ impl<'a> TypeScriptLowerer<'a> {
                 })
                 .collect();
 
-            let (_, return_route) =
-                self.select_output_route(&call.returns, TsExecutionModel::Sync);
+            let (_, return_route) = self.select_output_route(&call.returns, TsExecutionModel::Sync);
             let return_wasm_type = if return_route.is_void() {
                 None
             } else if return_route.is_direct() {
@@ -1245,7 +1316,6 @@ fn is_excluded_error_type(err_type: &str) -> bool {
     )
 }
 
-
 fn ts_abi_type(abi_type: &AbiType) -> String {
     match abi_type {
         AbiType::Void => "void".to_string(),
@@ -1255,7 +1325,11 @@ fn ts_abi_type(abi_type: &AbiType) -> String {
         AbiType::I64 | AbiType::U64 => "bigint".to_string(),
         AbiType::ISize | AbiType::USize => "number".to_string(),
         AbiType::F32 | AbiType::F64 => "number".to_string(),
-        AbiType::Pointer(_) | AbiType::InlineCallbackFn(_) | AbiType::Handle(_) | AbiType::CallbackHandle | AbiType::Struct(_) => "number".to_string(),
+        AbiType::Pointer(_)
+        | AbiType::InlineCallbackFn(_)
+        | AbiType::Handle(_)
+        | AbiType::CallbackHandle
+        | AbiType::Struct(_) => "number".to_string(),
     }
 }
 
@@ -1280,7 +1354,12 @@ fn scalar_async_decode_expr(abi_type: &AbiType) -> String {
         AbiType::USize => "reader.readUSize()".to_string(),
         AbiType::F32 => "reader.readF32()".to_string(),
         AbiType::F64 => "reader.readF64()".to_string(),
-        AbiType::Void | AbiType::Pointer(_) | AbiType::InlineCallbackFn(_) | AbiType::Handle(_) | AbiType::CallbackHandle | AbiType::Struct(_) => "reader.readI32()".to_string(),
+        AbiType::Void
+        | AbiType::Pointer(_)
+        | AbiType::InlineCallbackFn(_)
+        | AbiType::Handle(_)
+        | AbiType::CallbackHandle
+        | AbiType::Struct(_) => "reader.readI32()".to_string(),
     }
 }
 
@@ -1293,7 +1372,11 @@ fn abi_type_to_wasm(abi_type: &AbiType) -> String {
         AbiType::I32 | AbiType::U32 | AbiType::ISize | AbiType::USize => "number".to_string(),
         AbiType::I64 | AbiType::U64 => "bigint".to_string(),
         AbiType::F32 | AbiType::F64 => "number".to_string(),
-        AbiType::Pointer(_) | AbiType::InlineCallbackFn(_) | AbiType::Handle(_) | AbiType::CallbackHandle | AbiType::Struct(_) => "number".to_string(),
+        AbiType::Pointer(_)
+        | AbiType::InlineCallbackFn(_)
+        | AbiType::Handle(_)
+        | AbiType::CallbackHandle
+        | AbiType::Struct(_) => "number".to_string(),
     }
 }
 
@@ -1378,7 +1461,11 @@ fn direct_write_info(abi_type: &AbiType) -> DirectWriteInfo {
             method_name: "writeF64",
             byte_width: 8,
         },
-        AbiType::Pointer(_) | AbiType::InlineCallbackFn(_) | AbiType::Handle(_) | AbiType::CallbackHandle | AbiType::Struct(_) => DirectWriteInfo {
+        AbiType::Pointer(_)
+        | AbiType::InlineCallbackFn(_)
+        | AbiType::Handle(_)
+        | AbiType::CallbackHandle
+        | AbiType::Struct(_) => DirectWriteInfo {
             method_name: "writeU32",
             byte_width: 4,
         },
@@ -1406,7 +1493,12 @@ fn primitive_buffer_ts_type(abi_type: &AbiType) -> String {
         | AbiType::USize
         | AbiType::F32
         | AbiType::F64 => "number[]".to_string(),
-        AbiType::Void | AbiType::Pointer(_) | AbiType::InlineCallbackFn(_) | AbiType::Handle(_) | AbiType::CallbackHandle | AbiType::Struct(_) => "unknown[]".to_string(),
+        AbiType::Void
+        | AbiType::Pointer(_)
+        | AbiType::InlineCallbackFn(_)
+        | AbiType::Handle(_)
+        | AbiType::CallbackHandle
+        | AbiType::Struct(_) => "unknown[]".to_string(),
     }
 }
 
@@ -1622,10 +1714,10 @@ mod tests {
     use crate::ir::Lowerer as IrLowerer;
     use crate::ir::contract::{FfiContract, PackageInfo};
     use crate::ir::definitions::{
-        ClassDef, ConstructorDef, FunctionDef, MethodDef, ParamDef, ParamPassing, Receiver,
-        ReturnDef,
+        CStyleVariant, ClassDef, ConstructorDef, EnumDef, EnumRepr, FunctionDef, MethodDef,
+        ParamDef, ParamPassing, Receiver, ReturnDef,
     };
-    use crate::ir::ids::{ClassId, FunctionId, MethodId, ParamName};
+    use crate::ir::ids::{ClassId, EnumId, FunctionId, MethodId, ParamName, VariantName};
 
     fn empty_contract() -> FfiContract {
         FfiContract {
@@ -1667,6 +1759,30 @@ mod tests {
             params,
             returns,
             is_async,
+            doc: None,
+            deprecated: None,
+        }
+    }
+
+    fn c_style_enum_i64(name: &str) -> EnumDef {
+        EnumDef {
+            id: EnumId::new(name),
+            repr: EnumRepr::CStyle {
+                tag_type: PrimitiveType::I64,
+                variants: vec![
+                    CStyleVariant {
+                        name: VariantName::new("Alpha"),
+                        discriminant: 1,
+                        doc: None,
+                    },
+                    CStyleVariant {
+                        name: VariantName::new("Beta"),
+                        discriminant: 2,
+                        doc: None,
+                    },
+                ],
+            },
+            is_error: false,
             doc: None,
             deprecated: None,
         }
@@ -1792,6 +1908,62 @@ mod tests {
 
         assert_eq!(module.wasm_imports.len(), 1);
         assert_eq!(module.wasm_imports[0].ffi_name, "boltffi_sync_value");
+    }
+
+    #[test]
+    fn sync_direct_i64_enum_vec_decode_coerces_to_number() {
+        let mut contract = empty_contract();
+        contract.catalog.insert_enum(c_style_enum_i64("Mode"));
+        contract.functions.push(function(
+            "modes",
+            vec![],
+            ReturnDef::Value(TypeExpr::Vec(Box::new(TypeExpr::Enum(EnumId::new("Mode"))))),
+            false,
+        ));
+
+        let module = lower_contract(&contract);
+        let function = module
+            .functions
+            .iter()
+            .find(|function| function.name == "modes")
+            .expect("sync modes function");
+
+        assert_eq!(function.return_type.as_deref(), Some("Mode[]"));
+        assert!(function.return_route.is_void_slot());
+        assert!(
+            function
+                .return_route
+                .decode_expr()
+                .contains("Number(value)")
+        );
+    }
+
+    #[test]
+    fn async_direct_i64_enum_vec_decode_coerces_to_number() {
+        let mut contract = empty_contract();
+        contract.catalog.insert_enum(c_style_enum_i64("Mode"));
+        contract.functions.push(function(
+            "modes_async",
+            vec![],
+            ReturnDef::Value(TypeExpr::Vec(Box::new(TypeExpr::Enum(EnumId::new("Mode"))))),
+            true,
+        ));
+
+        let module = lower_contract(&contract);
+        let function = module
+            .async_functions
+            .iter()
+            .find(|function| function.name == "modesAsync")
+            .expect("async modes function");
+
+        assert_eq!(function.return_type.as_deref(), Some("Mode[]"));
+        assert!(function.return_route.is_packed());
+        assert!(
+            function
+                .return_route
+                .decode_expr()
+                .contains("Number(value)")
+        );
     }
 
     #[test]
@@ -2458,6 +2630,7 @@ mod tests {
         contract
             .catalog
             .insert_record(crate::ir::definitions::RecordDef {
+                is_repr_c: true,
                 id: crate::ir::ids::RecordId::new("Point"),
                 fields: vec![
                     crate::ir::definitions::FieldDef {

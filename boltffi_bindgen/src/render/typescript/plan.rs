@@ -1,5 +1,6 @@
 use crate::ir::ops::{ReadSeq, WriteSeq};
 use crate::ir::plan::AbiType;
+use crate::ir::types::PrimitiveType;
 use crate::render::typescript::emit;
 
 #[derive(Debug, Clone)]
@@ -285,6 +286,7 @@ pub struct TsEnum {
     pub name: String,
     pub variants: Vec<TsVariant>,
     pub kind: TsEnumKind,
+    pub c_style_tag_type: Option<PrimitiveType>,
     pub doc: Option<String>,
 }
 
@@ -303,7 +305,7 @@ impl TsEnum {
 #[derive(Debug, Clone)]
 pub struct TsVariant {
     pub name: String,
-    pub discriminant: i64,
+    pub discriminant: i128,
     pub fields: Vec<TsVariantField>,
     pub doc: Option<String>,
 }
@@ -482,7 +484,12 @@ fn primitive_buffer_alloc_method(abi_type: &AbiType) -> &'static str {
         AbiType::USize => "allocU64Array",
         AbiType::F32 => "allocF32Array",
         AbiType::F64 => "allocF64Array",
-        AbiType::Void | AbiType::Pointer(_) | AbiType::InlineCallbackFn(_) | AbiType::Handle(_) | AbiType::CallbackHandle | AbiType::Struct(_) => {
+        AbiType::Void
+        | AbiType::Pointer(_)
+        | AbiType::InlineCallbackFn(_)
+        | AbiType::Handle(_)
+        | AbiType::CallbackHandle
+        | AbiType::Struct(_) => {
             panic!("unsupported primitive buffer abi type: {abi_type:?}")
         }
     }

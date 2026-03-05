@@ -33,7 +33,11 @@ impl<'a> CHeaderLowerer<'a> {
     }
 
     pub fn generate(&self) -> String {
-        let has_async = self.abi.calls.iter().any(|c| matches!(c.mode, CallMode::Async(_)));
+        let has_async = self
+            .abi
+            .calls
+            .iter()
+            .any(|c| matches!(c.mode, CallMode::Async(_)));
         let has_streams = !self.abi.streams.is_empty();
 
         let mut out = PreambleTemplate {
@@ -206,9 +210,14 @@ impl<'a> CHeaderLowerer<'a> {
     fn async_callback_return_params(&self, returns: &ReturnShape) -> String {
         let value_params = match &returns.transport {
             None => String::new(),
-            Some(Transport::Scalar(origin)) => format!(", {}", emit::primitive_c_type(origin.primitive())),
+            Some(Transport::Scalar(origin)) => {
+                format!(", {}", emit::primitive_c_type(origin.primitive()))
+            }
             Some(Transport::Span(SpanContent::Scalar(origin))) => {
-                format!(", const {}*, uintptr_t", emit::primitive_c_type(origin.primitive()))
+                format!(
+                    ", const {}*, uintptr_t",
+                    emit::primitive_c_type(origin.primitive())
+                )
             }
             _ => ", const uint8_t*, uintptr_t".to_string(),
         };
@@ -229,8 +238,11 @@ impl<'a> CHeaderLowerer<'a> {
 
         for class_def in self.contract.catalog.all_classes() {
             let class_id = &class_def.id;
-            let class_prefix =
-                format!("{}_{}", self.prefix, naming::to_snake_case(class_id.as_str()));
+            let class_prefix = format!(
+                "{}_{}",
+                self.prefix,
+                naming::to_snake_case(class_id.as_str())
+            );
 
             let ctors: Vec<_> = self
                 .abi
@@ -245,9 +257,9 @@ impl<'a> CHeaderLowerer<'a> {
                 .abi
                 .calls
                 .iter()
-                .filter(|c| {
-                    matches!(&c.id, CallId::Method { class_id: cid, .. } if cid == class_id)
-                })
+                .filter(
+                    |c| matches!(&c.id, CallId::Method { class_id: cid, .. } if cid == class_id),
+                )
                 .collect();
 
             let streams: Vec<_> = self
@@ -331,6 +343,14 @@ impl<'a> CHeaderLowerer<'a> {
     }
 
     fn return_c_type(&self, returns: &ReturnShape, error: &ErrorTransport) -> String {
+        if let Some(Transport::Handle { class_id, .. }) = &returns.transport {
+            return format!("struct {} *", class_id.as_str());
+        }
+
+        if matches!(returns.transport, Some(Transport::Callback { .. })) {
+            return "BoltFFICallbackHandle".to_string();
+        }
+
         if matches!(error, ErrorTransport::Encoded { .. }) {
             return "FfiBuf_u8".to_string();
         }
@@ -346,10 +366,7 @@ impl<'a> CHeaderLowerer<'a> {
             Some(Transport::Scalar(origin)) => emit::primitive_c_type(origin.primitive()),
             Some(Transport::Composite(layout)) => format!("___{}", layout.record_id.as_str()),
             Some(Transport::Span(_)) => "FfiBuf_u8".to_string(),
-            Some(Transport::Handle { class_id, .. }) => {
-                format!("struct {} *", class_id.as_str())
-            }
-            Some(Transport::Callback { .. }) => "BoltFFICallbackHandle".to_string(),
+            Some(Transport::Handle { .. } | Transport::Callback { .. }) => unreachable!(),
         }
     }
 
@@ -412,8 +429,8 @@ impl<'a> CHeaderLowerer<'a> {
 mod tests {
     use crate::ir;
     use crate::model::{
-        Class, Constructor, Enumeration, Function, Method, Module, Parameter, Primitive, Record,
-        RecordField, Receiver, Type, Variant,
+        Class, Constructor, Enumeration, Function, Method, Module, Parameter, Primitive, Receiver,
+        Record, RecordField, Type, Variant,
     };
 
     use super::CHeaderLowerer;
@@ -518,5 +535,4 @@ mod tests {
         assert!(header.contains("boltffi_last_error_message(FfiString *out);"));
         assert!(header.contains("boltffi_clear_last_error(void);"));
     }
-
 }

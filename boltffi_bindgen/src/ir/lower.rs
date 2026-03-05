@@ -26,12 +26,11 @@ use crate::ir::ops::{
     WriteOp, WriteSeq,
 };
 use crate::ir::plan::{
-    AbiType, AsyncPlan, CallPlan, CallPlanKind, CallTarget, CallbackStyle,
-    CompletionCallback, CompositeField, CompositeLayout, Mutability, ParamPlan, ReturnPlan,
-    ScalarOrigin, SpanContent, Transport,
+    AbiType, AsyncPlan, CallPlan, CallPlanKind, CallTarget, CallbackStyle, CompletionCallback,
+    CompositeField, CompositeLayout, Mutability, ParamPlan, ReturnPlan, ScalarOrigin, SpanContent,
+    Transport,
 };
 use crate::ir::types::{PrimitiveType, TypeExpr};
-
 
 #[derive(Debug, Clone)]
 struct AbiCallbackParamPlan {
@@ -165,8 +164,7 @@ impl<'c> Lowerer<'c> {
         let plan = self.lower_function(func);
         let symbol = self.call_symbol(&plan);
         let params = self.abi_params_from_plan(&plan.params);
-        let (mode, returns, error) =
-            self.abi_mode_returns_error_for_function(func, &plan.kind);
+        let (mode, returns, error) = self.abi_mode_returns_error_for_function(func, &plan.kind);
 
         AbiCall {
             id: CallId::Function(func.id.clone()),
@@ -403,7 +401,9 @@ impl<'c> Lowerer<'c> {
                 let mode =
                     CallMode::Async(Box::new(self.async_call_for_function(func, async_plan)));
                 let ret = ReturnShape {
-                    transport: Some(Transport::Scalar(ScalarOrigin::Primitive(PrimitiveType::USize))),
+                    transport: Some(Transport::Scalar(ScalarOrigin::Primitive(
+                        PrimitiveType::USize,
+                    ))),
                     decode_ops: None,
                     encode_ops: None,
                 };
@@ -428,7 +428,9 @@ impl<'c> Lowerer<'c> {
                     self.async_call_for_method(class, method, async_plan),
                 ));
                 let ret = ReturnShape {
-                    transport: Some(Transport::Scalar(ScalarOrigin::Primitive(PrimitiveType::USize))),
+                    transport: Some(Transport::Scalar(ScalarOrigin::Primitive(
+                        PrimitiveType::USize,
+                    ))),
                     decode_ops: None,
                     encode_ops: None,
                 };
@@ -524,7 +526,19 @@ impl<'c> Lowerer<'c> {
                     encode_ops: Some(encode_ops),
                 }
             }
+            Transport::Span(SpanContent::Composite(_) | SpanContent::Scalar(_)) => ReturnShape {
+                transport: Some(value.clone()),
+                decode_ops: None,
+                encode_ops: None,
+            },
             Transport::Span(content) => {
+                if let Some(composite_transport) = self.try_promote_to_composite_span(content) {
+                    return ReturnShape {
+                        transport: Some(composite_transport),
+                        decode_ops: None,
+                        encode_ops: None,
+                    };
+                }
                 let codec = self.codec_from_span_content(content);
                 let decode_ops = self.expand_decode(&codec);
                 let encode_ops = self.expand_encode(&codec, ValueExpr::Var("value".into()));
@@ -551,20 +565,37 @@ impl<'c> Lowerer<'c> {
         }
     }
 
+    fn try_promote_to_composite_span(&self, content: &SpanContent) -> Option<Transport> {
+        let SpanContent::Encoded(CodecPlan::Vec { element, .. }) = content else {
+            return None;
+        };
+        let CodecPlan::Record { id, .. } = element.as_ref() else {
+            return None;
+        };
+        match self.classify_record(id) {
+            Transport::Composite(layout) => Some(Transport::Span(SpanContent::Composite(layout))),
+            _ => None,
+        }
+    }
+
     fn codec_from_span_content(&self, content: &SpanContent) -> CodecPlan {
         match content {
             SpanContent::Scalar(origin) => {
                 let p = origin.primitive();
                 CodecPlan::Vec {
                     element: Box::new(CodecPlan::Primitive(p)),
-                    layout: VecLayout::Blittable { element_size: p.wire_size_bytes() },
+                    layout: VecLayout::Blittable {
+                        element_size: p.wire_size_bytes(),
+                    },
                 }
             }
             SpanContent::Composite(layout) => {
                 let element_codec = self.build_codec(&TypeExpr::Record(layout.record_id.clone()));
                 CodecPlan::Vec {
                     element: Box::new(element_codec),
-                    layout: VecLayout::Blittable { element_size: layout.total_size },
+                    layout: VecLayout::Blittable {
+                        element_size: layout.total_size,
+                    },
                 }
             }
             SpanContent::Utf8 => CodecPlan::String,
@@ -998,10 +1029,8 @@ impl<'c> Lowerer<'c> {
             Transport::Composite(layout) => {
                 let codec = self.build_codec(&TypeExpr::Record(layout.record_id.clone()));
                 let decode_ops = self.expand_decode(&codec);
-                let encode_ops = self.expand_encode(
-                    &codec,
-                    ValueExpr::Named(param.name.as_str().to_string()),
-                );
+                let encode_ops =
+                    self.expand_encode(&codec, ValueExpr::Named(param.name.as_str().to_string()));
                 vec![AbiParam {
                     name: param.name.clone(),
                     abi_type: AbiType::Struct(layout.record_id.clone()),
@@ -1021,10 +1050,8 @@ impl<'c> Lowerer<'c> {
                 SpanContent::Composite(layout) => {
                     let codec = self.build_codec(&TypeExpr::Record(layout.record_id.clone()));
                     let decode_ops = self.expand_decode(&codec);
-                    let encode_ops = self.expand_encode(
-                        &codec,
-                        ValueExpr::Named(param.name.as_str().to_string()),
-                    );
+                    let encode_ops = self
+                        .expand_encode(&codec, ValueExpr::Named(param.name.as_str().to_string()));
                     make_span_params(
                         span.clone(),
                         param.mutability,
@@ -1034,10 +1061,8 @@ impl<'c> Lowerer<'c> {
                 }
                 SpanContent::Encoded(codec) => {
                     let decode_ops = self.expand_decode(codec);
-                    let encode_ops = self.expand_encode(
-                        codec,
-                        ValueExpr::Named(param.name.as_str().to_string()),
-                    );
+                    let encode_ops = self
+                        .expand_encode(codec, ValueExpr::Named(param.name.as_str().to_string()));
                     make_span_params(
                         span.clone(),
                         param.mutability,
@@ -1057,7 +1082,10 @@ impl<'c> Lowerer<'c> {
                     encode_ops: None,
                 },
             }],
-            Transport::Callback { style: CallbackStyle::BoxedDyn, .. } => vec![AbiParam {
+            Transport::Callback {
+                style: CallbackStyle::BoxedDyn,
+                ..
+            } => vec![AbiParam {
                 name: param.name.clone(),
                 abi_type: AbiType::CallbackHandle,
                 role: ParamRole::Input {
@@ -1068,7 +1096,11 @@ impl<'c> Lowerer<'c> {
                     encode_ops: None,
                 },
             }],
-            Transport::Callback { style: CallbackStyle::ImplTrait, callback_id, .. } => {
+            Transport::Callback {
+                style: CallbackStyle::ImplTrait,
+                callback_id,
+                ..
+            } => {
                 let ud_name = ParamName::new(format!("{}_ud", param.name.as_str()));
                 let fn_params = self.inline_callback_fn_abi_params(callback_id);
                 vec![
@@ -1091,7 +1123,7 @@ impl<'c> Lowerer<'c> {
                         },
                     },
                 ]
-            },
+            }
         }
     }
 
@@ -1135,15 +1167,9 @@ impl<'c> Lowerer<'c> {
                     _ => {
                         let codec = self.build_codec(ty);
                         let decode_ops = self.expand_decode(&codec);
-                        let encode_ops =
-                            self.expand_encode(&codec, ValueExpr::Var("value".into()));
-                        let wire_transport =
-                            Transport::Span(SpanContent::Encoded(codec));
-                        return_shape_from_transport_with_ops(
-                            wire_transport,
-                            decode_ops,
-                            encode_ops,
-                        )
+                        let encode_ops = self.expand_encode(&codec, ValueExpr::Var("value".into()));
+                        let wire_transport = Transport::Span(SpanContent::Encoded(codec));
+                        return_shape_from_transport_with_ops(wire_transport, decode_ops, encode_ops)
                     }
                 };
                 (shape, ErrorTransport::None)
@@ -1223,10 +1249,8 @@ impl<'c> Lowerer<'c> {
             AbiCallbackParamStrategy::Direct(layout) => {
                 let codec = self.build_codec(&TypeExpr::Record(layout.record_id.clone()));
                 let decode_ops = self.expand_decode(&codec);
-                let encode_ops = self.expand_encode(
-                    &codec,
-                    ValueExpr::Named(param.name.as_str().to_string()),
-                );
+                let encode_ops =
+                    self.expand_encode(&codec, ValueExpr::Named(param.name.as_str().to_string()));
                 vec![AbiParam {
                     name: param.name.clone(),
                     abi_type: AbiType::Struct(layout.record_id.clone()),
@@ -1481,10 +1505,14 @@ impl<'c> Lowerer<'c> {
 
             TypeExpr::String => Transport::Span(SpanContent::Utf8),
 
-            TypeExpr::Bytes => Transport::Span(SpanContent::Scalar(ScalarOrigin::Primitive(PrimitiveType::U8))),
+            TypeExpr::Bytes => Transport::Span(SpanContent::Scalar(ScalarOrigin::Primitive(
+                PrimitiveType::U8,
+            ))),
 
             TypeExpr::Vec(inner) => match inner.as_ref() {
-                TypeExpr::Primitive(p) => Transport::Span(SpanContent::Scalar(ScalarOrigin::Primitive(*p))),
+                TypeExpr::Primitive(p) => {
+                    Transport::Span(SpanContent::Scalar(ScalarOrigin::Primitive(*p)))
+                }
                 TypeExpr::Enum(id) => match self.classify_enum(id) {
                     Transport::Scalar(origin) => Transport::Span(SpanContent::Scalar(origin)),
                     _ => Transport::Span(SpanContent::Encoded(self.build_codec(type_expr))),
@@ -1518,9 +1546,7 @@ impl<'c> Lowerer<'c> {
 
             TypeExpr::Record(id) => self.classify_record(id),
 
-            TypeExpr::Result { .. }
-            | TypeExpr::Custom(_)
-            | TypeExpr::Builtin(_) => {
+            TypeExpr::Result { .. } | TypeExpr::Custom(_) | TypeExpr::Builtin(_) => {
                 Transport::Span(SpanContent::Encoded(self.build_codec(type_expr)))
             }
 
@@ -1540,9 +1566,9 @@ impl<'c> Lowerer<'c> {
                 tag_type: *tag_type,
                 enum_id: id.clone(),
             }),
-            EnumRepr::Data { .. } => {
-                Transport::Span(SpanContent::Encoded(self.build_codec(&TypeExpr::Enum(id.clone()))))
-            }
+            EnumRepr::Data { .. } => Transport::Span(SpanContent::Encoded(
+                self.build_codec(&TypeExpr::Enum(id.clone())),
+            )),
         }
     }
 
@@ -1705,7 +1731,7 @@ impl<'c> Lowerer<'c> {
             &[]
         };
         matches!(
-            classification::classify_struct(true, classify_fields),
+            classification::classify_struct(def.is_repr_c, classify_fields),
             PassableCategory::Blittable,
         )
     }
@@ -1856,8 +1882,6 @@ impl<'c> Lowerer<'c> {
 // Helper Functions
 // ─────────────────────────────────────────────────────────────────────────────
 
-
-
 fn align_up(offset: usize, alignment: usize) -> usize {
     (offset + alignment - 1) & !(alignment - 1)
 }
@@ -1958,10 +1982,7 @@ mod tests {
 
         let strategy = lowerer.classify_param(&TypeExpr::String, &ParamPassing::Ref);
 
-        assert!(matches!(
-            strategy,
-            Transport::Span(SpanContent::Utf8)
-        ));
+        assert!(matches!(strategy, Transport::Span(SpanContent::Utf8)));
     }
 
     #[test]
@@ -1976,7 +1997,9 @@ mod tests {
 
         assert!(matches!(
             strategy,
-            Transport::Span(SpanContent::Scalar(ScalarOrigin::Primitive(PrimitiveType::F32)))
+            Transport::Span(SpanContent::Scalar(ScalarOrigin::Primitive(
+                PrimitiveType::F32
+            )))
         ));
     }
 
@@ -2074,7 +2097,9 @@ mod tests {
 
         assert!(matches!(
             plan,
-            ReturnPlan::Value(Transport::Scalar(ScalarOrigin::Primitive(PrimitiveType::Bool)))
+            ReturnPlan::Value(Transport::Scalar(ScalarOrigin::Primitive(
+                PrimitiveType::Bool
+            )))
         ));
     }
 
@@ -2494,6 +2519,7 @@ mod tests {
         let mut contract = test_contract();
         let record_id = RecordId::new("Point");
         contract.catalog.insert_record(RecordDef {
+            is_repr_c: true,
             id: record_id.clone(),
             fields: vec![
                 FieldDef {
@@ -2524,6 +2550,7 @@ mod tests {
         let mut contract = test_contract();
         let record_id = RecordId::new("Person");
         contract.catalog.insert_record(RecordDef {
+            is_repr_c: true,
             id: record_id.clone(),
             fields: vec![
                 FieldDef {
@@ -2590,7 +2617,9 @@ mod tests {
 
         assert!(matches!(
             strategy,
-            Transport::Span(SpanContent::Scalar(ScalarOrigin::Primitive(PrimitiveType::U8)))
+            Transport::Span(SpanContent::Scalar(ScalarOrigin::Primitive(
+                PrimitiveType::U8
+            )))
         ));
     }
 
@@ -2606,7 +2635,10 @@ mod tests {
             doc: None,
         });
 
-        assert!(matches!(param.transport, Transport::Span(SpanContent::Utf8)));
+        assert!(matches!(
+            param.transport,
+            Transport::Span(SpanContent::Utf8)
+        ));
         assert_eq!(param.mutability, Mutability::Mutable);
     }
 
@@ -2619,7 +2651,9 @@ mod tests {
 
         assert!(matches!(
             strategy,
-            Transport::Span(SpanContent::Scalar(ScalarOrigin::Primitive(PrimitiveType::U8)))
+            Transport::Span(SpanContent::Scalar(ScalarOrigin::Primitive(
+                PrimitiveType::U8
+            )))
         ));
     }
 
@@ -2672,6 +2706,7 @@ mod tests {
         let mut contract = test_contract();
         let record_id = RecordId::new("Packed");
         contract.catalog.insert_record(RecordDef {
+            is_repr_c: true,
             id: record_id.clone(),
             fields: vec![
                 FieldDef {
@@ -2723,6 +2758,7 @@ mod tests {
         let mut contract = test_contract();
         let record_id = RecordId::new("Vec2");
         contract.catalog.insert_record(RecordDef {
+            is_repr_c: true,
             id: record_id.clone(),
             fields: vec![
                 FieldDef {
@@ -2940,6 +2976,7 @@ mod tests {
         let mut contract = test_contract();
         let record_id = RecordId::new("Message");
         contract.catalog.insert_record(RecordDef {
+            is_repr_c: true,
             id: record_id.clone(),
             fields: vec![
                 FieldDef {
@@ -3028,6 +3065,7 @@ mod tests {
         let mut contract = test_contract();
         let record_id = RecordId::new("Point");
         contract.catalog.insert_record(RecordDef {
+            is_repr_c: true,
             id: record_id.clone(),
             fields: vec![
                 FieldDef {

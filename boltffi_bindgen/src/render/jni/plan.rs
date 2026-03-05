@@ -729,7 +729,9 @@ pub enum JniReturnKind {
         len_fn: String,
         copy_fn: String,
     },
-    CStyleEnum,
+    CStyleEnum {
+        jni_type: String,
+    },
     DataEnum {
         enum_name: String,
         struct_size: usize,
@@ -752,7 +754,7 @@ impl JniReturnKind {
     }
 
     pub fn is_c_style_enum(&self) -> bool {
-        matches!(self, Self::CStyleEnum)
+        matches!(self, Self::CStyleEnum { .. })
     }
 
     pub fn is_data_enum(&self) -> bool {

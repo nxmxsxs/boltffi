@@ -1,4 +1,6 @@
-use crate::ir::ops::{OffsetExpr, ReadOp, ReadSeq, WriteSeq};
+use crate::ir::ops::{
+    OffsetExpr, ReadOp, ReadSeq, ValueExpr, WriteOp, WriteSeq, remap_root_in_seq,
+};
 use crate::render::swift::emit;
 
 #[derive(Debug, Clone)]
@@ -83,29 +85,55 @@ impl SwiftAsyncResult {
 
     pub fn direct_buffer_element_type(&self) -> Option<&str> {
         match self {
-            Self::DirectBuffer { element_swift_type, .. } => Some(element_swift_type),
+            Self::DirectBuffer {
+                element_swift_type, ..
+            } => Some(element_swift_type),
             _ => None,
         }
     }
 
     pub fn direct_buffer_composite_mapping(&self) -> Option<&DirectBufferCompositeMapping> {
         match self {
-            Self::DirectBuffer { composite_mapping, .. } => composite_mapping.as_ref(),
+            Self::DirectBuffer {
+                composite_mapping, ..
+            } => composite_mapping.as_ref(),
             _ => None,
         }
     }
 
     pub fn direct_buffer_enum_mapping(&self) -> Option<&str> {
         match self {
-            Self::DirectBuffer { enum_mapping: Some(e), .. } => Some(e.as_str()),
+            Self::DirectBuffer {
+                enum_mapping: Some(e),
+                ..
+            } => Some(e.as_str()),
             _ => None,
+        }
+    }
+
+    pub fn direct_buffer_is_data(&self) -> bool {
+        match self {
+            Self::DirectBuffer {
+                swift_type,
+                element_swift_type,
+                composite_mapping,
+                enum_mapping,
+            } => {
+                swift_type == "Data"
+                    && element_swift_type == "UInt8"
+                    && composite_mapping.is_none()
+                    && enum_mapping.is_none()
+            }
+            _ => false,
         }
     }
 
     pub fn swift_type(&self) -> Option<&str> {
         match self {
             Self::Void => None,
-            Self::Direct { swift_type, .. } | Self::DirectBuffer { swift_type, .. } => Some(swift_type),
+            Self::Direct { swift_type, .. } | Self::DirectBuffer { swift_type, .. } => {
+                Some(swift_type)
+            }
             Self::Encoded {
                 throws: true,
                 ok_type: Some(ok),
@@ -310,6 +338,7 @@ pub struct SwiftEnum {
     pub name: String,
     pub variants: Vec<SwiftVariant>,
     pub style: SwiftEnumStyle,
+    pub c_style_tag_type: Option<crate::ir::types::PrimitiveType>,
     pub is_error: bool,
     pub doc: Option<String>,
 }
@@ -329,7 +358,7 @@ impl SwiftEnum {
 #[derive(Debug, Clone)]
 pub struct SwiftVariant {
     pub swift_name: String,
-    pub discriminant: i64,
+    pub discriminant: i128,
     pub payload: SwiftVariantPayload,
     pub doc: Option<String>,
 }
@@ -765,7 +794,12 @@ impl SwiftCallbackMethod {
 
     pub fn wire_return_encode(&self) -> Option<String> {
         self.encoded_return_encode().map(|encode| {
-            let writer_body = emit::emit_writer_write(encode);
+            let effective_encode = if self.throws() {
+                throws_success_encode(encode)
+            } else {
+                encode.clone()
+            };
+            let writer_body = emit::emit_writer_write(&effective_encode);
             let discriminant = if self.throws() {
                 "writer.writeU8(0); "
             } else {
@@ -810,6 +844,15 @@ impl SwiftCallbackMethod {
             },
             _ => None,
         }
+    }
+}
+
+fn throws_success_encode(encode: &WriteSeq) -> WriteSeq {
+    match encode.ops.first() {
+        Some(WriteOp::Result { ok, .. }) => {
+            remap_root_in_seq(ok.as_ref(), ValueExpr::Var("result".to_string()))
+        }
+        _ => encode.clone(),
     }
 }
 
@@ -990,7 +1033,9 @@ impl SwiftParam {
     pub fn needs_wrapper(&self) -> bool {
         !matches!(
             self.conversion,
-            SwiftConversion::Direct | SwiftConversion::CStyleEnumRawValue | SwiftConversion::ToComposite { .. }
+            SwiftConversion::Direct
+                | SwiftConversion::CStyleEnumRawValue
+                | SwiftConversion::ToComposite { .. }
         )
     }
 
@@ -1048,10 +1093,8 @@ impl SwiftParam {
         match &self.conversion {
             SwiftConversion::ToString | SwiftConversion::ToData => Some("}"),
             SwiftConversion::PrimitiveBuffer { .. }
-                | SwiftConversion::MutableBuffer { .. }
-                | SwiftConversion::EnumBufferInput { .. } => {
-                Some("}")
-            }
+            | SwiftConversion::MutableBuffer { .. }
+            | SwiftConversion::EnumBufferInput { .. } => Some("}"),
             _ => None,
         }
     }
@@ -1109,14 +1152,34 @@ pub enum SwiftConversion {
     CStyleEnumRawValue,
     ToString,
     ToData,
-    ToWireBuffer { encode: WriteSeq },
-    ToComposite { c_type: String, fields: Vec<CompositeFieldMapping> },
-    PrimitiveBuffer { element_type: String },
-    EnumBufferInput { swift_enum: String, element_type: String },
-    MutableBuffer { element_type: String },
-    WrapCallback { protocol: String, nullable: bool },
-    InlineClosure { closure: SwiftClosureTrampoline },
-    PassHandle { class_name: String, nullable: bool },
+    ToWireBuffer {
+        encode: WriteSeq,
+    },
+    ToComposite {
+        c_type: String,
+        fields: Vec<CompositeFieldMapping>,
+    },
+    PrimitiveBuffer {
+        element_type: String,
+    },
+    EnumBufferInput {
+        swift_enum: String,
+        element_type: String,
+    },
+    MutableBuffer {
+        element_type: String,
+    },
+    WrapCallback {
+        protocol: String,
+        nullable: bool,
+    },
+    InlineClosure {
+        closure: SwiftClosureTrampoline,
+    },
+    PassHandle {
+        class_name: String,
+        nullable: bool,
+    },
 }
 
 #[derive(Debug, Clone)]
@@ -1221,22 +1284,46 @@ impl SwiftReturn {
 
     pub fn direct_buffer_element_type(&self) -> Option<&str> {
         match self {
-            SwiftReturn::FromDirectBuffer { element_swift_type, .. } => Some(element_swift_type.as_str()),
+            SwiftReturn::FromDirectBuffer {
+                element_swift_type, ..
+            } => Some(element_swift_type.as_str()),
             _ => None,
         }
     }
 
     pub fn direct_buffer_composite_mapping(&self) -> Option<&DirectBufferCompositeMapping> {
         match self {
-            SwiftReturn::FromDirectBuffer { composite_mapping, .. } => composite_mapping.as_ref(),
+            SwiftReturn::FromDirectBuffer {
+                composite_mapping, ..
+            } => composite_mapping.as_ref(),
             _ => None,
         }
     }
 
     pub fn direct_buffer_enum_mapping(&self) -> Option<&str> {
         match self {
-            SwiftReturn::FromDirectBuffer { enum_mapping: Some(e), .. } => Some(e.as_str()),
+            SwiftReturn::FromDirectBuffer {
+                enum_mapping: Some(e),
+                ..
+            } => Some(e.as_str()),
             _ => None,
+        }
+    }
+
+    pub fn direct_buffer_is_data(&self) -> bool {
+        match self {
+            SwiftReturn::FromDirectBuffer {
+                swift_type,
+                element_swift_type,
+                composite_mapping,
+                enum_mapping,
+            } => {
+                swift_type == "Data"
+                    && element_swift_type == "UInt8"
+                    && composite_mapping.is_none()
+                    && enum_mapping.is_none()
+            }
+            _ => false,
         }
     }
 

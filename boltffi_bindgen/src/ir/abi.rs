@@ -9,9 +9,7 @@ use crate::ir::ids::{
     VariantName,
 };
 use crate::ir::ops::{ReadSeq, WriteSeq};
-use crate::ir::plan::{
-    AbiType, Mutability, Transport,
-};
+use crate::ir::plan::{AbiType, Mutability, Transport};
 use crate::ir::types::TypeExpr;
 
 /// The resolved FFI boundary for the whole crate.
@@ -53,7 +51,7 @@ pub struct AbiEnum {
 #[derive(Debug, Clone)]
 pub struct AbiEnumVariant {
     pub name: VariantName,
-    pub discriminant: i64,
+    pub discriminant: i128,
     pub payload: AbiEnumPayload,
 }
 
@@ -252,7 +250,9 @@ mod tests {
         let param = scalar_param("v", AbiType::I32);
         assert!(matches!(
             param.transport(),
-            Some(Transport::Scalar(ScalarOrigin::Primitive(PrimitiveType::I32)))
+            Some(Transport::Scalar(ScalarOrigin::Primitive(
+                PrimitiveType::I32
+            )))
         ));
     }
 
@@ -285,7 +285,9 @@ mod tests {
             mode: CallMode::Sync,
             params: vec![scalar_param("x", AbiType::I32)],
             returns: ReturnShape {
-                transport: Some(Transport::Scalar(ScalarOrigin::Primitive(PrimitiveType::I32))),
+                transport: Some(Transport::Scalar(ScalarOrigin::Primitive(
+                    PrimitiveType::I32,
+                ))),
                 decode_ops: None,
                 encode_ops: None,
             },
@@ -293,7 +295,9 @@ mod tests {
         };
         assert!(matches!(
             call.returns.transport,
-            Some(Transport::Scalar(ScalarOrigin::Primitive(PrimitiveType::I32)))
+            Some(Transport::Scalar(ScalarOrigin::Primitive(
+                PrimitiveType::I32
+            )))
         ));
     }
 }

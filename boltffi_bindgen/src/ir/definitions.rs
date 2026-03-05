@@ -15,6 +15,7 @@ pub struct DeprecationInfo {
 #[derive(Debug, Clone)]
 pub struct RecordDef {
     pub id: RecordId,
+    pub is_repr_c: bool,
     pub fields: Vec<FieldDef>,
     pub doc: Option<String>,
     pub deprecated: Option<DeprecationInfo>,
@@ -37,7 +38,7 @@ impl RecordDef {
             &[]
         };
         matches!(
-            classification::classify_struct(true, classify_fields),
+            classification::classify_struct(self.is_repr_c, classify_fields),
             PassableCategory::Blittable,
         )
     }
@@ -97,14 +98,14 @@ pub enum EnumRepr {
 #[derive(Debug, Clone)]
 pub struct CStyleVariant {
     pub name: VariantName,
-    pub discriminant: i64,
+    pub discriminant: i128,
     pub doc: Option<String>,
 }
 
 #[derive(Debug, Clone)]
 pub struct DataVariant {
     pub name: VariantName,
-    pub discriminant: i64,
+    pub discriminant: i128,
     pub payload: VariantPayload,
     pub doc: Option<String>,
 }

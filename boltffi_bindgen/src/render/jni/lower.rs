@@ -220,11 +220,7 @@ impl<'a> JniLowerer<'a> {
         }
     }
 
-    fn collect_used_from_return(
-        &self,
-        returns: &ReturnShape,
-        used: &mut HashSet<CallbackId>,
-    ) {
+    fn collect_used_from_return(&self, returns: &ReturnShape, used: &mut HashSet<CallbackId>) {
         if let Some(Transport::Callback { callback_id, .. }) = &returns.transport {
             used.insert(callback_id.clone());
         }
@@ -720,7 +716,7 @@ impl<'a> JniLowerer<'a> {
 
         let (jni_type, ffi_arg, kind) = match transport {
             Transport::Scalar(_) => {
-                let jni_type = self.scalar_jni_type(&param.type_expr);
+                let jni_type = self.scalar_jni_type(&abi_param.abi_type);
                 let ffi_arg = name.clone();
                 (jni_type, ffi_arg, JniParamKind::Primitive)
             }
@@ -778,8 +774,7 @@ impl<'a> JniLowerer<'a> {
             Transport::Span(SpanContent::Encoded(_))
             | Transport::Span(SpanContent::Composite(_)) => {
                 let jni_type = "jobject".to_string();
-                let ffi_arg =
-                    format!("(const uint8_t*)_{}_ptr, (uintptr_t)_{}_len", name, name);
+                let ffi_arg = format!("(const uint8_t*)_{}_ptr, (uintptr_t)_{}_len", name, name);
                 (jni_type, ffi_arg, JniParamKind::Buffer)
             }
             Transport::Handle { .. } => {
@@ -798,8 +793,7 @@ impl<'a> JniLowerer<'a> {
                     let trampoline = self.closure_trampoline_name(callback_id);
                     format!("{}, (void*){}", trampoline, name)
                 } else {
-                    let create_fn =
-                        naming::callback_create_fn(callback_id.as_str()).into_string();
+                    let create_fn = naming::callback_create_fn(callback_id.as_str()).into_string();
                     format!("{}((uint64_t){})", create_fn, name)
                 };
                 let kind = if is_closure {
@@ -821,12 +815,21 @@ impl<'a> JniLowerer<'a> {
         }
     }
 
-    fn scalar_jni_type(&self, ty: &TypeExpr) -> String {
-        match ty {
-            TypeExpr::Primitive(p) => self.primitive_jni_type(*p).to_string(),
-            TypeExpr::Enum(_) => "jint".to_string(),
-            TypeExpr::Handle(_) | TypeExpr::Callback(_) => "jlong".to_string(),
-            _ => "jint".to_string(),
+    fn scalar_jni_type(&self, abi_type: &AbiType) -> String {
+        match abi_type {
+            AbiType::Bool => "jboolean".to_string(),
+            AbiType::I8 | AbiType::U8 => "jbyte".to_string(),
+            AbiType::I16 | AbiType::U16 => "jshort".to_string(),
+            AbiType::I32 | AbiType::U32 => "jint".to_string(),
+            AbiType::I64 | AbiType::U64 | AbiType::ISize | AbiType::USize => "jlong".to_string(),
+            AbiType::F32 => "jfloat".to_string(),
+            AbiType::F64 => "jdouble".to_string(),
+            AbiType::Pointer(_)
+            | AbiType::InlineCallbackFn(_)
+            | AbiType::Handle(_)
+            | AbiType::CallbackHandle
+            | AbiType::Struct(_)
+            | AbiType::Void => "jlong".to_string(),
         }
     }
 
@@ -933,40 +936,18 @@ impl<'a> JniLowerer<'a> {
     }
 
     fn primitive_jni_type(&self, primitive: PrimitiveType) -> &'static str {
-        let model_primitive = self.to_model_primitive(primitive);
+        let model_primitive = primitive;
         primitives::info(model_primitive).jni_type
     }
 
     fn primitive_signature(&self, primitive: PrimitiveType) -> String {
-        let model_primitive = self.to_model_primitive(primitive);
+        let model_primitive = primitive;
         primitives::info(model_primitive).signature.to_string()
-    }
-
-    fn to_model_primitive(&self, primitive: PrimitiveType) -> crate::model::Primitive {
-        use crate::model::Primitive as ModelPrimitive;
-
-        match primitive {
-            PrimitiveType::Bool => ModelPrimitive::Bool,
-            PrimitiveType::I8 => ModelPrimitive::I8,
-            PrimitiveType::U8 => ModelPrimitive::U8,
-            PrimitiveType::I16 => ModelPrimitive::I16,
-            PrimitiveType::U16 => ModelPrimitive::U16,
-            PrimitiveType::I32 => ModelPrimitive::I32,
-            PrimitiveType::U32 => ModelPrimitive::U32,
-            PrimitiveType::I64 => ModelPrimitive::I64,
-            PrimitiveType::U64 => ModelPrimitive::U64,
-            PrimitiveType::ISize => ModelPrimitive::Isize,
-            PrimitiveType::USize => ModelPrimitive::Usize,
-            PrimitiveType::F32 => ModelPrimitive::F32,
-            PrimitiveType::F64 => ModelPrimitive::F64,
-        }
     }
 
     fn composite_return_c_type(&self, returns: &ReturnShape) -> Option<String> {
         match &returns.transport {
-            Some(Transport::Composite(layout)) => {
-                Some(format!("___{}", layout.record_id.as_str()))
-            }
+            Some(Transport::Composite(layout)) => Some(format!("___{}", layout.record_id.as_str())),
             _ => None,
         }
     }
@@ -1189,7 +1170,20 @@ impl<'a> JniLowerer<'a> {
                         struct_size,
                     }
                 })
-                .unwrap_or(JniReturnKind::CStyleEnum),
+                .unwrap_or_else(|| {
+                    let tag_type = self
+                        .contract
+                        .catalog
+                        .resolve_enum(id)
+                        .and_then(|enum_def| match enum_def.repr {
+                            EnumRepr::CStyle { tag_type, .. } => Some(tag_type),
+                            _ => None,
+                        })
+                        .unwrap_or(PrimitiveType::I32);
+                    JniReturnKind::CStyleEnum {
+                        jni_type: self.primitive_return_jni_type(tag_type),
+                    }
+                }),
             TypeExpr::Option(inner) => {
                 let opt = self.option_view(inner);
                 JniReturnKind::Option(opt)
@@ -1204,7 +1198,7 @@ impl<'a> JniLowerer<'a> {
             JniReturnKind::Primitive { jni_type } => jni_type.clone(),
             JniReturnKind::String { .. } => "jstring".to_string(),
             JniReturnKind::Vec { .. } => "jobject".to_string(),
-            JniReturnKind::CStyleEnum => "jint".to_string(),
+            JniReturnKind::CStyleEnum { jni_type } => jni_type.clone(),
             JniReturnKind::DataEnum { .. } => "jobject".to_string(),
             JniReturnKind::Option(_) => "jobject".to_string(),
             JniReturnKind::Result(_) => "jobject".to_string(),
@@ -1366,7 +1360,7 @@ impl<'a> JniLowerer<'a> {
     }
 
     fn vec_primitive_info(&self, primitive: PrimitiveType) -> super::plan::JniVecPrimitive {
-        let model_primitive = self.to_model_primitive(primitive);
+        let model_primitive = primitive;
         let info = primitives::info(model_primitive);
         super::plan::JniVecPrimitive {
             c_type_name: info.c_type.to_string(),
@@ -1726,7 +1720,7 @@ impl<'a> JniLowerer<'a> {
         match ty {
             None => "void".to_string(),
             Some(TypeExpr::Primitive(p)) => {
-                let model_primitive = self.to_model_primitive(*p);
+                let model_primitive = *p;
                 primitives::info(model_primitive).jni_type.to_string()
             }
             Some(TypeExpr::Void) => "void".to_string(),
@@ -1738,7 +1732,7 @@ impl<'a> JniLowerer<'a> {
         match ty {
             None | Some(TypeExpr::Void) => "Void".to_string(),
             Some(TypeExpr::Primitive(p)) => {
-                let model_primitive = self.to_model_primitive(*p);
+                let model_primitive = *p;
                 primitives::info(model_primitive).call_suffix.to_string()
             }
             _ => "Object".to_string(),
@@ -1758,7 +1752,7 @@ impl<'a> JniLowerer<'a> {
         match returns {
             ReturnDef::Void => "Void".to_string(),
             ReturnDef::Value(TypeExpr::Primitive(p)) => {
-                let model_primitive = self.to_model_primitive(*p);
+                let model_primitive = *p;
                 primitives::info(model_primitive).invoker_suffix.to_string()
             }
             ReturnDef::Result { .. } => "Wire".to_string(),
@@ -1795,7 +1789,7 @@ impl<'a> JniLowerer<'a> {
         param_name: &ParamName,
         primitive: PrimitiveType,
     ) -> LoweredCallbackParam {
-        let model_primitive = self.to_model_primitive(primitive);
+        let model_primitive = primitive;
         let info = primitives::info(model_primitive);
         let c_type = info.c_type.to_string();
         let jni_arg = info
@@ -1923,10 +1917,7 @@ impl<'a> JniLowerer<'a> {
                 transport: Transport::Composite(_),
                 ..
             } => self.lower_callback_encoded_param(param_name, is_async),
-            _ => unreachable!(
-                "unsupported JNI callback param role: {:?}",
-                param.role
-            ),
+            _ => unreachable!("unsupported JNI callback param role: {:?}", param.role),
         }
     }
 
@@ -2013,7 +2004,11 @@ impl<'a> JniLowerer<'a> {
             AbiType::U64 | AbiType::USize => "uint64_t".to_string(),
             AbiType::F32 => "float".to_string(),
             AbiType::F64 => "double".to_string(),
-            AbiType::Void | AbiType::Pointer(_) | AbiType::InlineCallbackFn(_) | AbiType::Handle(_) | AbiType::CallbackHandle => "void".to_string(),
+            AbiType::Void
+            | AbiType::Pointer(_)
+            | AbiType::InlineCallbackFn(_)
+            | AbiType::Handle(_)
+            | AbiType::CallbackHandle => "void".to_string(),
             AbiType::Struct(_) => "jlong".to_string(),
         }
     }
@@ -2199,7 +2194,7 @@ impl<'a> JniLowerer<'a> {
     fn closure_return_info(&self, ty: &TypeExpr) -> JniClosureTrampolineReturn {
         match ty {
             TypeExpr::Primitive(p) => {
-                let model_primitive = self.to_model_primitive(*p);
+                let model_primitive = *p;
                 let info = primitives::info(model_primitive);
                 let c_type = info.c_type.to_string();
                 let jni_call_method = format!("CallStatic{}Method", info.call_suffix);
