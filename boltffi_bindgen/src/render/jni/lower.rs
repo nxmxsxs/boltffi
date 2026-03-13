@@ -3,13 +3,13 @@ use std::collections::{HashMap, HashSet};
 use boltffi_ffi_rules::naming;
 
 use crate::ir::abi::{
-    AbiCall, AbiCallbackInvocation, AbiContract, AbiParam, AbiStream, AsyncCall, CallId, CallMode,
-    ErrorTransport,
+    AbiCall, AbiCallbackInvocation, AbiCallbackMethod, AbiContract, AbiParam, AbiStream, AsyncCall,
+    CallId, CallMode, ErrorTransport,
 };
 use crate::ir::contract::FfiContract;
 use crate::ir::definitions::{
     CallbackKind, CallbackMethodDef, CallbackTraitDef, ClassDef, ConstructorDef, EnumRepr,
-    FunctionDef, MethodDef, ParamDef, ParamPassing, Receiver, ReturnDef, StreamDef,
+    FunctionDef, MethodDef, ParamDef, Receiver, ReturnDef, StreamDef,
 };
 use crate::ir::ids::{CallbackId, EnumId, ParamName, RecordId};
 use crate::ir::ops::SizeExpr;
@@ -118,7 +118,7 @@ impl<'a> JniLowerer<'a> {
             .contract
             .functions
             .iter()
-            .filter(|func| func.is_async && self.is_supported_async_function(func))
+            .filter(|func| func.is_async)
             .map(|func| self.lower_async_function(func, &jni_prefix))
             .collect();
 
@@ -264,47 +264,6 @@ impl<'a> JniLowerer<'a> {
         returns_ok && params_ok
     }
 
-    fn is_supported_async_function(&self, func: &FunctionDef) -> bool {
-        let output_ok = match &func.returns {
-            ReturnDef::Void => true,
-            ReturnDef::Value(ty) => self.is_supported_async_type(ty),
-            ReturnDef::Result { ok, .. } => self.is_supported_async_type(ok),
-        };
-
-        let inputs_ok = func
-            .params
-            .iter()
-            .all(|param| self.is_supported_async_param(&param.type_expr));
-
-        output_ok && inputs_ok
-    }
-
-    fn is_supported_async_param(&self, ty: &TypeExpr) -> bool {
-        match ty {
-            TypeExpr::Primitive(_) | TypeExpr::String => true,
-            TypeExpr::Vec(inner) => matches!(inner.as_ref(), TypeExpr::Primitive(_)),
-            TypeExpr::Record(id) => self.is_record_blittable(id),
-            _ => false,
-        }
-    }
-
-    fn is_supported_async_type(&self, ty: &TypeExpr) -> bool {
-        match ty {
-            TypeExpr::Void | TypeExpr::Primitive(_) | TypeExpr::String => true,
-            TypeExpr::Vec(inner) => matches!(inner.as_ref(), TypeExpr::Primitive(_)),
-            TypeExpr::Record(id) => self.is_record_blittable(id),
-            _ => false,
-        }
-    }
-
-    fn is_record_blittable(&self, record_id: &RecordId) -> bool {
-        self.contract
-            .catalog
-            .resolve_record(record_id)
-            .map(|record| record.is_blittable())
-            .unwrap_or(false)
-    }
-
     fn record_struct_size(&self, record_id: &RecordId) -> usize {
         self.abi
             .records
@@ -384,21 +343,20 @@ impl<'a> JniLowerer<'a> {
             .constructors
             .iter()
             .enumerate()
-            .filter(|(_, ctor)| self.constructor_supported(ctor))
-            .map(|(idx, ctor)| self.lower_ctor(class, ctor, idx, jni_prefix))
+            .map(|(index, ctor)| self.lower_ctor(class, ctor, index, jni_prefix))
             .collect();
 
         let wire_methods = class
             .methods
             .iter()
-            .filter(|method| !method.is_async && self.method_supported(method))
+            .filter(|method| !method.is_async)
             .map(|method| self.lower_method(class, method, jni_prefix))
             .collect();
 
         let async_methods = class
             .methods
             .iter()
-            .filter(|method| self.is_supported_async_method(method))
+            .filter(|method| method.is_async)
             .map(|method| self.lower_async_method(class, method, jni_prefix))
             .collect();
         let streams = class
@@ -466,86 +424,6 @@ impl<'a> JniLowerer<'a> {
             .iter()
             .find(|item| item.class_id == class.id && item.stream_id == stream.id)
             .expect("abi stream")
-    }
-
-    fn constructor_supported(&self, ctor: &ConstructorDef) -> bool {
-        let params = ctor.params();
-        params.iter().all(|param| self.supports_param(param))
-    }
-
-    fn method_supported(&self, method: &MethodDef) -> bool {
-        let params_ok = method.params.iter().all(|param| self.supports_param(param));
-
-        params_ok && self.supports_return_type(&method.returns)
-    }
-
-    fn supports_param(&self, param: &ParamDef) -> bool {
-        match &param.type_expr {
-            TypeExpr::Primitive(_) | TypeExpr::String | TypeExpr::Enum(_) => true,
-            TypeExpr::Handle(_) | TypeExpr::Callback(_) => true,
-            TypeExpr::Record(id) => self.is_record_blittable(id),
-            TypeExpr::Vec(inner) => match inner.as_ref() {
-                TypeExpr::Primitive(_) => true,
-                TypeExpr::Record(id) => {
-                    matches!(param.passing, ParamPassing::Value) && self.is_record_blittable(id)
-                }
-                _ => false,
-            },
-            TypeExpr::Option(inner) => self.supports_option_inner(inner),
-            _ => false,
-        }
-    }
-
-    fn supports_param_type(&self, ty: &TypeExpr) -> bool {
-        match ty {
-            TypeExpr::Primitive(_) | TypeExpr::String | TypeExpr::Enum(_) => true,
-            TypeExpr::Record(id) => self.is_record_blittable(id),
-            TypeExpr::Vec(inner) => match inner.as_ref() {
-                TypeExpr::Primitive(_) => true,
-                TypeExpr::Record(id) => self.is_record_blittable(id),
-                _ => false,
-            },
-            TypeExpr::Option(inner) => self.supports_option_inner(inner),
-            _ => false,
-        }
-    }
-
-    fn supports_option_inner(&self, inner: &TypeExpr) -> bool {
-        match inner {
-            TypeExpr::Primitive(_)
-            | TypeExpr::String
-            | TypeExpr::Enum(_)
-            | TypeExpr::Handle(_)
-            | TypeExpr::Callback(_) => true,
-            TypeExpr::Record(id) => self.is_record_blittable(id),
-            TypeExpr::Vec(inner) => match inner.as_ref() {
-                TypeExpr::Primitive(_) => true,
-                TypeExpr::Record(id) => self.is_record_blittable(id),
-                _ => false,
-            },
-            _ => false,
-        }
-    }
-
-    fn supports_return_type(&self, returns: &ReturnDef) -> bool {
-        match returns {
-            ReturnDef::Void => true,
-            ReturnDef::Value(ty) => self.supports_param_type(ty),
-            ReturnDef::Result { ok, .. } => self.supports_option_inner(ok),
-        }
-    }
-
-    fn is_supported_async_method(&self, method: &MethodDef) -> bool {
-        method.is_async
-            && method
-                .params
-                .iter()
-                .all(|param| self.is_supported_async_param(&param.type_expr))
-            && match &method.returns {
-                ReturnDef::Void => true,
-                ReturnDef::Value(ty) => self.is_supported_async_type(ty),
-                ReturnDef::Result { ok, .. } => self.is_supported_async_type(ok),
-            }
     }
 
     fn lower_method(
@@ -1500,21 +1378,32 @@ impl<'a> JniLowerer<'a> {
     ) -> JniCallbackTrait {
         let trait_name = NamingConvention::class_name(callback.id.as_str());
         let callbacks_class = format!("{}Callbacks", trait_name);
+        let abi_methods: HashMap<_, _> = abi_callback
+            .methods
+            .iter()
+            .map(|method| (method.id.clone(), method))
+            .collect();
 
         let sync_methods = callback
             .methods
             .iter()
             .filter(|method| !method.is_async)
-            .filter(|method| self.is_supported_callback_method(method))
-            .map(|method| self.lower_sync_callback_method(method))
+            .filter(|method| self.callback_method_supported(callback, method))
+            .filter_map(|method| {
+                let abi_method = abi_methods.get(&method.id)?;
+                Some(self.lower_sync_callback_method(method, abi_method))
+            })
             .collect();
 
         let async_methods = callback
             .methods
             .iter()
             .filter(|method| method.is_async)
-            .filter(|method| self.is_supported_callback_method(method))
-            .map(|method| self.lower_async_callback_method(method, jni_prefix))
+            .filter(|method| self.callback_method_supported(callback, method))
+            .filter_map(|method| {
+                let abi_method = abi_methods.get(&method.id)?;
+                Some(self.lower_async_callback_method(method, abi_method, jni_prefix))
+            })
             .collect();
 
         JniCallbackTrait {
@@ -1527,50 +1416,65 @@ impl<'a> JniLowerer<'a> {
         }
     }
 
-    fn is_supported_callback_method(&self, method: &CallbackMethodDef) -> bool {
-        let supported_return = match &method.returns {
-            ReturnDef::Void => true,
-            ReturnDef::Value(TypeExpr::Void) => true,
-            ReturnDef::Value(TypeExpr::Primitive(_)) => true,
-            ReturnDef::Result { ok, .. } => {
-                matches!(ok, TypeExpr::Void | TypeExpr::Primitive(_))
-            }
-            _ => false,
-        };
+    fn callback_method_supported(
+        &self,
+        callback: &CallbackTraitDef,
+        method: &CallbackMethodDef,
+    ) -> bool {
+        let reasons = self.callback_method_unsupported_reasons(method);
+        if reasons.is_empty() {
+            true
+        } else {
+            reasons.iter().for_each(|reason| {
+                eprintln!(
+                    "[boltffi][jni] skipping callback method `{}.{}`: {}",
+                    callback.id.as_str(),
+                    method.id.as_str(),
+                    reason
+                )
+            });
+            false
+        }
+    }
 
-        let supported_params = method
+    fn callback_method_unsupported_reasons(&self, method: &CallbackMethodDef) -> Vec<String> {
+        let param_reasons = method.params.iter().filter_map(|param| {
+            self.unsupported_callback_param_reason(&param.type_expr)
+                .map(|reason| format!("parameter `{}` ({})", param.name.as_str(), reason))
+        });
+
+        param_reasons.collect()
+    }
+
+    fn unsupported_callback_param_reason(&self, ty: &TypeExpr) -> Option<String> {
+        match ty {
+            TypeExpr::Handle(_) => Some("Handle not supported in callback params".to_string()),
+            TypeExpr::Callback(_) => Some("Callback not supported in callback params".to_string()),
+            _ => None,
+        }
+    }
+
+    fn lower_sync_callback_method(
+        &self,
+        method: &CallbackMethodDef,
+        abi_method: &AbiCallbackMethod,
+    ) -> JniCallbackMethod {
+        let callback_out_params: Vec<&AbiParam> = abi_method
             .params
             .iter()
-            .all(|param| self.is_supported_callback_param(&param.type_expr));
+            .filter(|param| matches!(&param.role, ParamRole::OutDirect | ParamRole::OutLen { .. }))
+            .collect();
 
-        supported_return && supported_params
-    }
+        let out_direct_param = callback_out_params
+            .iter()
+            .find_map(|param| matches!(&param.role, ParamRole::OutDirect).then_some(*param));
 
-    fn is_supported_callback_param(&self, ty: &TypeExpr) -> bool {
-        matches!(
-            ty,
-            TypeExpr::Primitive(_)
-                | TypeExpr::String
-                | TypeExpr::Bytes
-                | TypeExpr::Record(_)
-                | TypeExpr::Enum(_)
-                | TypeExpr::Vec(_)
-                | TypeExpr::Option(_)
-                | TypeExpr::Result { .. }
-        )
-    }
+        let out_len_param = callback_out_params
+            .iter()
+            .find_map(|param| matches!(&param.role, ParamRole::OutLen { .. }).then_some(*param));
 
-    fn lower_sync_callback_method(&self, method: &CallbackMethodDef) -> JniCallbackMethod {
-        let return_info = if matches!(method.returns, ReturnDef::Void) {
-            None
-        } else {
-            let return_type = self.callback_return_type(&method.returns);
-            Some(JniCallbackReturn {
-                jni_type: self.jni_call_return_type(return_type),
-                jni_call_type: self.jni_call_method_suffix(return_type),
-                c_type: self.c_type_for_callback(return_type),
-            })
-        };
+        let return_info =
+            self.sync_callback_return_info(&abi_method.returns, out_direct_param, out_len_param);
 
         let lowered_params: Vec<LoweredCallbackParam> = method
             .params
@@ -1578,10 +1482,17 @@ impl<'a> JniLowerer<'a> {
             .map(|param| self.lower_callback_param(&param.name, &param.type_expr, false))
             .collect();
 
-        let c_params = lowered_params
+        let input_c_params = lowered_params
             .iter()
             .flat_map(|param| param.c_params.iter().cloned())
-            .collect();
+            .collect::<Vec<_>>();
+
+        let out_c_params = callback_out_params
+            .iter()
+            .filter_map(|param| self.callback_out_param(param))
+            .collect::<Vec<_>>();
+
+        let c_params = input_c_params.into_iter().chain(out_c_params).collect();
 
         let setup_lines = lowered_params
             .iter()
@@ -1604,7 +1515,7 @@ impl<'a> JniLowerer<'a> {
         JniCallbackMethod {
             ffi_name: ffi_name.clone(),
             jni_method_name: ffi_name,
-            jni_signature: self.build_callback_jni_signature(&method.params, &method.returns),
+            jni_signature: self.build_callback_jni_signature(&method.params, &abi_method.returns),
             c_params,
             setup_lines,
             cleanup_lines,
@@ -1616,18 +1527,11 @@ impl<'a> JniLowerer<'a> {
     fn lower_async_callback_method(
         &self,
         method: &CallbackMethodDef,
+        abi_method: &AbiCallbackMethod,
         jni_prefix: &str,
     ) -> JniAsyncCallbackMethod {
-        let invoker_suffix = self.async_invoker_suffix(&method.returns);
-
-        let return_c_type = if matches!(method.returns, ReturnDef::Void) {
-            None
-        } else if invoker_suffix == "Wire" {
-            Some("wire".to_string())
-        } else {
-            let return_type = self.callback_return_type(&method.returns);
-            Some(self.c_type_for_callback(return_type))
-        };
+        let invoker_suffix = self.async_invoker_suffix(&abi_method.returns);
+        let return_c_type = self.async_callback_return_c_type(&abi_method.returns);
 
         let lowered_params: Vec<LoweredCallbackParam> = method
             .params
@@ -1674,7 +1578,7 @@ impl<'a> JniLowerer<'a> {
         }
     }
 
-    fn build_callback_jni_signature(&self, params: &[ParamDef], returns: &ReturnDef) -> String {
+    fn build_callback_jni_signature(&self, params: &[ParamDef], ret_shape: &ReturnShape) -> String {
         let params_sig = std::iter::once("J".to_string())
             .chain(
                 params
@@ -1684,10 +1588,11 @@ impl<'a> JniLowerer<'a> {
             .collect::<Vec<_>>()
             .join("");
 
-        let return_sig = match returns {
-            ReturnDef::Void => "V".to_string(),
-            ReturnDef::Value(ty) => self.type_expr_jni_signature(ty),
-            ReturnDef::Result { ok, .. } => self.type_expr_jni_signature(ok),
+        let return_sig = match &ret_shape.transport {
+            None => "V".to_string(),
+            Some(Transport::Scalar(origin)) => self.primitive_signature(origin.primitive()),
+            Some(Transport::Handle { .. } | Transport::Callback { .. }) => "J".to_string(),
+            Some(Transport::Span(_) | Transport::Composite(_)) => "[B".to_string(),
         };
 
         format!("({}){}", params_sig, return_sig)
@@ -1707,55 +1612,83 @@ impl<'a> JniLowerer<'a> {
         format!("({})V", params_sig)
     }
 
-    fn callback_return_type<'b>(&self, returns: &'b ReturnDef) -> Option<&'b TypeExpr> {
-        match returns {
-            ReturnDef::Void => None,
-            ReturnDef::Value(ty) => Some(ty),
-            ReturnDef::Result { ok, .. } => Some(ok),
-        }
-    }
+    fn sync_callback_return_info(
+        &self,
+        ret_shape: &ReturnShape,
+        out_direct_param: Option<&AbiParam>,
+        out_len_param: Option<&AbiParam>,
+    ) -> Option<JniCallbackReturn> {
+        let out_ptr_name = out_direct_param
+            .map(|param| param.name.as_str().to_string())
+            .unwrap_or_else(|| "out_ptr".to_string());
 
-    fn jni_call_return_type(&self, ty: Option<&TypeExpr>) -> String {
-        match ty {
-            None => "void".to_string(),
-            Some(TypeExpr::Primitive(p)) => {
-                let model_primitive = *p;
-                primitives::info(model_primitive).jni_type.to_string()
+        let out_len_name = out_len_param
+            .map(|param| param.name.as_str().to_string())
+            .unwrap_or_else(|| "out_len".to_string());
+
+        match &ret_shape.transport {
+            None => None,
+            Some(Transport::Scalar(origin)) => {
+                let primitive = origin.primitive();
+                Some(JniCallbackReturn {
+                    jni_type: primitives::info(primitive).jni_type.to_string(),
+                    jni_call_type: primitives::info(primitive).call_suffix.to_string(),
+                    c_type: self.primitive_c_type(primitive),
+                    is_wire_encoded: false,
+                    out_ptr_name: Some(out_ptr_name),
+                    out_len_name: None,
+                })
             }
-            Some(TypeExpr::Void) => "void".to_string(),
-            _ => "jobject".to_string(),
+            Some(Transport::Handle { .. }) => Some(JniCallbackReturn {
+                jni_type: "jlong".to_string(),
+                jni_call_type: "Long".to_string(),
+                c_type: "uint8_t*".to_string(),
+                is_wire_encoded: false,
+                out_ptr_name: Some(out_ptr_name),
+                out_len_name: None,
+            }),
+            Some(Transport::Callback { .. }) => Some(JniCallbackReturn {
+                jni_type: "jlong".to_string(),
+                jni_call_type: "Long".to_string(),
+                c_type: "uint8_t*".to_string(),
+                is_wire_encoded: false,
+                out_ptr_name: Some(out_ptr_name),
+                out_len_name: None,
+            }),
+            Some(Transport::Span(_) | Transport::Composite(_)) => Some(JniCallbackReturn {
+                jni_type: "jbyteArray".to_string(),
+                jni_call_type: "Object".to_string(),
+                c_type: "uint8_t*".to_string(),
+                is_wire_encoded: true,
+                out_ptr_name: Some(out_ptr_name),
+                out_len_name: Some(out_len_name),
+            }),
         }
     }
 
-    fn jni_call_method_suffix(&self, ty: Option<&TypeExpr>) -> String {
-        match ty {
-            None | Some(TypeExpr::Void) => "Void".to_string(),
-            Some(TypeExpr::Primitive(p)) => {
-                let model_primitive = *p;
-                primitives::info(model_primitive).call_suffix.to_string()
+    fn async_callback_return_c_type(&self, ret_shape: &ReturnShape) -> Option<String> {
+        match &ret_shape.transport {
+            None => None,
+            Some(Transport::Scalar(origin)) => {
+                Some(self.c_return_type_for_abi(&AbiType::from(origin.primitive())))
             }
-            _ => "Object".to_string(),
-        }
-    }
-
-    fn c_type_for_callback(&self, ty: Option<&TypeExpr>) -> String {
-        match ty {
-            None => "void".to_string(),
-            Some(TypeExpr::Primitive(p)) => self.primitive_c_type(*p),
-            Some(TypeExpr::Void) => "void".to_string(),
-            _ => "void*".to_string(),
-        }
-    }
-
-    fn async_invoker_suffix(&self, returns: &ReturnDef) -> String {
-        match returns {
-            ReturnDef::Void => "Void".to_string(),
-            ReturnDef::Value(TypeExpr::Primitive(p)) => {
-                let model_primitive = *p;
-                primitives::info(model_primitive).invoker_suffix.to_string()
+            Some(Transport::Handle { .. }) | Some(Transport::Callback { .. }) => {
+                Some("void*".to_string())
             }
-            ReturnDef::Result { .. } => "Wire".to_string(),
-            _ => "Wire".to_string(),
+            Some(_) => Some("wire".to_string()),
+        }
+    }
+
+    fn async_invoker_suffix(&self, ret_shape: &ReturnShape) -> String {
+        match &ret_shape.transport {
+            None => "Void".to_string(),
+            Some(Transport::Scalar(origin)) => primitives::info(origin.primitive())
+                .invoker_suffix
+                .to_string(),
+            Some(Transport::Handle { .. }) | Some(Transport::Callback { .. }) => {
+                "Handle".to_string()
+            }
+            Some(_) => "Wire".to_string(),
         }
     }
 
@@ -1990,6 +1923,70 @@ impl<'a> JniLowerer<'a> {
         }
     }
 
+    fn callback_out_param(&self, param: &AbiParam) -> Option<JniCallbackCParam> {
+        match &param.role {
+            ParamRole::OutDirect | ParamRole::OutLen { .. } => Some(JniCallbackCParam {
+                name: param.name.as_str().to_string(),
+                c_type: format!("{} *", self.callback_abi_type_c(&param.abi_type)),
+            }),
+            _ => None,
+        }
+    }
+
+    fn callback_primitive_c_type(&self, primitive: PrimitiveType) -> &'static str {
+        match primitive {
+            PrimitiveType::Bool => "bool",
+            PrimitiveType::I8 => "int8_t",
+            PrimitiveType::U8 => "uint8_t",
+            PrimitiveType::I16 => "int16_t",
+            PrimitiveType::U16 => "uint16_t",
+            PrimitiveType::I32 => "int32_t",
+            PrimitiveType::U32 => "uint32_t",
+            PrimitiveType::I64 => "int64_t",
+            PrimitiveType::U64 => "uint64_t",
+            PrimitiveType::F32 => "float",
+            PrimitiveType::F64 => "double",
+            PrimitiveType::ISize => "intptr_t",
+            PrimitiveType::USize => "uintptr_t",
+        }
+    }
+
+    fn callback_abi_type_c(&self, abi_type: &AbiType) -> String {
+        match abi_type {
+            AbiType::Void => "void".to_string(),
+            AbiType::Bool => "bool".to_string(),
+            AbiType::I8 => "int8_t".to_string(),
+            AbiType::U8 => "uint8_t".to_string(),
+            AbiType::I16 => "int16_t".to_string(),
+            AbiType::U16 => "uint16_t".to_string(),
+            AbiType::I32 => "int32_t".to_string(),
+            AbiType::U32 => "uint32_t".to_string(),
+            AbiType::I64 => "int64_t".to_string(),
+            AbiType::U64 => "uint64_t".to_string(),
+            AbiType::F32 => "float".to_string(),
+            AbiType::F64 => "double".to_string(),
+            AbiType::ISize => "intptr_t".to_string(),
+            AbiType::USize => "uintptr_t".to_string(),
+            AbiType::Pointer(element) => {
+                format!("{}*", self.callback_primitive_c_type(*element))
+            }
+            AbiType::InlineCallbackFn(params) => {
+                let param_types = std::iter::once("void*".to_string())
+                    .chain(params.iter().map(|param| match param {
+                        AbiType::Pointer(element) => {
+                            format!("const {}*", self.callback_primitive_c_type(*element))
+                        }
+                        other => self.callback_abi_type_c(other),
+                    }))
+                    .collect::<Vec<_>>();
+                format!("void (*)({})", param_types.join(", "))
+            }
+            AbiType::Handle(class_id) => format!("const struct {} *", class_id.as_str()),
+            AbiType::CallbackHandle => "BoltFFICallbackHandle".to_string(),
+            AbiType::Struct(record_id) => format!("___{}", record_id.as_str()),
+        }
+    }
+
     fn c_return_type_for_abi(&self, abi_type: &AbiType) -> String {
         match abi_type {
             AbiType::Bool => "bool".to_string(),
@@ -2063,6 +2060,10 @@ impl<'a> JniLowerer<'a> {
             }),
             "I64" => Some(JniInvokerResult {
                 c_type: "int64_t".to_string(),
+                jni_type: "jlong".to_string(),
+            }),
+            "Handle" => Some(JniInvokerResult {
+                c_type: "void*".to_string(),
                 jni_type: "jlong".to_string(),
             }),
             "F32" => Some(JniInvokerResult {
