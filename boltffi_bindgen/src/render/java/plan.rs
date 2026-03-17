@@ -8,6 +8,7 @@ pub struct JavaModule {
     pub java_version: JavaVersion,
     pub prefix: String,
     pub records: Vec<JavaRecord>,
+    pub enums: Vec<JavaEnum>,
     pub functions: Vec<JavaFunction>,
 }
 
@@ -21,8 +22,74 @@ impl JavaModule {
     }
 
     pub fn needs_wire_writer(&self) -> bool {
-        self.has_wire_params() || !self.records.is_empty()
+        self.has_wire_params() || !self.records.is_empty() || self.has_data_enums()
     }
+
+    pub fn has_data_enums(&self) -> bool {
+        self.enums.iter().any(|e| !e.is_c_style())
+    }
+}
+
+#[derive(Debug, Clone)]
+pub struct JavaEnum {
+    pub class_name: String,
+    pub kind: JavaEnumKind,
+    pub value_type: String,
+    pub variants: Vec<JavaEnumVariant>,
+}
+
+impl JavaEnum {
+    pub fn tag_literal(&self, tag: &i128) -> String {
+        match self.value_type.as_str() {
+            "byte" => format!("(byte) {}", tag),
+            "short" => format!("(short) {}", tag),
+            "long" => format!("{}L", tag),
+            _ => tag.to_string(),
+        }
+    }
+
+    pub fn is_c_style(&self) -> bool {
+        matches!(self.kind, JavaEnumKind::CStyle)
+    }
+
+    pub fn is_sealed(&self) -> bool {
+        matches!(self.kind, JavaEnumKind::SealedInterface)
+    }
+
+    pub fn is_abstract(&self) -> bool {
+        matches!(self.kind, JavaEnumKind::AbstractClass)
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum JavaEnumKind {
+    CStyle,
+    SealedInterface,
+    AbstractClass,
+}
+
+#[derive(Debug, Clone)]
+pub struct JavaEnumVariant {
+    pub name: String,
+    pub tag: i128,
+    pub fields: Vec<JavaEnumField>,
+}
+
+impl JavaEnumVariant {
+    pub fn is_unit(&self) -> bool {
+        self.fields.is_empty()
+    }
+}
+
+#[derive(Debug, Clone)]
+pub struct JavaEnumField {
+    pub name: String,
+    pub java_type: String,
+    pub wire_decode_expr: String,
+    pub wire_size_expr: String,
+    pub wire_encode_expr: String,
+    pub equals_expr: String,
+    pub hash_expr: String,
 }
 
 #[derive(Debug, Clone)]
@@ -30,6 +97,7 @@ pub struct JavaRecord {
     pub shape: JavaRecordShape,
     pub class_name: String,
     pub fields: Vec<JavaRecordField>,
+    pub blittable_layout: Option<JavaBlittableLayout>,
 }
 
 impl JavaRecord {
@@ -37,9 +105,28 @@ impl JavaRecord {
         self.fields.is_empty()
     }
 
+    pub fn is_blittable(&self) -> bool {
+        self.blittable_layout.is_some()
+    }
+
     pub fn uses_native_record_syntax(&self) -> bool {
         matches!(self.shape, JavaRecordShape::NativeRecord)
     }
+}
+
+#[derive(Debug, Clone)]
+pub struct JavaBlittableLayout {
+    pub struct_size: usize,
+    pub fields: Vec<JavaBlittableField>,
+}
+
+#[derive(Debug, Clone)]
+pub struct JavaBlittableField {
+    pub name: String,
+    pub const_name: String,
+    pub offset: usize,
+    pub decode_expr: String,
+    pub encode_expr: String,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -63,7 +150,16 @@ pub struct JavaRecordField {
 pub enum JavaReturnStrategy {
     Void,
     Direct,
-    WireDecode { decode_expr: String },
+    CStyleEnumDecode {
+        class_name: String,
+        native_type: String,
+    },
+    WireDecode {
+        decode_expr: String,
+    },
+    BufferDecode {
+        decode_expr: String,
+    },
 }
 
 impl JavaReturnStrategy {
@@ -75,22 +171,38 @@ impl JavaReturnStrategy {
         matches!(self, Self::Direct)
     }
 
+    pub fn is_c_style_enum(&self) -> bool {
+        matches!(self, Self::CStyleEnumDecode { .. })
+    }
+
     pub fn is_wire(&self) -> bool {
         matches!(self, Self::WireDecode { .. })
     }
 
+    pub fn is_buffer(&self) -> bool {
+        matches!(self, Self::BufferDecode { .. })
+    }
+
     pub fn decode_expr(&self) -> &str {
         match self {
-            Self::WireDecode { decode_expr } => decode_expr,
+            Self::WireDecode { decode_expr } | Self::BufferDecode { decode_expr } => decode_expr,
             _ => "",
         }
     }
 
-    pub fn native_return_type<'a>(&self, return_type: &'a str) -> &'a str {
+    pub fn c_style_enum_class(&self) -> &str {
+        match self {
+            Self::CStyleEnumDecode { class_name, .. } => class_name,
+            _ => "",
+        }
+    }
+
+    pub fn native_return_type<'a>(&'a self, return_type: &'a str) -> &'a str {
         match self {
             Self::Void => "void",
             Self::Direct => return_type,
-            Self::WireDecode { .. } => "byte[]",
+            Self::CStyleEnumDecode { native_type, .. } => native_type,
+            Self::WireDecode { .. } | Self::BufferDecode { .. } => "byte[]",
         }
     }
 }
@@ -119,36 +231,10 @@ pub struct JavaWireWriter {
     pub encode_expr: String,
 }
 
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub enum JavaParamKind {
-    Direct,
-    Utf8Bytes,
-    WireEncoded { binding_name: String },
-}
-
 #[derive(Debug, Clone)]
 pub struct JavaParam {
     pub name: String,
     pub java_type: String,
     pub native_type: String,
-    pub kind: JavaParamKind,
-}
-
-impl JavaParam {
-    pub fn needs_conversion(&self) -> bool {
-        self.kind != JavaParamKind::Direct
-    }
-
-    pub fn to_native_expr(&self) -> String {
-        match &self.kind {
-            JavaParamKind::Direct => self.name.clone(),
-            JavaParamKind::Utf8Bytes => format!(
-                "{}.getBytes(java.nio.charset.StandardCharsets.UTF_8)",
-                self.name
-            ),
-            JavaParamKind::WireEncoded { binding_name } => {
-                format!("{}.toBuffer()", binding_name)
-            }
-        }
-    }
+    pub native_expr: String,
 }
