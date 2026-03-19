@@ -770,11 +770,7 @@ mod tests {
         }
     }
 
-    fn async_instance_method(
-        name: &str,
-        params: Vec<ParamDef>,
-        returns: ReturnDef,
-    ) -> MethodDef {
+    fn async_instance_method(name: &str, params: Vec<ParamDef>, returns: ReturnDef) -> MethodDef {
         MethodDef {
             id: MethodId::from(name),
             receiver: Receiver::RefSelf,
@@ -811,11 +807,9 @@ mod tests {
             vec![param("id", TypeExpr::Primitive(PrimitiveType::I64))],
             ReturnDef::Value(TypeExpr::String),
         ));
-        contract.functions.push(async_function(
-            "fire_event",
-            vec![],
-            ReturnDef::Void,
-        ));
+        contract
+            .functions
+            .push(async_function("fire_event", vec![], ReturnDef::Void));
         contract.functions.push(async_function(
             "get_count",
             vec![],
@@ -826,16 +820,8 @@ mod tests {
             "session",
             vec![default_ctor(vec![])],
             vec![
-                async_instance_method(
-                    "load",
-                    vec![],
-                    ReturnDef::Value(TypeExpr::String),
-                ),
-                async_instance_method(
-                    "save",
-                    vec![],
-                    ReturnDef::Void,
-                ),
+                async_instance_method("load", vec![], ReturnDef::Value(TypeExpr::String)),
+                async_instance_method("save", vec![], ReturnDef::Void),
                 instance_method(
                     "get_id",
                     vec![],
