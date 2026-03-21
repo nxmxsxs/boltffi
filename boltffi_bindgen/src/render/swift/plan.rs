@@ -283,11 +283,7 @@ pub struct SwiftNativeConversion {
     pub encode_wrapper: String,
 }
 
-impl SwiftRecord {
-    pub fn has_methods(&self) -> bool {
-        !self.constructors.is_empty() || !self.methods.is_empty()
-    }
-}
+
 
 impl SwiftField {
     pub fn wire_decode_inline(&self) -> String {
@@ -353,11 +349,7 @@ pub struct SwiftEnum {
     pub doc: Option<String>,
 }
 
-impl SwiftEnum {
-    pub fn has_methods(&self) -> bool {
-        !self.constructors.is_empty() || !self.methods.is_empty()
-    }
-}
+
 
 #[derive(Debug, Clone, Copy)]
 pub enum SwiftEnumStyle {
