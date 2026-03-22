@@ -1,5 +1,6 @@
 use boltffi_ffi_rules::classification::{self, FieldPrimitive, PassableCategory};
 
+use crate::ir::abi::CallId;
 use crate::ir::ids::{
     CallbackId, ClassId, ConverterPath, CustomTypeId, EnumId, FieldName, FunctionId, MethodId,
     ParamName, QualifiedName, RecordId, StreamId, VariantName,
@@ -26,6 +27,30 @@ pub struct RecordDef {
 impl RecordDef {
     pub fn has_methods(&self) -> bool {
         !self.constructors.is_empty() || !self.methods.is_empty()
+    }
+
+    pub fn constructor_calls(&self) -> impl Iterator<Item = (CallId, &ConstructorDef)> {
+        self.constructors.iter().enumerate().map(|(i, ctor)| {
+            (
+                CallId::RecordConstructor {
+                    record_id: self.id.clone(),
+                    index: i,
+                },
+                ctor,
+            )
+        })
+    }
+
+    pub fn method_calls(&self) -> impl Iterator<Item = (CallId, &MethodDef)> {
+        self.methods.iter().map(|m| {
+            (
+                CallId::RecordMethod {
+                    record_id: self.id.clone(),
+                    method_id: m.id.clone(),
+                },
+                m,
+            )
+        })
     }
 
     pub fn is_blittable(&self) -> bool {
@@ -85,6 +110,30 @@ pub struct EnumDef {
 impl EnumDef {
     pub fn has_methods(&self) -> bool {
         !self.constructors.is_empty() || !self.methods.is_empty()
+    }
+
+    pub fn constructor_calls(&self) -> impl Iterator<Item = (CallId, &ConstructorDef)> {
+        self.constructors.iter().enumerate().map(|(i, ctor)| {
+            (
+                CallId::EnumConstructor {
+                    enum_id: self.id.clone(),
+                    index: i,
+                },
+                ctor,
+            )
+        })
+    }
+
+    pub fn method_calls(&self) -> impl Iterator<Item = (CallId, &MethodDef)> {
+        self.methods.iter().map(|m| {
+            (
+                CallId::EnumMethod {
+                    enum_id: self.id.clone(),
+                    method_id: m.id.clone(),
+                },
+                m,
+            )
+        })
     }
 
     pub fn variant_docs(&self) -> Vec<Option<String>> {

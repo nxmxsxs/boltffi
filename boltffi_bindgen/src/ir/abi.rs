@@ -128,6 +128,18 @@ pub struct AbiCall {
     pub error: ErrorTransport,
 }
 
+impl AbiCall {
+    pub fn is_value_type_call(&self) -> bool {
+        matches!(
+            self.id,
+            CallId::RecordMethod { .. }
+                | CallId::RecordConstructor { .. }
+                | CallId::EnumMethod { .. }
+                | CallId::EnumConstructor { .. }
+        )
+    }
+}
+
 #[derive(Debug, Clone)]
 pub enum CallMode {
     Sync,

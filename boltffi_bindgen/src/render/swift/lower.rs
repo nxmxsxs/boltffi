@@ -299,37 +299,17 @@ impl<'a> SwiftLowerer<'a> {
                         .collect();
 
                 let constructors = def
-                    .constructors
-                    .iter()
-                    .enumerate()
-                    .filter_map(|(idx, ctor)| {
-                        let call_id = CallId::RecordConstructor {
-                            record_id: def.id.clone(),
-                            index: idx,
-                        };
-                        let call = self
-                            .abi_index
-                            .calls
-                            .get(&call_id)
-                            .map(|i| &self.abi.calls[*i])?;
+                    .constructor_calls()
+                    .filter_map(|(call_id, ctor)| {
+                        let call = self.resolve_abi_call(&call_id)?;
                         Some(self.lower_value_type_constructor(ctor, call))
                     })
                     .collect();
-
                 let methods = def
-                    .methods
-                    .iter()
-                    .filter(|m| !m.is_async)
-                    .filter_map(|method| {
-                        let call_id = CallId::RecordMethod {
-                            record_id: def.id.clone(),
-                            method_id: method.id.clone(),
-                        };
-                        let call = self
-                            .abi_index
-                            .calls
-                            .get(&call_id)
-                            .map(|i| &self.abi.calls[*i])?;
+                    .method_calls()
+                    .filter(|(_, m)| !m.is_async)
+                    .filter_map(|(call_id, method)| {
+                        let call = self.resolve_abi_call(&call_id)?;
                         Some(self.lower_value_type_method(method, call, &abi_record.encode_ops))
                     })
                     .collect();
@@ -345,6 +325,13 @@ impl<'a> SwiftLowerer<'a> {
                 }
             })
             .collect()
+    }
+
+    fn resolve_abi_call(&self, call_id: &CallId) -> Option<&AbiCall> {
+        self.abi_index
+            .calls
+            .get(call_id)
+            .map(|i| &self.abi.calls[*i])
     }
 
     fn lower_value_type_constructor(
@@ -533,37 +520,17 @@ impl<'a> SwiftLowerer<'a> {
                     SwiftEnumStyle::Data
                 };
                 let constructors = def
-                    .constructors
-                    .iter()
-                    .enumerate()
-                    .filter_map(|(idx, ctor)| {
-                        let call_id = CallId::EnumConstructor {
-                            enum_id: def.id.clone(),
-                            index: idx,
-                        };
-                        let call = self
-                            .abi_index
-                            .calls
-                            .get(&call_id)
-                            .map(|i| &self.abi.calls[*i])?;
+                    .constructor_calls()
+                    .filter_map(|(call_id, ctor)| {
+                        let call = self.resolve_abi_call(&call_id)?;
                         Some(self.lower_value_type_constructor(ctor, call))
                     })
                     .collect();
-
                 let methods = def
-                    .methods
-                    .iter()
-                    .filter(|m| !m.is_async)
-                    .filter_map(|method| {
-                        let call_id = CallId::EnumMethod {
-                            enum_id: def.id.clone(),
-                            method_id: method.id.clone(),
-                        };
-                        let call = self
-                            .abi_index
-                            .calls
-                            .get(&call_id)
-                            .map(|i| &self.abi.calls[*i])?;
+                    .method_calls()
+                    .filter(|(_, m)| !m.is_async)
+                    .filter_map(|(call_id, method)| {
+                        let call = self.resolve_abi_call(&call_id)?;
                         Some(self.lower_value_type_method(method, call, &abi_enum.encode_ops))
                     })
                     .collect();

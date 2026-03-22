@@ -283,12 +283,6 @@ pub struct SwiftNativeConversion {
     pub encode_wrapper: String,
 }
 
-impl SwiftRecord {
-    pub fn has_methods(&self) -> bool {
-        !self.constructors.is_empty() || !self.methods.is_empty()
-    }
-}
-
 impl SwiftField {
     pub fn wire_decode_inline(&self) -> String {
         emit::emit_read_inline(&self.decode, "pos")
@@ -351,12 +345,6 @@ pub struct SwiftEnum {
     pub constructors: Vec<SwiftConstructor>,
     pub methods: Vec<SwiftMethod>,
     pub doc: Option<String>,
-}
-
-impl SwiftEnum {
-    pub fn has_methods(&self) -> bool {
-        !self.constructors.is_empty() || !self.methods.is_empty()
-    }
 }
 
 #[derive(Debug, Clone, Copy)]
