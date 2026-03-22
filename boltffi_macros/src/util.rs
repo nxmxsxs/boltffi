@@ -10,7 +10,7 @@ use syn::punctuated::Punctuated;
 use syn::{Item, Path, PathArguments, PathSegment, Type, UseTree};
 
 use crate::data_types::{self, DataTypeCategory};
-use crate::type_classification::NamedTypeTransport;
+use crate::type_classification::{NamedTypeTransport, classify_named_type_transport_for_call_site};
 
 pub fn ptr_ident(base: &syn::Ident) -> syn::Ident {
     syn::Ident::new(
@@ -54,7 +54,7 @@ pub struct WireEncodedParam {
 
 #[derive(Clone, Copy, PartialEq, Eq)]
 pub enum WireEncodedParamKind {
-    Record,
+    Required,
     Vec,
     Option,
 }
@@ -380,8 +380,7 @@ pub fn extract_option_param_inner(ty: &Type) -> Option<syn::Type> {
 }
 
 pub fn is_primitive_vec_inner(s: &str) -> bool {
-    s.parse::<Primitive>()
-        .is_ok_and(|primitive| !primitive.is_platform_sized())
+    s.parse::<Primitive>().is_ok()
 }
 
 pub fn classify_param_transform(ty: &Type) -> ParamTransform {
@@ -443,6 +442,13 @@ pub fn classify_param_transform(ty: &Type) -> ParamTransform {
         });
     }
 
+    if is_generic_nominal_type(ty) {
+        return ParamTransform::WireEncoded(WireEncodedParam {
+            kind: WireEncodedParamKind::Required,
+            rust_type: ty.clone(),
+        });
+    }
+
     if type_str == "&str" || (type_str.starts_with("&'") && type_str.ends_with("str")) {
         ParamTransform::StrRef
     } else if type_str == "String" || type_str == "std::string::String" {
@@ -451,7 +457,7 @@ pub fn classify_param_transform(ty: &Type) -> ParamTransform {
         match crate::type_classification::classify_named_type_transport_for_call_site(ty) {
             NamedTypeTransport::Passable => ParamTransform::Passable(ty.clone()),
             NamedTypeTransport::WireEncoded => ParamTransform::WireEncoded(WireEncodedParam {
-                kind: WireEncodedParamKind::Record,
+                kind: WireEncodedParamKind::Required,
                 rust_type: ty.clone(),
             }),
         }
@@ -484,6 +490,19 @@ fn is_named_nominal_type(ty: &Type) -> bool {
         }
         Type::Group(group) => is_named_nominal_type(group.elem.as_ref()),
         Type::Paren(paren) => is_named_nominal_type(paren.elem.as_ref()),
+        _ => false,
+    }
+}
+
+fn is_generic_nominal_type(ty: &Type) -> bool {
+    match ty {
+        Type::Path(type_path) if type_path.qself.is_none() => type_path
+            .path
+            .segments
+            .last()
+            .is_some_and(|segment| matches!(segment.arguments, PathArguments::AngleBracketed(_))),
+        Type::Group(group) => is_generic_nominal_type(group.elem.as_ref()),
+        Type::Paren(paren) => is_generic_nominal_type(paren.elem.as_ref()),
         _ => false,
     }
 }

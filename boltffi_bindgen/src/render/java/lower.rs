@@ -1,4 +1,4 @@
-use std::collections::HashSet;
+use std::collections::{HashMap, HashSet};
 
 use super::JavaOptions;
 use super::mappings;
@@ -782,12 +782,14 @@ impl<'a> JavaLowerer<'a> {
         let class_name = NamingConvention::class_name(class.id.as_str());
         let ffi_free = boltffi_ffi_rules::naming::class_ffi_free(class.id.as_str()).to_string();
 
-        let constructors = class
+        let constructors = self.resolve_constructor_collisions(
+            class
             .constructors
             .iter()
             .enumerate()
             .map(|(index, ctor)| self.lower_constructor(class, ctor, index))
-            .collect();
+            .collect(),
+        );
 
         let methods = class
             .methods
@@ -801,6 +803,74 @@ impl<'a> JavaLowerer<'a> {
             ffi_free,
             constructors,
             methods,
+        }
+    }
+
+    fn resolve_constructor_collisions(
+        &self,
+        constructors: Vec<JavaConstructor>,
+    ) -> Vec<JavaConstructor> {
+        let preferred_indices = constructors
+            .iter()
+            .enumerate()
+            .filter(|(_, constructor)| !constructor.is_factory())
+            .fold(HashMap::<Vec<String>, usize>::new(), |mut indices, (index, constructor)| {
+                let signature = Self::constructor_signature(constructor);
+                match indices.get(&signature).copied() {
+                    Some(existing_index)
+                        if Self::prefers_constructor_surface(
+                            constructor,
+                            &constructors[existing_index],
+                        ) =>
+                    {
+                        indices.insert(signature, index);
+                    }
+                    None => {
+                        indices.insert(signature, index);
+                    }
+                    Some(_) => {}
+                }
+                indices
+            });
+
+        constructors
+            .into_iter()
+            .enumerate()
+            .map(|(index, mut constructor)| {
+                if constructor.is_factory() {
+                    return constructor;
+                }
+
+                let signature = Self::constructor_signature(&constructor);
+                if preferred_indices.get(&signature).copied() != Some(index) {
+                    constructor.kind = JavaConstructorKind::Factory;
+                }
+                constructor
+            })
+            .collect()
+    }
+
+    fn constructor_signature(constructor: &JavaConstructor) -> Vec<String> {
+        constructor
+            .params
+            .iter()
+            .map(|param| param.java_type.clone())
+            .collect()
+    }
+
+    fn prefers_constructor_surface(
+        candidate: &JavaConstructor,
+        current: &JavaConstructor,
+    ) -> bool {
+        Self::constructor_priority(candidate) < Self::constructor_priority(current)
+    }
+
+    fn constructor_priority(constructor: &JavaConstructor) -> usize {
+        match (constructor.kind, constructor.is_fallible) {
+            (JavaConstructorKind::Primary, _) => 0,
+            (JavaConstructorKind::Secondary, false) => 1,
+            (JavaConstructorKind::Secondary, true) => 2,
+            (JavaConstructorKind::Factory, _) => 3,
         }
     }
 
@@ -2471,6 +2541,22 @@ mod tests {
         }
     }
 
+    fn fallible_named_init(name: &str, params: Vec<ParamDef>) -> ConstructorDef {
+        let mut params_iter = params.into_iter();
+        let first_param = params_iter
+            .next()
+            .expect("named init needs at least one param");
+        ConstructorDef::NamedInit {
+            name: name.into(),
+            first_param,
+            rest_params: params_iter.collect(),
+            is_fallible: true,
+            is_optional: false,
+            doc: None,
+            deprecated: None,
+        }
+    }
+
     fn instance_method(name: &str, params: Vec<ParamDef>, returns: ReturnDef) -> MethodDef {
         MethodDef {
             id: MethodId::from(name),
@@ -2763,6 +2849,41 @@ mod tests {
         assert_eq!(class.constructors[0].kind, JavaConstructorKind::Primary);
         assert_eq!(class.constructors[1].kind, JavaConstructorKind::Factory);
         assert_eq!(class.constructors[2].kind, JavaConstructorKind::Secondary);
+    }
+
+    #[test]
+    fn class_constructor_signature_collision_demotes_fallible_named_init_to_factory() {
+        let mut contract = empty_contract();
+        contract.catalog.insert_class(class_def(
+            "inventory",
+            vec![
+                named_init(
+                    "with_capacity",
+                    vec![param_def(
+                        "capacity",
+                        TypeExpr::Primitive(PrimitiveType::I32),
+                    )],
+                ),
+                fallible_named_init(
+                    "try_new",
+                    vec![param_def(
+                        "capacity",
+                        TypeExpr::Primitive(PrimitiveType::I32),
+                    )],
+                ),
+            ],
+            vec![],
+        ));
+
+        let module = lower(&contract);
+        let class = &module.classes[0];
+
+        assert_eq!(class.constructors.len(), 2);
+        assert_eq!(class.constructors[0].kind, JavaConstructorKind::Secondary);
+        assert_eq!(class.constructors[0].name, "withCapacity");
+        assert_eq!(class.constructors[1].kind, JavaConstructorKind::Factory);
+        assert_eq!(class.constructors[1].name, "tryNew");
+        assert!(class.has_factory_constructors());
     }
 
     #[test]

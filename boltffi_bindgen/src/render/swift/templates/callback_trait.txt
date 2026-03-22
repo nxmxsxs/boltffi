@@ -102,10 +102,20 @@ private var {{ callback.vtable_var }}: {{ callback.vtable_type }} = {
 {%- if let Some(encoded) = method.wire_return_encode() %}
             {{ encoded }}
 {%- endif %}
-            _ = encoded.withUnsafeBytes { bytes in
-                memcpy(outPtr!, bytes.baseAddress!, bytes.count)
+            if encoded.count > 0 {
+                guard let allocated = malloc(encoded.count)?.assumingMemoryBound(to: UInt8.self) else {
+                    statusPtr?.pointee = FfiStatus(code: 1)
+                    return
+                }
+                _ = encoded.withUnsafeBytes { bytes in
+                    memcpy(allocated, bytes.baseAddress!, bytes.count)
+                }
+                outPtr?.pointee = allocated
+                outLen?.pointee = UInt(encoded.count)
+            } else {
+                outPtr?.pointee = nil
+                outLen?.pointee = 0
             }
-            outLen?.pointee = UInt(encoded.count)
 {%- else %}
             outPtr?.pointee = result
 {%- endif %}

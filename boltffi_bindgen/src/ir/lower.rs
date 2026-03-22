@@ -442,12 +442,29 @@ impl<'c> Lowerer<'c> {
         let stream_name = stream.id.as_str();
         let item_codec = self.build_codec(&stream.item_type);
         let decode_ops = self.expand_decode(&item_codec);
+        let item_transport = self.classify_type(&stream.item_type);
+        let item_size = match &item_transport {
+            Transport::Scalar(origin) => Some(match origin.primitive() {
+                PrimitiveType::Bool | PrimitiveType::I8 | PrimitiveType::U8 => 1,
+                PrimitiveType::I16 | PrimitiveType::U16 => 2,
+                PrimitiveType::I32 | PrimitiveType::U32 | PrimitiveType::F32 => 4,
+                PrimitiveType::I64
+                | PrimitiveType::U64
+                | PrimitiveType::ISize
+                | PrimitiveType::USize
+                | PrimitiveType::F64 => 8,
+            }),
+            Transport::Composite(layout) => Some(layout.total_size),
+            _ => None,
+        };
 
         AbiStream {
             class_id: class_id.clone(),
             stream_id: stream.id.clone(),
             mode: stream.mode,
             item: StreamItemTransport::WireEncoded { decode_ops },
+            item_transport,
+            item_size,
             subscribe: naming::stream_ffi_subscribe(class_name, stream_name),
             poll: naming::stream_ffi_poll(class_name, stream_name),
             pop_batch: naming::stream_ffi_pop_batch(class_name, stream_name),
@@ -806,6 +823,7 @@ impl<'c> Lowerer<'c> {
             AbiType::F64 => PrimitiveType::F64,
             AbiType::Void
             | AbiType::Pointer(_)
+            | AbiType::OwnedBuffer
             | AbiType::InlineCallbackFn { .. }
             | AbiType::Handle(_)
             | AbiType::CallbackHandle
@@ -1356,10 +1374,10 @@ impl<'c> Lowerer<'c> {
                         Transport::Composite(layout) => {
                             Some(AbiType::Struct(layout.record_id.clone()))
                         }
-                        _ => Some(AbiType::Pointer(PrimitiveType::U8)),
+                        _ => Some(AbiType::OwnedBuffer),
                     }
                 }
-                ReturnDef::Result { .. } => Some(AbiType::Pointer(PrimitiveType::U8)),
+                ReturnDef::Result { .. } => Some(AbiType::OwnedBuffer),
             })
             .unwrap_or(AbiType::Void);
 
@@ -3556,7 +3574,7 @@ mod tests {
     }
 
     #[test]
-    fn closure_string_return_yields_pointer_abi_type() {
+    fn closure_string_return_yields_owned_buffer_abi_type() {
         let contract = contract_with_closure(
             "__Closure_StringToString",
             vec![ParamDef {
@@ -3570,7 +3588,7 @@ mod tests {
         let lowerer = lowerer_for_contract(&contract);
         let (_params, ret) =
             lowerer.inline_callback_fn_abi_signature(&CallbackId::new("__Closure_StringToString"));
-        assert_eq!(ret, AbiType::Pointer(PrimitiveType::U8));
+        assert_eq!(ret, AbiType::OwnedBuffer);
     }
 
     fn blittable_point_record() -> RecordDef {

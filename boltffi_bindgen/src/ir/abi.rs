@@ -81,6 +81,8 @@ pub struct AbiStream {
     pub stream_id: StreamId,
     pub mode: StreamMode,
     pub item: StreamItemTransport,
+    pub item_transport: Transport,
+    pub item_size: Option<usize>,
     pub subscribe: Name<GlobalSymbol>,
     pub poll: Name<GlobalSymbol>,
     pub pop_batch: Name<GlobalSymbol>,

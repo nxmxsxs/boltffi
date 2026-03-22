@@ -7,6 +7,8 @@ use crate::custom_types::{
     CustomTypeRegistry, contains_custom_types, from_wire_expr_owned, to_wire_expr_owned,
     wire_type_for,
 };
+use crate::data_types;
+use crate::type_classification::{NamedTypeTransport, classify_named_type_transport};
 use crate::util::{
     ParamTransform, WireEncodedParam, WireEncodedParamKind, classify_param_transform,
     foreign_trait_path, is_primitive_vec_inner, len_ident, ptr_ident,
@@ -315,7 +317,7 @@ fn utf8_string_expression(
 
 fn wire_empty_value_expression(kind: WireEncodedParamKind) -> proc_macro2::TokenStream {
     match kind {
-        WireEncodedParamKind::Record => quote! { unreachable!() },
+        WireEncodedParamKind::Required => quote! { unreachable!() },
         WireEncodedParamKind::Vec => quote! { Vec::new() },
         WireEncodedParamKind::Option => quote! { None },
     }
@@ -338,7 +340,7 @@ fn wire_decode_conversion(
         let wire_value_ident = syn::Ident::new("__boltffi_wire_value", name.span());
         let from_wire = from_wire_expr_owned(rust_type, custom_types, &wire_value_ident);
 
-        if matches!(wire_param.kind, WireEncodedParamKind::Record) {
+        if matches!(wire_param.kind, WireEncodedParamKind::Required) {
             return quote! {
                 let #name: #rust_type = {
                     if #ptr_name.is_null() && #len_name > 0 {
@@ -347,7 +349,7 @@ fn wire_decode_conversion(
                             stringify!(#name),
                             #len_name
                         ));
-                        return #on_wire_record_error;
+                        #on_wire_record_error
                     }
                     let __bytes: &[u8] = if #len_name == 0 {
                         &[]
@@ -363,7 +365,7 @@ fn wire_decode_conversion(
                                 error,
                                 #len_name
                             ));
-                            return #on_wire_record_error;
+                            #on_wire_record_error
                         }
                     };
                     #from_wire
@@ -393,7 +395,7 @@ fn wire_decode_conversion(
         };
     }
 
-    if matches!(wire_param.kind, WireEncodedParamKind::Record) {
+    if matches!(wire_param.kind, WireEncodedParamKind::Required) {
         return quote! {
             let #name: #rust_type = {
                 if #ptr_name.is_null() && #len_name > 0 {
@@ -402,7 +404,7 @@ fn wire_decode_conversion(
                         stringify!(#name),
                         #len_name
                     ));
-                    return #on_wire_record_error;
+                    #on_wire_record_error
                 }
                 let __bytes: &[u8] = if #len_name == 0 {
                     &[]
@@ -418,7 +420,7 @@ fn wire_decode_conversion(
                             error,
                             #len_name
                         ));
-                        return #on_wire_record_error;
+                        #on_wire_record_error
                     }
                 }
             };
@@ -636,14 +638,52 @@ fn lower_callback_param_transform(
                 },
             );
 
+            let closure_return_strategy = returns
+                .as_ref()
+                .map(|ty| classify_closure_return_transport(ty, custom_types));
             let ffi_return_type = returns
                 .as_ref()
-                .map(|ty| quote! { -> #ty })
+                .map(|ty| match closure_return_strategy.as_ref() {
+                    Some(ClosureReturnTransport::Direct) => {
+                        quote! { -> <#ty as ::boltffi::__private::Passable>::Out }
+                    }
+                    Some(ClosureReturnTransport::WireBuffer) => {
+                        quote! { -> ::boltffi::__private::FfiBuf }
+                    }
+                    None => quote! {},
+                })
                 .unwrap_or_default();
             let closure_return_type = returns
                 .as_ref()
                 .map(|ty| quote! { -> #ty })
                 .unwrap_or_default();
+            let native_callback_invocation = returns
+                .as_ref()
+                .map(|ty| {
+                    match closure_return_strategy.as_ref() {
+                        Some(ClosureReturnTransport::Direct) => {
+                            quote! {
+                                unsafe {
+                                    <#ty as ::boltffi::__private::Passable>::unpack(
+                                        #cb_name(#ud_name, #(#cb_call_args),*)
+                                    )
+                                }
+                            }
+                        }
+                        Some(ClosureReturnTransport::WireBuffer) => {
+                            let decode_expr = wire_decoded_callback_return_expr(ty, custom_types);
+                            quote! {
+                                {
+                                    let __result_buf = #cb_name(#ud_name, #(#cb_call_args),*);
+                                    let __result_bytes = unsafe { __result_buf.as_byte_slice() };
+                                    #decode_expr
+                                }
+                            }
+                        }
+                        None => quote! { #cb_name(#ud_name, #(#cb_call_args),*) },
+                    }
+                })
+                .unwrap_or_else(|| quote! { #cb_name(#ud_name, #(#cb_call_args),*) });
 
             let closure_params: Vec<proc_macro2::TokenStream> = arg_names
                 .iter()
@@ -672,7 +712,7 @@ fn lower_callback_param_transform(
                 #[cfg(not(target_arch = "wasm32"))]
                 let #name = |#(#closure_params),*| #closure_return_type {
                     #(#wire_vars)*
-                    #cb_name(#ud_name, #(#cb_call_args),*)
+                    #native_callback_invocation
                 };
                 #wasm_codegen
             });
@@ -731,6 +771,83 @@ fn lower_impl_trait_param_transform(
             });
             acc.move_vars.push(boxed_name.clone());
             acc.call_args.push(quote! { *#boxed_name });
+        }
+    }
+}
+
+enum ClosureReturnTransport {
+    Direct,
+    WireBuffer,
+}
+
+fn classify_closure_return_transport(
+    ty: &syn::Type,
+    custom_types: &CustomTypeRegistry,
+) -> ClosureReturnTransport {
+    let data_types = data_types::registry_for_current_crate()
+        .ok()
+        .unwrap_or_default();
+
+    if closure_return_is_direct(ty, custom_types, &data_types) {
+        ClosureReturnTransport::Direct
+    } else {
+        ClosureReturnTransport::WireBuffer
+    }
+}
+
+fn closure_return_is_direct(
+    ty: &syn::Type,
+    custom_types: &CustomTypeRegistry,
+    data_types: &data_types::DataTypeRegistry,
+) -> bool {
+    let type_str = quote!(#ty).to_string().replace(' ', "");
+
+    if is_primitive_vec_inner(&type_str) {
+        return true;
+    }
+
+    match ty {
+        syn::Type::Group(group) => {
+            closure_return_is_direct(group.elem.as_ref(), custom_types, data_types)
+        }
+        syn::Type::Paren(paren) => {
+            closure_return_is_direct(paren.elem.as_ref(), custom_types, data_types)
+        }
+        syn::Type::Path(type_path)
+            if type_path.qself.is_none()
+                && type_path
+                    .path
+                    .segments
+                    .last()
+                    .is_some_and(|segment| matches!(segment.ident.to_string().as_str(), "Vec" | "Option" | "Result")) =>
+        {
+            false
+        }
+        syn::Type::Path(_) => matches!(
+            classify_named_type_transport(ty, custom_types, data_types),
+            NamedTypeTransport::Passable
+        ),
+        _ => false,
+    }
+}
+
+fn wire_decoded_callback_return_expr(
+    ty: &syn::Type,
+    custom_types: &CustomTypeRegistry,
+) -> proc_macro2::TokenStream {
+    if contains_custom_types(ty, custom_types) {
+        let wire_ty = wire_type_for(ty, custom_types);
+        let wire_result_ident = syn::Ident::new("__wire_result", Span::call_site());
+        let from_wire_conversion = from_wire_expr_owned(ty, custom_types, &wire_result_ident);
+        quote! {
+            let #wire_result_ident: #wire_ty = ::boltffi::__private::wire::decode(__result_bytes)
+                .expect("closure return: wire decode failed");
+            #from_wire_conversion
+        }
+    } else {
+        quote! {
+            ::boltffi::__private::wire::decode(__result_bytes)
+                .expect("closure return: wire decode failed")
         }
     }
 }
@@ -1149,7 +1266,7 @@ fn transform_params_with_mode(
                     ),
                     ParamTransform::Passable(ref ty) if contains_custom_types(ty, custom_types) => {
                         let wire_param = WireEncodedParam {
-                            kind: WireEncodedParamKind::Record,
+                            kind: WireEncodedParamKind::Required,
                             rust_type: ty.clone(),
                         };
                         lower_wire_encoded_param_transform(

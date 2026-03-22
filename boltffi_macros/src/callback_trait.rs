@@ -4,6 +4,7 @@ use quote::{format_ident, quote};
 use syn::{FnArg, Pat, ReturnType, Type};
 
 use crate::custom_types;
+use crate::data_types;
 
 pub fn ffi_trait_impl(item: TokenStream) -> TokenStream {
     let item_trait = syn::parse_macro_input!(item as syn::ItemTrait);
@@ -14,6 +15,9 @@ pub fn ffi_trait_impl(item: TokenStream) -> TokenStream {
 
 fn expand_ffi_trait(item_trait: syn::ItemTrait) -> Result<proc_macro2::TokenStream, syn::Error> {
     let custom_types = custom_types::registry_for_current_crate()?;
+    let data_types = data_types::registry_for_current_crate()
+        .ok()
+        .unwrap_or_default();
     let trait_name = &item_trait.ident;
     let trait_name_snake = to_snake_case_ident(&trait_name.to_string());
     let vtable_name = syn::Ident::new(&format!("{}VTable", trait_name), trait_name.span());
@@ -76,7 +80,7 @@ fn expand_ffi_trait(item_trait: syn::ItemTrait) -> Result<proc_macro2::TokenStre
             syn::TraitItem::Fn(method) => Some(method),
             _ => None,
         })
-        .map(|method| expand_method(method, &mut vtable_fields, &custom_types))
+        .map(|method| expand_method(method, &mut vtable_fields, &custom_types, &data_types))
         .collect::<Result<Vec<_>, _>>()?;
 
     let wasm_expansions: Vec<WasmMethodExpansion> = item_trait
@@ -317,6 +321,7 @@ fn expand_method(
     method: &syn::TraitItemFn,
     vtable_fields: &mut Vec<proc_macro2::TokenStream>,
     custom_types: &custom_types::CustomTypeRegistry,
+    data_types: &data_types::DataTypeRegistry,
 ) -> Result<proc_macro2::TokenStream, syn::Error> {
     let method_name = &method.sig.ident;
     let method_name_snake = to_snake_case_ident(&method_name.to_string());
@@ -358,14 +363,14 @@ fn expand_method(
     if is_async {
         let async_wire_return = return_type
             .as_deref()
-            .map(needs_wire_return)
+            .map(|ty| needs_wire_return(ty, data_types))
             .unwrap_or(false);
 
         let callback_type = if let Some(ref ret_ty) = return_type {
             if async_wire_return {
                 quote! { extern "C" fn(callback_data: u64, result_ptr: *const u8, result_len: usize, status: ::boltffi::__private::FfiStatus) }
             } else {
-                let ffi_ret = rust_type_to_ffi_param_type(ret_ty);
+                let ffi_ret = direct_callback_return_ffi_type(ret_ty);
                 quote! { extern "C" fn(callback_data: u64, result: #ffi_ret, status: ::boltffi::__private::FfiStatus) }
             }
         } else {
@@ -458,16 +463,17 @@ fn expand_method(
                         })
                         .unwrap_or_default();
 
+                    let ffi_ret = direct_callback_return_ffi_type(ret_ty);
                     (
                         quote! {
-                            extern "C" fn callback(data: u64, result: #ret_ty, status: ::boltffi::__private::FfiStatus) {
+                            extern "C" fn callback(data: u64, result: #ffi_ret, status: ::boltffi::__private::FfiStatus) {
                                 let ctx = unsafe { Arc::from_raw(data as *const AsyncContext<#ret_ty>) };
                                 let waker = ctx
                                     .state
                                     .lock()
                                     .ok()
                                     .and_then(|mut guard| {
-                                        guard.result = Some(result);
+                                        guard.result = Some(unsafe { <#ret_ty as ::boltffi::__private::Passable>::unpack(result) });
                                         guard.status = status;
                                         guard.waker.take()
                                     });
@@ -629,14 +635,14 @@ fn expand_method(
     } else {
         let wire_return = return_type
             .as_deref()
-            .map(needs_wire_return)
+            .map(|ty| needs_wire_return(ty, data_types))
             .unwrap_or(false);
 
         let out_params = if let Some(ref ret_ty) = return_type {
             if wire_return {
-                quote! { out_ptr: *mut u8, out_len: *mut usize, }
+                quote! { out_ptr: *mut *mut u8, out_len: *mut usize, }
             } else {
-                let ffi_ret = rust_type_to_ffi_param_type(ret_ty);
+                let ffi_ret = direct_callback_return_ffi_type(ret_ty);
                 quote! { out: *mut #ffi_ret, }
             }
         } else {
@@ -670,29 +676,45 @@ fn expand_method(
                 if wire_return {
                     quote! {
                         #(#prelude_stmts)*
-                        const CALLBACK_BUF_SIZE: usize = 4096;
-                        let mut out_buf: [u8; CALLBACK_BUF_SIZE] = [0u8; CALLBACK_BUF_SIZE];
+                        unsafe extern "C" {
+                            fn free(ptr: *mut ::core::ffi::c_void);
+                        }
+                        let mut out_ptr: *mut u8 = ::core::ptr::null_mut();
                         let mut out_len: usize = 0;
                         let mut status = ::boltffi::__private::FfiStatus::default();
                         unsafe {
                             ((*self.vtable).#method_name_snake)(
                                 self.handle,
                                 #(#call_args,)*
-                                out_buf.as_mut_ptr(),
+                                &mut out_ptr,
                                 &mut out_len,
                                 &mut status
                             );
                         }
                         if status.is_err() {
+                            if !out_ptr.is_null() {
+                                unsafe { free(out_ptr.cast()) };
+                            }
                             #error_expr
                         }
-                        let out_bytes = &out_buf[..out_len];
-                        ::boltffi::__private::wire::decode(out_bytes).expect("wire decode callback return")
+                        let decode_result = {
+                            let out_bytes = if out_ptr.is_null() {
+                                &[]
+                            } else {
+                                unsafe { ::core::slice::from_raw_parts(out_ptr, out_len) }
+                            };
+                            ::boltffi::__private::wire::decode(out_bytes)
+                        };
+                        if !out_ptr.is_null() {
+                            unsafe { free(out_ptr.cast()) };
+                        }
+                        decode_result.expect("wire decode callback return")
                     }
                 } else {
+                    let ffi_ret = direct_callback_return_ffi_type(ret_ty);
                     quote! {
                         #(#prelude_stmts)*
-                        let mut out: #ret_ty = Default::default();
+                        let mut out: #ffi_ret = Default::default();
                         let mut status = ::boltffi::__private::FfiStatus::default();
                         unsafe {
                             ((*self.vtable).#method_name_snake)(
@@ -705,7 +727,7 @@ fn expand_method(
                         if status.is_err() {
                             #error_expr
                         }
-                        out
+                        unsafe { <#ret_ty as ::boltffi::__private::Passable>::unpack(out) }
                     }
                 }
             }
@@ -732,17 +754,6 @@ fn expand_method(
 
 fn to_snake_case_ident(name: &str) -> syn::Ident {
     syn::Ident::new(&naming::to_snake_case(name), proc_macro2::Span::call_site())
-}
-
-fn rust_type_to_ffi_param_type(ty: &syn::Type) -> proc_macro2::TokenStream {
-    let type_str = quote!(#ty).to_string().replace(' ', "");
-    match type_str.as_str() {
-        "i8" | "i16" | "i32" | "i64" | "u8" | "u16" | "u32" | "u64" | "f32" | "f64" | "bool"
-        | "usize" | "isize" => quote!(#ty),
-        "&str" => quote!(*const std::os::raw::c_char),
-        "String" => quote!(*const std::os::raw::c_char),
-        _ => quote!(#ty),
-    }
 }
 
 struct CallbackParamLowering {
@@ -811,9 +822,19 @@ fn is_ffi_primitive(type_str: &str) -> bool {
     )
 }
 
-fn needs_wire_return(ty: &syn::Type) -> bool {
+fn direct_callback_return_ffi_type(ty: &syn::Type) -> proc_macro2::TokenStream {
+    quote!(<#ty as ::boltffi::__private::Passable>::Out)
+}
+
+fn needs_wire_return(ty: &syn::Type, data_types: &data_types::DataTypeRegistry) -> bool {
     let type_str = quote!(#ty).to_string().replace(' ', "");
-    !is_ffi_primitive(&type_str)
+    if is_ffi_primitive(&type_str) {
+        return false;
+    }
+    !matches!(
+        data_types.category_for(ty),
+        Some(data_types::DataTypeCategory::Scalar)
+    )
 }
 
 fn parse_result_type(ty: &Type) -> Option<(Type, Type)> {
@@ -847,6 +868,9 @@ fn expand_method_wasm(
     trait_name_snake: &syn::Ident,
     custom_types: &custom_types::CustomTypeRegistry,
 ) -> Result<WasmMethodExpansion, syn::Error> {
+    let data_types = data_types::registry_for_current_crate()
+        .ok()
+        .unwrap_or_default();
     let method_name = &method.sig.ident;
     let method_name_snake = to_snake_case_ident(&method_name.to_string());
 
@@ -900,7 +924,7 @@ fn expand_method_wasm(
 
     let wire_return = return_type
         .as_deref()
-        .map(needs_wire_return)
+        .map(|ty| needs_wire_return(ty, &data_types))
         .unwrap_or(false);
 
     let (extern_import, impl_body) = if let Some(ref ret_ty) = return_type {
@@ -929,14 +953,14 @@ fn expand_method_wasm(
                 },
             )
         } else {
-            let ffi_ret = rust_type_to_ffi_param_type(ret_ty);
+            let ffi_ret = direct_callback_return_ffi_type(ret_ty);
             (
                 quote! {
                     fn #import_name(handle: u32, #(#ffi_param_types),*) -> #ffi_ret;
                 },
                 quote! {
                     #(#prelude_stmts)*
-                    unsafe { #import_name(self.handle, #(#call_args),*) }
+                    unsafe { <#ret_ty as ::boltffi::__private::Passable>::unpack(#import_name(self.handle, #(#call_args),*)) }
                 },
             )
         }

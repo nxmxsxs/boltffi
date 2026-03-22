@@ -1706,7 +1706,10 @@ impl<'a> SwiftLowerer<'a> {
             AbiType::USize => "UInt".to_string(),
             AbiType::F32 => "Float".to_string(),
             AbiType::F64 => "Double".to_string(),
-            AbiType::Pointer(_) | AbiType::InlineCallbackFn { .. } | AbiType::Handle(_) => {
+            AbiType::Pointer(_)
+            | AbiType::OwnedBuffer
+            | AbiType::InlineCallbackFn { .. }
+            | AbiType::Handle(_) => {
                 "OpaquePointer".to_string()
             }
             AbiType::CallbackHandle => "BoltFFICallbackHandle".to_string(),
