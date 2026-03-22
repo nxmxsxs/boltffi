@@ -1,7 +1,5 @@
 use crate::ir::codec::VecLayout;
 use crate::ir::ids::CallbackId;
-use crate::ir::ops::ReadSeq;
-use crate::render::kotlin::emit;
 
 #[derive(Clone)]
 pub struct KotlinModule {
@@ -237,8 +235,10 @@ pub struct KotlinClass {
 }
 
 impl KotlinClass {
-    pub fn has_factory_ctors(&self) -> bool {
-        self.constructors.iter().any(|c| c.is_factory)
+    pub fn has_companion_factories(&self) -> bool {
+        self.constructors
+            .iter()
+            .any(KotlinConstructor::renders_in_companion)
     }
 
     pub fn has_static_methods(&self) -> bool {
@@ -246,17 +246,40 @@ impl KotlinClass {
     }
 }
 
+#[derive(Clone, Copy, PartialEq, Eq)]
+pub enum KotlinConstructorSurface {
+    Constructor,
+    CompanionFactory,
+}
+
 #[derive(Clone)]
 pub struct KotlinConstructor {
     pub name: String,
-    pub is_factory: bool,
+    pub surface: KotlinConstructorSurface,
     pub is_fallible: bool,
+    pub return_type: Option<String>,
+    pub throws: bool,
+    pub err_type: String,
+    pub return_is_direct: bool,
+    pub return_cast: String,
+    pub decode_expr: String,
+    pub is_blittable_return: bool,
     pub signature_params: Vec<KotlinSignatureParam>,
     pub wire_writers: Vec<KotlinWireWriter>,
     pub wire_writer_closes: Vec<String>,
     pub native_args: Vec<String>,
     pub ffi_name: String,
     pub doc: Option<String>,
+}
+
+impl KotlinConstructor {
+    pub fn renders_as_constructor(&self) -> bool {
+        matches!(self.surface, KotlinConstructorSurface::Constructor)
+    }
+
+    pub fn renders_in_companion(&self) -> bool {
+        matches!(self.surface, KotlinConstructorSurface::CompanionFactory)
+    }
 }
 
 #[derive(Clone)]
@@ -288,19 +311,13 @@ pub struct KotlinStream {
     pub name: String,
     pub mode: KotlinStreamMode,
     pub item_type: String,
-    pub item_decode: ReadSeq,
+    pub pop_batch_items_expr: String,
     pub subscribe: String,
     pub poll: String,
     pub pop_batch: String,
     pub wait: String,
     pub unsubscribe: String,
     pub free: String,
-}
-
-impl KotlinStream {
-    pub fn item_decode_expr(&self) -> String {
-        emit::emit_reader_read(&self.item_decode)
-    }
 }
 
 #[derive(Clone)]

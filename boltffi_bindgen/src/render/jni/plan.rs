@@ -96,12 +96,28 @@ pub struct JniStream {
     pub poll_jni: String,
     pub pop_batch_ffi: String,
     pub pop_batch_jni: String,
+    pub pop_batch_direct_item_c_type: Option<String>,
+    pub pop_batch_direct_item_size: Option<usize>,
     pub wait_ffi: String,
     pub wait_jni: String,
     pub unsubscribe_ffi: String,
     pub unsubscribe_jni: String,
     pub free_ffi: String,
     pub free_jni: String,
+}
+
+impl JniStream {
+    pub fn pop_batch_is_direct(&self) -> bool {
+        self.pop_batch_direct_item_c_type.is_some() && self.pop_batch_direct_item_size.is_some()
+    }
+
+    pub fn pop_batch_direct_item_c_type(&self) -> &str {
+        self.pop_batch_direct_item_c_type.as_deref().unwrap_or("")
+    }
+
+    pub fn pop_batch_direct_item_size(&self) -> usize {
+        self.pop_batch_direct_item_size.unwrap_or(0)
+    }
 }
 
 #[derive(Clone)]

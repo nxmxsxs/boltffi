@@ -15,7 +15,7 @@ use crate::ir::ids::{CallbackId, EnumId, ParamName, RecordId};
 use crate::ir::ops::SizeExpr;
 use crate::ir::plan::{AbiType, Mutability, SpanContent};
 use crate::ir::types::{PrimitiveType, TypeExpr};
-use crate::ir::{ParamRole, ReturnShape, ScalarOrigin, Transport};
+use crate::ir::{ParamRole, ReturnShape, Transport};
 use crate::render::kotlin::{NamingConvention, primitives};
 
 use super::plan::{
@@ -396,14 +396,22 @@ impl<'a> JniLowerer<'a> {
                 JniParam {
                     name: "self_val".to_string(),
                     ffi_arg: format!("({})self_val", c_type),
-                    jni_decl: format!(", {} self_val", jni_type),
+                    jni_decl: format!("{} self_val", jni_type),
                     kind: JniParamKind::Primitive,
                 }
             }
+            Transport::Composite(layout) => JniParam {
+                name: "self".to_string(),
+                ffi_arg: "_self_val".to_string(),
+                jni_decl: "jobject self".to_string(),
+                kind: JniParamKind::Composite {
+                    c_type: format!("___{}", layout.record_id.as_str()),
+                },
+            },
             _ => JniParam {
                 name: "self_buf".to_string(),
                 ffi_arg: "(uint8_t*)_self_buf_ptr, (uintptr_t)_self_buf_len".to_string(),
-                jni_decl: ", jobject self_buf".to_string(),
+                jni_decl: "jobject self_buf".to_string(),
                 kind: JniParamKind::Buffer,
             },
         }
@@ -504,6 +512,18 @@ impl<'a> JniLowerer<'a> {
             unsubscribe_ffi.replace('_', "_1")
         );
         let free_jni = format!("Java_{}_Native_{}", jni_prefix, free_ffi.replace('_', "_1"));
+        let (pop_batch_direct_item_c_type, pop_batch_direct_item_size) =
+            match &abi_stream.item_transport {
+                Transport::Scalar(origin) => (
+                    Some(self.primitive_c_type(origin.primitive())),
+                    abi_stream.item_size,
+                ),
+                Transport::Composite(layout) => (
+                    Some(format!("___{}", layout.record_id.as_str())),
+                    abi_stream.item_size,
+                ),
+                _ => (None, None),
+            };
         JniStream {
             subscribe_ffi,
             subscribe_jni,
@@ -511,6 +531,8 @@ impl<'a> JniLowerer<'a> {
             poll_jni,
             pop_batch_ffi,
             pop_batch_jni,
+            pop_batch_direct_item_c_type,
+            pop_batch_direct_item_size,
             wait_ffi,
             wait_jni,
             unsubscribe_ffi,
@@ -720,27 +742,6 @@ impl<'a> JniLowerer<'a> {
                 }
             }
             Transport::Span(SpanContent::Scalar(origin)) => {
-                if self.use_buffer_for_span_scalar_param(param, origin) {
-                    let jni_type = "jobject".to_string();
-                    let ptr_type = match origin {
-                        ScalarOrigin::Primitive(PrimitiveType::ISize) => "const intptr_t*",
-                        ScalarOrigin::Primitive(PrimitiveType::USize) => "const uintptr_t*",
-                        _ => {
-                            unreachable!("buffer span scalar override only applies to isize/usize")
-                        }
-                    };
-                    let ffi_arg = format!("({})_{}_ptr, (uintptr_t)_{}_len", ptr_type, name, name);
-                    return JniParam {
-                        name,
-                        ffi_arg,
-                        jni_decl: format!(
-                            "{} {}",
-                            jni_type,
-                            naming::escape_c_keyword(param.name.as_str())
-                        ),
-                        kind: JniParamKind::Buffer,
-                    };
-                }
                 let primitive = origin.primitive();
                 let c_type = self.primitive_c_type(primitive);
                 let is_mutable = matches!(mutability, Mutability::Mutable);
@@ -815,16 +816,6 @@ impl<'a> JniLowerer<'a> {
         }
     }
 
-    fn use_buffer_for_span_scalar_param(&self, param: &ParamDef, origin: &ScalarOrigin) -> bool {
-        matches!(
-            (&param.type_expr, origin),
-            (
-                TypeExpr::Vec(inner),
-                ScalarOrigin::Primitive(PrimitiveType::ISize | PrimitiveType::USize)
-            ) if matches!(inner.as_ref(), TypeExpr::Primitive(PrimitiveType::ISize | PrimitiveType::USize))
-        )
-    }
-
     fn scalar_jni_type(&self, abi_type: &AbiType) -> String {
         match abi_type {
             AbiType::Bool => "jboolean".to_string(),
@@ -835,6 +826,7 @@ impl<'a> JniLowerer<'a> {
             AbiType::F32 => "jfloat".to_string(),
             AbiType::F64 => "jdouble".to_string(),
             AbiType::Pointer(_)
+            | AbiType::OwnedBuffer
             | AbiType::InlineCallbackFn { .. }
             | AbiType::Handle(_)
             | AbiType::CallbackHandle
@@ -2128,6 +2120,7 @@ impl<'a> JniLowerer<'a> {
             AbiType::Pointer(element) => {
                 format!("{}*", self.callback_primitive_c_type(*element))
             }
+            AbiType::OwnedBuffer => "FfiBuf_u8".to_string(),
             AbiType::InlineCallbackFn {
                 params,
                 return_type,
@@ -2164,6 +2157,7 @@ impl<'a> JniLowerer<'a> {
             AbiType::F64 => "double".to_string(),
             AbiType::Void
             | AbiType::Pointer(_)
+            | AbiType::OwnedBuffer
             | AbiType::InlineCallbackFn { .. }
             | AbiType::Handle(_)
             | AbiType::CallbackHandle => "void".to_string(),
@@ -2180,6 +2174,7 @@ impl<'a> JniLowerer<'a> {
             AbiType::I64 | AbiType::U64 => "jlong".to_string(),
             AbiType::F32 => "jfloat".to_string(),
             AbiType::F64 => "jdouble".to_string(),
+            AbiType::OwnedBuffer => "jobject".to_string(),
             _ => "jobject".to_string(),
         }
     }
@@ -2313,7 +2308,10 @@ impl<'a> JniLowerer<'a> {
             .unwrap_or(callback.id.as_str())
             .to_string();
 
-        let callbacks_class = format!("Closure{}Callbacks", signature_id);
+        let callbacks_class = format!(
+            "{}Callbacks",
+            NamingConvention::class_name(callback.id.as_str())
+        );
         let callbacks_class_jni_path =
             format!("{}/{}", package_path.replace('.', "/"), callbacks_class);
 
@@ -2385,13 +2383,7 @@ impl<'a> JniLowerer<'a> {
                     _ => JniClosureTrampolineReturn::wire_encoded(),
                 }
             }
-            TypeExpr::String => JniClosureTrampolineReturn {
-                c_type: "uint8_t*".to_string(),
-                jni_call_method: "CallStaticObjectMethod".to_string(),
-                jni_return_cast: String::new(),
-                jni_signature: "[B".to_string(),
-                strategy: TrampolineReturnStrategy::RawPointer,
-            },
+            TypeExpr::String => JniClosureTrampolineReturn::wire_encoded(),
             TypeExpr::Enum(_)
             | TypeExpr::Bytes
             | TypeExpr::Vec(_)
@@ -2528,8 +2520,8 @@ mod tests {
     use crate::ir::types::PrimitiveType;
     use crate::ir::{
         CStyleVariant, CallbackId, CallbackKind, CallbackMethodDef, CallbackTraitDef, EnumDef,
-        FieldDef, FieldName, MethodId, ParamDef, ParamPassing, RecordDef, RecordId, ReturnDef,
-        VariantName,
+        FieldDef, FieldName, MethodDef, MethodId, ParamDef, ParamPassing, Receiver, RecordDef,
+        RecordId, ReturnDef, VariantName,
     };
 
     fn test_lowerer() -> JniLowerer<'static> {
@@ -2624,11 +2616,11 @@ mod tests {
     }
 
     #[test]
-    fn closure_return_string_is_raw_pointer() {
+    fn closure_return_string_is_wire_encoded() {
         let lowerer = test_lowerer();
         let ret = lowerer.closure_return_info(&TypeExpr::String);
-        assert!(matches!(ret.strategy, TrampolineReturnStrategy::RawPointer));
-        assert_eq!(ret.c_type, "uint8_t*");
+        assert!(matches!(ret.strategy, TrampolineReturnStrategy::WireBuffer));
+        assert_eq!(ret.c_type, "FfiBuf_u8");
         assert_eq!(ret.jni_signature, "[B");
     }
 
@@ -2839,14 +2831,63 @@ mod tests {
     }
 
     #[test]
-    fn inline_callback_fn_c_type_includes_pointer_return_for_string() {
+    fn blittable_record_self_param_uses_composite_jni_lowering() {
+        let mut contract = contract_with_blittable_point();
+        contract.catalog.insert_record(RecordDef {
+            id: RecordId::new("Point"),
+            is_repr_c: true,
+            fields: vec![
+                FieldDef {
+                    name: FieldName::new("x"),
+                    type_expr: TypeExpr::Primitive(PrimitiveType::F64),
+                    doc: None,
+                    default: None,
+                },
+                FieldDef {
+                    name: FieldName::new("y"),
+                    type_expr: TypeExpr::Primitive(PrimitiveType::F64),
+                    doc: None,
+                    default: None,
+                },
+            ],
+            constructors: vec![],
+            methods: vec![MethodDef {
+                id: MethodId::new("distance"),
+                receiver: Receiver::RefSelf,
+                params: vec![],
+                returns: ReturnDef::Value(TypeExpr::Primitive(PrimitiveType::F64)),
+                is_async: false,
+                doc: None,
+                deprecated: None,
+            }],
+            doc: None,
+            deprecated: None,
+        });
+        let lowerer = lowerer_from_contract(&contract);
+        let module = lowerer.lower();
+        let point_distance = module
+            .wire_functions
+            .iter()
+            .find(|function| function.ffi_name == "boltffi_point_distance")
+            .expect("expected point distance wire function");
+        let self_param = point_distance
+            .params
+            .first()
+            .expect("expected self param for point distance");
+        assert_eq!(self_param.jni_param_decl(), "jobject self");
+        assert!(self_param.is_composite());
+        assert_eq!(self_param.ffi_arg(), "_self_val");
+    }
+
+    #[test]
+    fn inline_callback_fn_c_type_includes_owned_buffer_return_for_string() {
         let abi_type = AbiType::InlineCallbackFn {
             params: vec![AbiType::Pointer(PrimitiveType::U8), AbiType::USize],
-            return_type: Box::new(AbiType::Pointer(PrimitiveType::U8)),
+            return_type: Box::new(AbiType::OwnedBuffer),
         };
         let lowerer = test_lowerer();
         let c_type = lowerer.callback_abi_type_c(&abi_type);
-        assert_eq!(c_type, "uint8_t* (*)(void*, const uint8_t*, uintptr_t)");
+        assert_eq!(c_type, "FfiBuf_u8 (*)(void*, const uint8_t*, uintptr_t)");
     }
 
     #[test]
