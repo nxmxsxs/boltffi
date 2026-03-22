@@ -35,13 +35,15 @@ import {
   fetchWithCallback,
   fetchStringWithCallback,
   Counter,
+  registerValueCallback,
+  unregisterValueCallback,
   applyClosure,
   applyBinaryClosure,
   applyVoidClosure,
   applyNullaryClosure,
   applyPointClosure,
   applyStringClosure,
-} from './dist/wasm/pkg/node.js';
+} from '@boltffi/demo';
 
 await initialized;
 console.log('Module initialized via node.js loader\n');
@@ -502,10 +504,6 @@ console.log('\nTesting Counter class...');
 }
 
 console.log('\nTesting Callback Registry (T01-T11)...');
-import {
-  registerValueCallback,
-  unregisterValueCallback,
-} from './dist/wasm/pkg/node.js';
 
 {
   // T01: register once - handle non-null
