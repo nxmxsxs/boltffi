@@ -1545,324 +1545,377 @@ impl<'a> JavaLowerer<'a> {
             .methods
             .first()
             .expect("closure must have a method");
-        let signature_id = callback
-            .id
-            .as_str()
-            .strip_prefix("__Closure_")
-            .unwrap_or(callback.id.as_str());
-        let interface_name = format!("Closure{}", signature_id);
-        let params = method
-            .params
+        let abi_callback = self
+            .abi_callback_for(&callback.id)
+            .expect("closure abi callback missing");
+        let abi_method = abi_callback
+            .methods
             .iter()
-            .enumerate()
-            .map(|(index, param)| {
-                let java_type = self.java_type(&param.type_expr);
-                let jni_type = self.closure_jni_type(&param.type_expr);
-                let name = format!("p{}", index);
-                let jni_decode_expr = self.closure_param_decode(&param.type_expr, &name);
-                JavaClosureParam {
-                    name,
-                    java_type,
-                    jni_type,
-                    jni_decode_expr,
-                }
-            })
-            .collect();
-        let return_ty = match &method.returns {
-            ReturnDef::Void => None,
-            ReturnDef::Value(ty) => Some(ty),
-            ReturnDef::Result { ok, .. } => Some(ok),
-        };
-        let return_type = return_ty.map(|ty| self.java_type(ty));
-        let (jni_return_type, return_to_jni_expr) = match return_ty {
-            None => (None, String::new()),
-            Some(ty) => self.closure_return_jni_info(ty),
-        };
+            .find(|candidate| candidate.id == method.id)
+            .expect("closure abi method missing");
+        let interface_name = self.callback_java_type(&callback.id);
+        let callbacks_class_name = self.callback_bridge_name(&callback.id);
+        let params = self.lower_bridge_params(&method.params, abi_method);
+        let return_info = self.lower_bridge_return(&method.returns, &abi_method.returns, &abi_method.error);
         JavaClosureInterface {
             interface_name,
             callback_id: callback.id.as_str().to_string(),
-            params,
-            return_type,
-            jni_return_type,
-            return_to_jni_expr,
-        }
-    }
-
-    fn closure_return_jni_info(&self, ty: &TypeExpr) -> (Option<String>, String) {
-        match ty {
-            TypeExpr::Primitive(p) => (Some(mappings::java_type(*p).to_string()), String::new()),
-            TypeExpr::String => (
-                Some("byte[]".to_string()),
-                ".getBytes(java.nio.charset.StandardCharsets.UTF_8)".to_string(),
-            ),
-            TypeExpr::Record(_) => (
-                Some("byte[]".to_string()),
-                ".wireEncodeToBytes()".to_string(),
-            ),
-            TypeExpr::Enum(id) => {
-                let enum_def = self.ffi.catalog.resolve_enum(id);
-                let is_c_style = enum_def
-                    .map(|e| matches!(e.repr, EnumRepr::CStyle { .. }))
-                    .unwrap_or(false);
-                if is_c_style {
-                    let tag_type = enum_def
-                        .and_then(|e| match &e.repr {
-                            EnumRepr::CStyle { tag_type, .. } => Some(*tag_type),
-                            _ => None,
-                        })
-                        .unwrap_or(PrimitiveType::I32);
-                    (
-                        Some(mappings::java_type(tag_type).to_string()),
-                        ".value".to_string(),
-                    )
-                } else {
-                    (Some("byte[]".to_string()), ".encode()".to_string())
-                }
-            }
-            _ => (Some("long".to_string()), String::new()),
-        }
-    }
-
-    fn closure_param_decode(&self, ty: &TypeExpr, name: &str) -> String {
-        match ty {
-            TypeExpr::Primitive(_) => name.to_string(),
-            TypeExpr::String => format!("WireReader.stringFromBuffer({})", name),
-            TypeExpr::Record(id) => format!(
-                "{}.decode(WireReader.fromBuffer({}))",
-                NamingConvention::class_name(id.as_str()),
-                name
-            ),
-            TypeExpr::Enum(id) => format!(
-                "{}.fromValue({})",
-                NamingConvention::class_name(id.as_str()),
-                name
-            ),
-            _ => name.to_string(),
-        }
-    }
-
-    fn closure_jni_type(&self, ty: &TypeExpr) -> String {
-        match ty {
-            TypeExpr::Primitive(p) => mappings::java_type(*p).to_string(),
-            TypeExpr::String | TypeExpr::Record(_) => "java.nio.ByteBuffer".to_string(),
-            TypeExpr::Enum(id) => {
-                let enum_def = self.ffi.catalog.resolve_enum(id);
-                match enum_def.and_then(|e| match &e.repr {
-                    EnumRepr::CStyle { tag_type, .. } => Some(*tag_type),
-                    _ => None,
-                }) {
-                    Some(tag) => mappings::java_type(tag).to_string(),
-                    None => "java.nio.ByteBuffer".to_string(),
-                }
-            }
-            _ => "long".to_string(),
-        }
-    }
-
-    fn lower_callback_trait(&self, callback: &CallbackTraitDef) -> JavaCallbackTrait {
-        let interface_name = NamingConvention::class_name(callback.id.as_str());
-        let abi_callback = self.abi_callback_for(&callback.id);
-        let methods = callback
-            .methods
-            .iter()
-            .filter(|method| !method.is_async)
-            .filter_map(|method| {
-                let abi_method = abi_callback
-                    .as_ref()
-                    .and_then(|ac| ac.methods.iter().find(|m| m.id == method.id));
-                abi_method.map(|abi_method| self.lower_callback_method(method, abi_method))
-            })
-            .collect();
-        JavaCallbackTrait {
-            interface_name,
-            callback_id: callback.id.as_str().to_string(),
-            methods,
-        }
-    }
-
-    fn lower_callback_method(
-        &self,
-        method: &CallbackMethodDef,
-        abi_method: &AbiCallbackMethod,
-    ) -> JavaCallbackMethod {
-        let params = method
-            .params
-            .iter()
-            .map(|param| {
-                let java_type = self.java_type(&param.type_expr);
-                let abi_param = abi_method
-                    .params
-                    .iter()
-                    .find(|p| p.name.as_str() == param.name.as_str());
-                let jni_type = abi_param
-                    .map(|p| self.callback_param_jni_type(&param.type_expr, p))
-                    .unwrap_or_else(|| java_type.clone());
-                let decode_expr =
-                    self.callback_param_decode_expr(&param.type_expr, param.name.as_str());
-                JavaCallbackParam {
-                    name: NamingConvention::field_name(param.name.as_str()),
-                    java_type,
-                    jni_type,
-                    decode_expr,
-                }
-            })
-            .collect();
-        let return_info = match &method.returns {
-            ReturnDef::Void => None,
-            ReturnDef::Value(ty) => Some(self.callback_return_info(ty)),
-            ReturnDef::Result { ok, .. } => Some(self.callback_return_info(ok)),
-        };
-        JavaCallbackMethod {
-            name: NamingConvention::method_name(method.id.as_str()),
-            ffi_name: boltffi_ffi_rules::naming::vtable_field_name(method.id.as_str())
-                .into_string(),
+            callbacks_class_name,
             params,
             return_info,
         }
     }
 
-    fn callback_param_jni_type(&self, ty: &TypeExpr, _abi_param: &AbiParam) -> String {
-        match ty {
-            TypeExpr::Primitive(p) => mappings::java_type(*p).to_string(),
-            TypeExpr::String => "java.nio.ByteBuffer".to_string(),
-            TypeExpr::Enum(id) => {
-                let enum_def = self.ffi.catalog.resolve_enum(id);
-                match enum_def.and_then(|e| match &e.repr {
-                    EnumRepr::CStyle { tag_type, .. } => Some(*tag_type),
-                    _ => None,
-                }) {
-                    Some(tag) => mappings::java_type(tag).to_string(),
-                    None => "java.nio.ByteBuffer".to_string(),
-                }
-            }
-            TypeExpr::Record(_) => "java.nio.ByteBuffer".to_string(),
-            TypeExpr::Vec(_) => "java.nio.ByteBuffer".to_string(),
-            _ => "long".to_string(),
+    fn lower_callback_trait(&self, callback: &CallbackTraitDef) -> JavaCallbackTrait {
+        let interface_name = NamingConvention::class_name(callback.id.as_str());
+        let abi_callback = self
+            .abi_callback_for(&callback.id)
+            .expect("callback abi invocation missing");
+
+        let sync_methods = callback
+            .methods
+            .iter()
+            .filter(|method| !method.is_async)
+            .filter_map(|method| {
+                let abi_method = abi_callback
+                    .methods
+                    .iter()
+                    .find(|candidate| candidate.id == method.id)?;
+                Some(self.lower_sync_callback_method(method, abi_method))
+            })
+            .collect();
+
+        let async_methods = callback
+            .methods
+            .iter()
+            .filter(|method| method.is_async)
+            .filter_map(|method| {
+                let abi_method = abi_callback
+                    .methods
+                    .iter()
+                    .find(|candidate| candidate.id == method.id)?;
+                Some(self.lower_async_callback_method(method, abi_method))
+            })
+            .collect();
+
+        JavaCallbackTrait {
+            interface_name,
+            callback_id: callback.id.as_str().to_string(),
+            sync_methods,
+            async_methods,
         }
     }
 
-    fn callback_param_decode_expr(&self, ty: &TypeExpr, name: &str) -> String {
-        let field_name = NamingConvention::field_name(name);
-        match ty {
-            TypeExpr::Primitive(_) => field_name,
-            TypeExpr::String => format!("WireReader.stringFromBuffer({})", field_name),
-            TypeExpr::Record(id) => format!(
-                "{}.decode(WireReader.fromBuffer({}))",
-                NamingConvention::class_name(id.as_str()),
-                field_name
-            ),
-            TypeExpr::Enum(id) => {
-                let enum_def = self.ffi.catalog.resolve_enum(id);
-                let is_c_style = enum_def
-                    .map(|e| matches!(e.repr, EnumRepr::CStyle { .. }))
-                    .unwrap_or(false);
-                if is_c_style {
-                    format!(
-                        "{}.fromValue({})",
-                        NamingConvention::class_name(id.as_str()),
-                        field_name
-                    )
-                } else {
-                    format!(
-                        "{}.decode(new WireReader({}))",
-                        NamingConvention::class_name(id.as_str()),
-                        field_name
-                    )
-                }
-            }
-            TypeExpr::Vec(inner) => match inner.as_ref() {
-                TypeExpr::Primitive(p) => {
-                    let read_method = match p {
-                        PrimitiveType::Bool => "readBooleanArray",
-                        PrimitiveType::I8 | PrimitiveType::U8 => "readByteArray",
-                        PrimitiveType::I16 | PrimitiveType::U16 => "readShortArray",
-                        PrimitiveType::I32 | PrimitiveType::U32 => "readIntArray",
-                        PrimitiveType::I64
-                        | PrimitiveType::U64
-                        | PrimitiveType::ISize
-                        | PrimitiveType::USize => "readLongArray",
-                        PrimitiveType::F32 => "readFloatArray",
-                        PrimitiveType::F64 => "readDoubleArray",
-                    };
-                    format!("WireReader.fromBuffer({}).{}()", field_name, read_method)
-                }
-                _ => format!("WireReader.fromBuffer({}).readList(i -> null)", field_name),
-            },
-            _ => field_name,
+    fn lower_sync_callback_method(
+        &self,
+        method: &CallbackMethodDef,
+        abi_method: &AbiCallbackMethod,
+    ) -> JavaSyncCallbackMethod {
+        JavaSyncCallbackMethod {
+            name: NamingConvention::method_name(method.id.as_str()),
+            ffi_name: abi_method.vtable_field.as_str().to_string(),
+            params: self.lower_bridge_params(&method.params, abi_method),
+            return_info: self.lower_bridge_return(&method.returns, &abi_method.returns, &abi_method.error),
         }
     }
 
-    fn callback_return_info(&self, ty: &TypeExpr) -> JavaCallbackReturn {
-        let no_wrap = String::new();
-        match ty {
-            TypeExpr::Primitive(p) => JavaCallbackReturn {
-                java_type: mappings::java_type(*p).to_string(),
-                jni_type: mappings::java_type(*p).to_string(),
-                default_value: mappings::java_default_value(*p).to_string(),
-                to_jni_expr: String::new(),
-                wrap_prefix: no_wrap,
+    fn lower_async_callback_method(
+        &self,
+        method: &CallbackMethodDef,
+        abi_method: &AbiCallbackMethod,
+    ) -> JavaAsyncCallbackMethod {
+        JavaAsyncCallbackMethod {
+            name: NamingConvention::method_name(method.id.as_str()),
+            ffi_name: abi_method.vtable_field.as_str().to_string(),
+            params: self.lower_bridge_params(&method.params, abi_method),
+            return_info: self.lower_bridge_return(&method.returns, &abi_method.returns, &abi_method.error),
+            invoker_suffix: self.invoker_suffix_from_return_shape(&abi_method.returns),
+        }
+    }
+
+    fn lower_bridge_params(
+        &self,
+        params: &[ParamDef],
+        abi_method: &AbiCallbackMethod,
+    ) -> Vec<JavaBridgeParam> {
+        let abi_params = abi_method
+            .params
+            .iter()
+            .filter_map(|param| match &param.role {
+                ParamRole::Input { .. } => Some((param.name.as_str(), param)),
+                _ => None,
+            })
+            .collect::<HashMap<_, _>>();
+
+        params
+            .iter()
+            .filter_map(|param| {
+                let abi_param = abi_params.get(param.name.as_str())?;
+                Some(self.lower_bridge_param(param, abi_param))
+            })
+            .collect()
+    }
+
+    fn lower_bridge_param(&self, param: &ParamDef, abi_param: &AbiParam) -> JavaBridgeParam {
+        let name = NamingConvention::field_name(param.name.as_str());
+        let java_type = self.java_type(&param.type_expr);
+
+        match &abi_param.role {
+            ParamRole::Input {
+                transport: Transport::Scalar(_),
+                ..
+            } => JavaBridgeParam {
+                name: name.clone(),
+                java_type,
+                jni_type: self.callback_direct_param_jni_type(abi_param),
+                decode_expr: name,
             },
-            TypeExpr::String => JavaCallbackReturn {
-                java_type: "String".to_string(),
-                jni_type: "byte[]".to_string(),
-                default_value: "new byte[0]".to_string(),
-                to_jni_expr: ".getBytes(java.nio.charset.StandardCharsets.UTF_8)".to_string(),
-                wrap_prefix: no_wrap,
+            ParamRole::Input {
+                decode_ops: Some(decode_ops),
+                ..
+            } => JavaBridgeParam {
+                name: name.clone(),
+                java_type,
+                jni_type: "java.nio.ByteBuffer".to_string(),
+                decode_expr: self.callback_encoded_param_decode_expr(decode_ops, &name),
             },
-            TypeExpr::Record(id) => JavaCallbackReturn {
-                java_type: NamingConvention::class_name(id.as_str()),
-                jni_type: "byte[]".to_string(),
-                default_value: "new byte[0]".to_string(),
-                to_jni_expr: ".wireEncodeToBytes()".to_string(),
-                wrap_prefix: no_wrap,
-            },
-            TypeExpr::Enum(id) => {
-                let enum_def = self.ffi.catalog.resolve_enum(id);
-                let tag_type = enum_def.and_then(|e| match &e.repr {
-                    EnumRepr::CStyle { tag_type, .. } => Some(*tag_type),
-                    _ => None,
-                });
-                match tag_type {
-                    Some(tag) => JavaCallbackReturn {
-                        java_type: NamingConvention::class_name(id.as_str()),
-                        jni_type: mappings::java_type(tag).to_string(),
-                        default_value: mappings::java_default_value(tag).to_string(),
-                        to_jni_expr: ".value".to_string(),
-                        wrap_prefix: no_wrap,
-                    },
-                    None => JavaCallbackReturn {
-                        java_type: NamingConvention::class_name(id.as_str()),
-                        jni_type: "byte[]".to_string(),
-                        default_value: "new byte[0]".to_string(),
-                        to_jni_expr: ".wireEncodeToBytes()".to_string(),
-                        wrap_prefix: no_wrap,
+            other => panic!("unsupported Java callback param role: {:?}", other),
+        }
+    }
+
+    fn callback_direct_param_jni_type(&self, abi_param: &AbiParam) -> String {
+        match abi_param.abi_type {
+            crate::ir::plan::AbiType::Bool => "boolean".to_string(),
+            crate::ir::plan::AbiType::I8 | crate::ir::plan::AbiType::U8 => "byte".to_string(),
+            crate::ir::plan::AbiType::I16 | crate::ir::plan::AbiType::U16 => "short".to_string(),
+            crate::ir::plan::AbiType::I32 | crate::ir::plan::AbiType::U32 => "int".to_string(),
+            crate::ir::plan::AbiType::I64
+            | crate::ir::plan::AbiType::U64
+            | crate::ir::plan::AbiType::ISize
+            | crate::ir::plan::AbiType::USize => "long".to_string(),
+            crate::ir::plan::AbiType::F32 => "float".to_string(),
+            crate::ir::plan::AbiType::F64 => "double".to_string(),
+            other => panic!("unsupported Java scalar callback ABI type: {:?}", other),
+        }
+    }
+
+    fn callback_encoded_param_decode_expr(&self, decode_ops: &ReadSeq, name: &str) -> String {
+        let decode_expr = super::emit::emit_reader_read(decode_ops);
+        format!("WireReader.decodeBuffer({}, reader -> {})", name, decode_expr)
+    }
+
+    fn lower_bridge_return(
+        &self,
+        returns: &ReturnDef,
+        ret_shape: &ReturnShape,
+        error: &ErrorTransport,
+    ) -> Option<JavaBridgeReturn> {
+        match returns {
+            ReturnDef::Void => None,
+            ReturnDef::Value(ty) => Some(JavaBridgeReturn::Value(
+                self.lower_value_bridge_return(ty, ret_shape),
+            )),
+            ReturnDef::Result { ok, err } => Some(JavaBridgeReturn::Result(
+                self.lower_result_bridge_return(ok, err, ret_shape, error),
+            )),
+        }
+    }
+
+    fn lower_value_bridge_return(
+        &self,
+        ty: &TypeExpr,
+        ret_shape: &ReturnShape,
+    ) -> JavaValueBridgeReturn {
+        match ret_shape.value_return_strategy() {
+            ValueReturnStrategy::Void => unreachable!("value return requested for void callback"),
+            ValueReturnStrategy::Scalar(strategy) => {
+                let Some(transport) = &ret_shape.transport else {
+                    unreachable!("scalar callback return must have transport");
+                };
+                let primitive = match transport {
+                    Transport::Scalar(origin) => origin.primitive(),
+                    other => unreachable!("scalar callback return must use scalar transport: {:?}", other),
+                };
+                let suffix = match strategy {
+                    ScalarReturnStrategy::PrimitiveValue => String::new(),
+                    ScalarReturnStrategy::CStyleEnumTag => ".value".to_string(),
+                };
+                JavaValueBridgeReturn {
+                    java_type: self.java_type(ty),
+                    jni_type: mappings::java_type(primitive).to_string(),
+                    default_value: mappings::java_default_value(primitive).to_string(),
+                    render: JavaValueBridgeRender::Direct {
+                        prefix: String::new(),
+                        suffix,
                     },
                 }
             }
-            TypeExpr::Vec(_inner) => {
-                let java_type = self.java_type(ty);
-                JavaCallbackReturn {
-                    java_type,
+            ValueReturnStrategy::CompositeValue | ValueReturnStrategy::Buffer(_) => {
+                let encode_ops = ret_shape
+                    .encode_ops
+                    .as_ref()
+                    .expect("encoded callback return should provide encode ops");
+                JavaValueBridgeReturn {
+                    java_type: self.java_type(ty),
                     jni_type: "byte[]".to_string(),
                     default_value: "new byte[0]".to_string(),
-                    to_jni_expr: ")".to_string(),
-                    wrap_prefix: "WireReader.wireEncodeIntArray(".to_string(),
+                    render: self.encoded_return_render(encode_ops, "value"),
                 }
             }
-            TypeExpr::Handle(id) => JavaCallbackReturn {
-                java_type: NamingConvention::class_name(id.as_str()),
+            ValueReturnStrategy::ObjectHandle => JavaValueBridgeReturn {
+                java_type: self.java_type(ty),
                 jni_type: "long".to_string(),
                 default_value: "0L".to_string(),
-                to_jni_expr: ".handle".to_string(),
-                wrap_prefix: no_wrap,
+                render: JavaValueBridgeRender::Direct {
+                    prefix: String::new(),
+                    suffix: ".handle".to_string(),
+                },
             },
-            _ => JavaCallbackReturn {
-                java_type: "Object".to_string(),
-                jni_type: "Object".to_string(),
-                default_value: "null".to_string(),
-                to_jni_expr: String::new(),
-                wrap_prefix: no_wrap,
+            ValueReturnStrategy::CallbackHandle => {
+                let Some(Transport::Callback { callback_id, .. }) = &ret_shape.transport else {
+                    unreachable!("callback handle return must use callback transport");
+                };
+                JavaValueBridgeReturn {
+                    java_type: self.java_type(ty),
+                    jni_type: "long".to_string(),
+                    default_value: "0L".to_string(),
+                    render: JavaValueBridgeRender::Direct {
+                        prefix: format!("{}.create(", self.callback_bridge_name(callback_id)),
+                        suffix: ")".to_string(),
+                    },
+                }
+            }
+        }
+    }
+
+    fn lower_result_bridge_return(
+        &self,
+        ok: &TypeExpr,
+        err: &TypeExpr,
+        ret_shape: &ReturnShape,
+        error: &ErrorTransport,
+    ) -> JavaResultBridgeReturn {
+        let encode_ops = ret_shape
+            .encode_ops
+            .as_ref()
+            .expect("result callback return should provide encode ops");
+        let encoded_render = self.encoded_return_render(encode_ops, "result");
+        let JavaValueBridgeRender::Encode {
+            size_expr,
+            encode_expr,
+        } = encoded_render
+        else {
+            unreachable!("result callback encoding should always be wire encoded");
+        };
+
+        JavaResultBridgeReturn {
+            ok_java_type: self.java_type(ok),
+            err_java_type: self.java_type(err),
+            jni_type: "byte[]".to_string(),
+            default_value: "new byte[0]".to_string(),
+            encode_size_expr: size_expr,
+            encode_expr,
+            error_capture: self.callback_error_capture(err, error),
+        }
+    }
+
+    fn encoded_return_render(
+        &self,
+        encode_ops: &WriteSeq,
+        binding: &str,
+    ) -> JavaValueBridgeRender {
+        let remapped = remap_root_in_seq(encode_ops, ValueExpr::Var(binding.to_string()));
+        JavaValueBridgeRender::Encode {
+            size_expr: super::emit::emit_size_expr(&self.write_seq_size_expr(&remapped)),
+            encode_expr: super::emit::emit_write_expr(&remapped, "wire"),
+        }
+    }
+
+    fn write_seq_size_expr(&self, encode_ops: &WriteSeq) -> SizeExpr {
+        match encode_ops.ops.first() {
+            Some(WriteOp::Custom { value, .. }) => SizeExpr::WireSize {
+                value: value.clone(),
+                owner: None,
             },
+            _ => encode_ops.size.clone(),
+        }
+    }
+
+    fn callback_error_capture(
+        &self,
+        err: &TypeExpr,
+        _error: &ErrorTransport,
+    ) -> JavaCallbackErrorCapture {
+        let exception_class = match err {
+            TypeExpr::Enum(id) => self
+                .ffi
+                .catalog
+                .resolve_enum(id)
+                .filter(|enumeration| enumeration.is_error)
+                .map(|_| format!("{}.Exception", NamingConvention::class_name(id.as_str()))),
+            _ => None,
+        };
+
+        JavaCallbackErrorCapture {
+            exception_class,
+            is_string: matches!(err, TypeExpr::String),
+        }
+    }
+
+    fn collect_async_callback_invokers(
+        &self,
+        callbacks: &[JavaCallbackTrait],
+    ) -> Vec<JavaAsyncCallbackInvoker> {
+        let mut seen = HashSet::new();
+        callbacks
+            .iter()
+            .flat_map(|callback| callback.async_methods.iter())
+            .filter_map(|method| {
+                if seen.insert(method.invoker_suffix.clone()) {
+                    Some(JavaAsyncCallbackInvoker {
+                        suffix: method.invoker_suffix.clone(),
+                        result_jni_type: method
+                            .return_info
+                            .as_ref()
+                            .map(|return_info| return_info.jni_type().to_string()),
+                    })
+                } else {
+                    None
+                }
+            })
+            .collect()
+    }
+
+    fn invoker_suffix_from_return_shape(&self, ret_shape: &ReturnShape) -> String {
+        match ret_shape.value_return_strategy() {
+            ValueReturnStrategy::Void => "Void".to_string(),
+            ValueReturnStrategy::Scalar(_) => {
+                let Some(Transport::Scalar(origin)) = &ret_shape.transport else {
+                    unreachable!("scalar callback return must use scalar transport");
+                };
+                self.invoker_suffix_from_primitive(origin.primitive())
+            }
+            ValueReturnStrategy::ObjectHandle | ValueReturnStrategy::CallbackHandle => {
+                "Handle".to_string()
+            }
+            ValueReturnStrategy::CompositeValue | ValueReturnStrategy::Buffer(_) => {
+                "Wire".to_string()
+            }
+        }
+    }
+
+    fn invoker_suffix_from_primitive(&self, primitive: PrimitiveType) -> String {
+        match primitive {
+            PrimitiveType::Bool => "Bool".to_string(),
+            PrimitiveType::I8 | PrimitiveType::U8 => "I8".to_string(),
+            PrimitiveType::I16 | PrimitiveType::U16 => "I16".to_string(),
+            PrimitiveType::I32 | PrimitiveType::U32 => "I32".to_string(),
+            PrimitiveType::I64
+            | PrimitiveType::U64
+            | PrimitiveType::ISize
+            | PrimitiveType::USize => "I64".to_string(),
+            PrimitiveType::F32 => "F32".to_string(),
+            PrimitiveType::F64 => "F64".to_string(),
         }
     }
 

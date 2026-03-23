@@ -1,8 +1,7 @@
 use askama::Template;
 
 use super::plan::{
-    JavaCallbackMethod, JavaCallbackTrait, JavaClass, JavaClosureInterface, JavaClosureParam,
-    JavaEnum, JavaModule, JavaRecord,
+    JavaCallbackTrait, JavaClass, JavaClosureInterface, JavaEnum, JavaModule, JavaRecord,
 };
 
 #[derive(Template)]
@@ -83,21 +82,14 @@ pub struct CallbackTraitTemplate<'a> {
 #[derive(Template)]
 #[template(path = "render_java/closure_callbacks.txt", escape = "none")]
 pub struct ClosureCallbacksTemplate<'a> {
-    pub callbacks_class_name: &'a str,
-    pub interface_name: &'a str,
-    pub params: &'a [JavaClosureParam],
-    pub return_type: &'a Option<String>,
-    pub jni_return_type: &'a Option<String>,
-    pub return_to_jni_expr: &'a str,
+    pub closure: &'a JavaClosureInterface,
     pub package_name: &'a str,
 }
 
 #[derive(Template)]
 #[template(path = "render_java/callback_callbacks.txt", escape = "none")]
 pub struct CallbackCallbacksTemplate<'a> {
-    pub callbacks_class_name: &'a str,
-    pub interface_name: &'a str,
-    pub methods: &'a [JavaCallbackMethod],
+    pub callback: &'a JavaCallbackTrait,
     pub package_name: &'a str,
 }
 
@@ -145,6 +137,7 @@ mod tests {
             enums: vec![],
             closures: vec![],
             callbacks: vec![],
+            async_callback_invokers: vec![],
             functions: vec![],
             classes,
         }
