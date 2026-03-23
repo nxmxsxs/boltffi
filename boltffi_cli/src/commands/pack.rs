@@ -1,7 +1,8 @@
+use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};
 use std::process::Command;
 
-use serde::Deserialize;
+use serde::{Deserialize, Serialize};
 
 use crate::build::{BuildOptions, Builder, OutputCallback, all_successful, failed_targets};
 use crate::commands::generate::{GenerateOptions, GenerateTarget, run_generate_with_output};
@@ -920,72 +921,39 @@ fn generate_wasm_package_json(
         "./node.js"
     };
 
-    let mut export_map = serde_json::Map::new();
-    export_map.insert(
-        "types".to_string(),
-        serde_json::Value::String(format!("./{}.d.ts", module_name)),
-    );
-    if has_web {
-        export_map.insert(
-            "browser".to_string(),
-            serde_json::Value::String("./web.js".to_string()),
-        );
-    }
-    if has_node {
-        export_map.insert(
-            "node".to_string(),
-            serde_json::Value::String("./node.js".to_string()),
-        );
-    }
-    export_map.insert(
-        "default".to_string(),
-        serde_json::Value::String(default_entry.to_string()),
-    );
-
     let runtime_package = config.wasm_runtime_package();
     let runtime_version = config.wasm_runtime_version();
-    let mut dependencies = serde_json::Map::new();
-    dependencies.insert(runtime_package, serde_json::Value::String(runtime_version));
+    let mut dependencies = BTreeMap::new();
+    dependencies.insert(runtime_package, runtime_version);
 
-    let package_json = serde_json::json!({
-        "name": package_name,
-        "version": package_version,
-        "type": "module",
-        "exports": {
-            ".": serde_json::Value::Object(export_map)
+    let package_json = WasmPackageJson {
+        name: package_name.to_string(),
+        version: package_version,
+        package_type: "module".to_string(),
+        exports: WasmPackageExports {
+            root: WasmPackageEntry {
+                types: format!("./{}.d.ts", module_name),
+                browser: has_web.then(|| "./web.js".to_string()),
+                node: has_node.then(|| "./node.js".to_string()),
+                default: default_entry.to_string(),
+            },
         },
-        "types": format!("./{}.d.ts", module_name),
-        "files": [
+        types: format!("./{}.d.ts", module_name),
+        files: vec![
             format!("{}.js", module_name),
             format!("{}.d.ts", module_name),
             format!("{}_bg.wasm", module_name),
-            "bundler.js",
-            "web.js",
-            "node.js"
+            "bundler.js".to_string(),
+            "web.js".to_string(),
+            "node.js".to_string(),
         ],
-        "dependencies": serde_json::Value::Object(dependencies)
-    });
+        dependencies,
+        license: config.wasm_npm_license(),
+        repository: config.wasm_npm_repository(),
+    };
 
-    let mut package_json_object =
-        package_json
-            .as_object()
-            .cloned()
-            .ok_or_else(|| CliError::CommandFailed {
-                command: "failed to construct package.json payload".to_string(),
-                status: None,
-            })?;
-    if let Some(license) = config.wasm_npm_license() {
-        package_json_object.insert("license".to_string(), serde_json::Value::String(license));
-    }
-    if let Some(repository) = config.wasm_npm_repository() {
-        package_json_object.insert(
-            "repository".to_string(),
-            serde_json::Value::String(repository),
-        );
-    }
-
-    let rendered = serde_json::to_string_pretty(&serde_json::Value::Object(package_json_object))
-        .map_err(|source| CliError::CommandFailed {
+    let rendered =
+        serde_json::to_string_pretty(&package_json).map_err(|source| CliError::CommandFailed {
             command: format!("failed to serialize package.json: {}", source),
             status: None,
         })?;
@@ -996,6 +964,38 @@ fn generate_wasm_package_json(
     })?;
 
     Ok(package_json_path)
+}
+
+#[derive(Serialize)]
+struct WasmPackageJson {
+    name: String,
+    version: String,
+    #[serde(rename = "type")]
+    package_type: String,
+    exports: WasmPackageExports,
+    types: String,
+    files: Vec<String>,
+    dependencies: BTreeMap<String, String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    license: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    repository: Option<String>,
+}
+
+#[derive(Serialize)]
+struct WasmPackageExports {
+    #[serde(rename = ".")]
+    root: WasmPackageEntry,
+}
+
+#[derive(Serialize)]
+struct WasmPackageEntry {
+    types: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    browser: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    node: Option<String>,
+    default: String,
 }
 
 fn generate_wasm_readme(
