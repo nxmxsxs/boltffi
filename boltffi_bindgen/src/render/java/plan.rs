@@ -504,6 +504,10 @@ pub struct JavaCallbackTrait {
 }
 
 impl JavaCallbackTrait {
+    pub fn callbacks_class_name(&self) -> String {
+        format!("{}Callbacks", self.interface_name)
+    }
+
     pub fn has_async_methods(&self) -> bool {
         !self.async_methods.is_empty()
     }
@@ -654,6 +658,19 @@ pub struct JavaResultBridgeReturn {
     pub error_capture: JavaCallbackErrorCapture,
 }
 
+impl JavaResultBridgeReturn {
+    pub fn has_exception_class(&self) -> bool {
+        self.error_capture.exception_class.is_some()
+    }
+
+    pub fn exception_class(&self) -> &str {
+        self.error_capture
+            .exception_class
+            .as_deref()
+            .unwrap_or("RuntimeException")
+    }
+}
+
 #[derive(Debug, Clone)]
 pub struct JavaCallbackErrorCapture {
     pub exception_class: Option<String>,
@@ -726,6 +743,10 @@ impl JavaAsyncCallbackInvoker {
 
     pub fn has_result(&self) -> bool {
         self.result_jni_type.is_some()
+    }
+
+    pub fn result_jni_type(&self) -> &str {
+        self.result_jni_type.as_deref().unwrap_or("")
     }
 }
 

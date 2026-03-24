@@ -19,21 +19,21 @@ use super::plan::{
 };
 use crate::ir::abi::{
     AbiCall, AbiCallbackInvocation, AbiCallbackMethod, AbiContract, AbiEnum, AbiEnumField,
-    AbiEnumPayload, AbiEnumVariant, AbiParam, AbiRecord, CallId, CallMode, ErrorTransport,
-    ParamRole, ReturnShape,
+    AbiEnumPayload, AbiEnumVariant, AbiParam, AbiRecord, CallId, CallMode, ParamRole,
+    ReturnShape,
 };
 use crate::ir::codec::EnumTagStrategy;
 use crate::ir::contract::FfiContract;
 use crate::ir::definitions::{
     CallbackKind, CallbackMethodDef, CallbackTraitDef, ClassDef, ConstructorDef, EnumDef, EnumRepr,
-    FieldDef, FunctionDef, MethodDef, Receiver, RecordDef, ReturnDef,
+    FieldDef, FunctionDef, MethodDef, ParamDef, Receiver, RecordDef, ReturnDef,
 };
 use crate::ir::ids::{CallbackId, FieldName, RecordId};
 use crate::ir::ops::{
     FieldReadOp, FieldWriteOp, OffsetExpr, ReadOp, ReadSeq, SizeExpr, ValueExpr, WriteOp, WriteSeq,
     remap_root_in_seq,
 };
-use crate::ir::plan::{ScalarOrigin, SpanContent, Transport};
+use crate::ir::plan::{AbiType, ScalarOrigin, SpanContent, Transport};
 use crate::ir::types::{PrimitiveType, TypeExpr};
 
 pub struct JavaLowerer<'a> {
@@ -501,12 +501,10 @@ impl<'a> JavaLowerer<'a> {
         let params: Vec<JavaParam> = func
             .params
             .iter()
-            .enumerate()
-            .map(|(parameter_index, parameter)| {
+            .map(|parameter| {
                 self.lower_param(
                     parameter.name.as_str(),
                     &parameter.type_expr,
-                    parameter_index,
                     call,
                     &wire_writers,
                 )
@@ -534,7 +532,6 @@ impl<'a> JavaLowerer<'a> {
         &self,
         name: &str,
         ty: &TypeExpr,
-        parameter_index: usize,
         call: &AbiCall,
         wire_writers: &[JavaWireWriter],
     ) -> JavaParam {
@@ -570,25 +567,19 @@ impl<'a> JavaLowerer<'a> {
                     format!("{}.value", field_name),
                 )
             }
-            TypeExpr::Vec(inner) => {
-                if let Some(Transport::Span(SpanContent::Scalar(ScalarOrigin::Primitive(
-                    primitive,
-                )))) = abi_transport
-                    && matches!(
-                        (inner.as_ref(), primitive),
-                        (
-                            TypeExpr::Primitive(PrimitiveType::ISize | PrimitiveType::USize),
-                            PrimitiveType::ISize | PrimitiveType::USize
-                        )
-                    )
+            TypeExpr::Vec(_inner) => {
+                if let (
+                    TypeExpr::Vec(inner),
+                    Some(Transport::Span(SpanContent::Composite(layout))),
+                ) = (ty, abi_transport)
+                    && let TypeExpr::Record(record_id) = inner.as_ref()
+                    && record_id == &layout.record_id
                 {
-                    let native_expr =
-                        vec_pointer_sized_primitive_param_encode_expr(&field_name, parameter_index);
                     return JavaParam {
                         name: field_name,
                         java_type,
                         native_type: "ByteBuffer".to_string(),
-                        native_expr,
+                        native_expr: vec_blittable_record_param_encode_expr(record_id, name),
                     };
                 }
                 if let Some(Transport::Span(SpanContent::Scalar(ScalarOrigin::CStyleEnum {
@@ -670,6 +661,10 @@ impl<'a> JavaLowerer<'a> {
 
     fn input_write_ops(&self, param: &AbiParam) -> Option<WriteSeq> {
         match &param.role {
+            ParamRole::Input {
+                transport: Transport::Span(SpanContent::Composite(_)),
+                ..
+            } => None,
             ParamRole::Input {
                 encode_ops: Some(encode_ops),
                 ..
@@ -1111,12 +1106,10 @@ impl<'a> JavaLowerer<'a> {
         let params: Vec<JavaParam> = ctor
             .params()
             .iter()
-            .enumerate()
-            .map(|(param_index, param_def)| {
+            .map(|param_def| {
                 self.lower_param(
                     param_def.name.as_str(),
                     &param_def.type_expr,
-                    param_index,
                     call,
                     &wire_writers,
                 )
@@ -1142,12 +1135,10 @@ impl<'a> JavaLowerer<'a> {
         let params: Vec<JavaParam> = method
             .params
             .iter()
-            .enumerate()
-            .map(|(param_index, param_def)| {
+            .map(|param_def| {
                 self.lower_param(
                     param_def.name.as_str(),
                     &param_def.type_expr,
-                    param_index,
                     &call,
                     &wire_writers,
                 )
@@ -1556,7 +1547,7 @@ impl<'a> JavaLowerer<'a> {
         let interface_name = self.callback_java_type(&callback.id);
         let callbacks_class_name = self.callback_bridge_name(&callback.id);
         let params = self.lower_bridge_params(&method.params, abi_method);
-        let return_info = self.lower_bridge_return(&method.returns, &abi_method.returns, &abi_method.error);
+        let return_info = self.lower_bridge_return(&method.returns, &abi_method.returns);
         JavaClosureInterface {
             interface_name,
             callback_id: callback.id.as_str().to_string(),
@@ -1615,7 +1606,7 @@ impl<'a> JavaLowerer<'a> {
             name: NamingConvention::method_name(method.id.as_str()),
             ffi_name: abi_method.vtable_field.as_str().to_string(),
             params: self.lower_bridge_params(&method.params, abi_method),
-            return_info: self.lower_bridge_return(&method.returns, &abi_method.returns, &abi_method.error),
+            return_info: self.lower_bridge_return(&method.returns, &abi_method.returns),
         }
     }
 
@@ -1628,7 +1619,7 @@ impl<'a> JavaLowerer<'a> {
             name: NamingConvention::method_name(method.id.as_str()),
             ffi_name: abi_method.vtable_field.as_str().to_string(),
             params: self.lower_bridge_params(&method.params, abi_method),
-            return_info: self.lower_bridge_return(&method.returns, &abi_method.returns, &abi_method.error),
+            return_info: self.lower_bridge_return(&method.returns, &abi_method.returns),
             invoker_suffix: self.invoker_suffix_from_return_shape(&abi_method.returns),
         }
     }
@@ -1684,17 +1675,16 @@ impl<'a> JavaLowerer<'a> {
     }
 
     fn callback_direct_param_jni_type(&self, abi_param: &AbiParam) -> String {
-        match abi_param.abi_type {
-            crate::ir::plan::AbiType::Bool => "boolean".to_string(),
-            crate::ir::plan::AbiType::I8 | crate::ir::plan::AbiType::U8 => "byte".to_string(),
-            crate::ir::plan::AbiType::I16 | crate::ir::plan::AbiType::U16 => "short".to_string(),
-            crate::ir::plan::AbiType::I32 | crate::ir::plan::AbiType::U32 => "int".to_string(),
-            crate::ir::plan::AbiType::I64
-            | crate::ir::plan::AbiType::U64
-            | crate::ir::plan::AbiType::ISize
-            | crate::ir::plan::AbiType::USize => "long".to_string(),
-            crate::ir::plan::AbiType::F32 => "float".to_string(),
-            crate::ir::plan::AbiType::F64 => "double".to_string(),
+        match &abi_param.abi_type {
+            AbiType::Bool => "boolean".to_string(),
+            AbiType::I8 | AbiType::U8 => "byte".to_string(),
+            AbiType::I16 | AbiType::U16 => "short".to_string(),
+            AbiType::I32 | AbiType::U32 => "int".to_string(),
+            AbiType::I64 | AbiType::U64 | AbiType::ISize | AbiType::USize => {
+                "long".to_string()
+            }
+            AbiType::F32 => "float".to_string(),
+            AbiType::F64 => "double".to_string(),
             other => panic!("unsupported Java scalar callback ABI type: {:?}", other),
         }
     }
@@ -1708,7 +1698,6 @@ impl<'a> JavaLowerer<'a> {
         &self,
         returns: &ReturnDef,
         ret_shape: &ReturnShape,
-        error: &ErrorTransport,
     ) -> Option<JavaBridgeReturn> {
         match returns {
             ReturnDef::Void => None,
@@ -1716,7 +1705,7 @@ impl<'a> JavaLowerer<'a> {
                 self.lower_value_bridge_return(ty, ret_shape),
             )),
             ReturnDef::Result { ok, err } => Some(JavaBridgeReturn::Result(
-                self.lower_result_bridge_return(ok, err, ret_shape, error),
+                self.lower_result_bridge_return(ok, err, ret_shape),
             )),
         }
     }
@@ -1793,7 +1782,6 @@ impl<'a> JavaLowerer<'a> {
         ok: &TypeExpr,
         err: &TypeExpr,
         ret_shape: &ReturnShape,
-        error: &ErrorTransport,
     ) -> JavaResultBridgeReturn {
         let encode_ops = ret_shape
             .encode_ops
@@ -1815,7 +1803,7 @@ impl<'a> JavaLowerer<'a> {
             default_value: "new byte[0]".to_string(),
             encode_size_expr: size_expr,
             encode_expr,
-            error_capture: self.callback_error_capture(err, error),
+            error_capture: self.callback_error_capture(err),
         }
     }
 
@@ -1841,11 +1829,7 @@ impl<'a> JavaLowerer<'a> {
         }
     }
 
-    fn callback_error_capture(
-        &self,
-        err: &TypeExpr,
-        _error: &ErrorTransport,
-    ) -> JavaCallbackErrorCapture {
+    fn callback_error_capture(&self, err: &TypeExpr) -> JavaCallbackErrorCapture {
         let exception_class = match err {
             TypeExpr::Enum(id) => self
                 .ffi
@@ -2084,8 +2068,12 @@ fn vec_c_style_enum_param_encode_expr(name: &str, tag_type: PrimitiveType) -> St
     }
 }
 
-fn vec_pointer_sized_primitive_param_encode_expr(name: &str, slot: usize) -> String {
-    format!("WireReader.encodeLongVecInput({}, {})", name, slot)
+fn vec_blittable_record_param_encode_expr(record_id: &RecordId, name: &str) -> String {
+    format!(
+        "{}.encodeBlittableVecInput({})",
+        NamingConvention::class_name(record_id.as_str()),
+        name
+    )
 }
 
 #[cfg(test)]
@@ -2094,12 +2082,13 @@ mod tests {
     use crate::ir::Lowerer as IrLowerer;
     use crate::ir::contract::{FfiContract, PackageInfo};
     use crate::ir::definitions::{
-        CStyleVariant, ClassDef, ConstructorDef, DataVariant, EnumDef, EnumRepr, FieldDef,
-        FunctionDef, MethodDef, ParamDef, ParamPassing, Receiver, RecordDef, ReturnDef,
-        VariantPayload,
+        CStyleVariant, CallbackKind, CallbackMethodDef, CallbackTraitDef, ClassDef,
+        ConstructorDef, DataVariant, EnumDef, EnumRepr, FieldDef, FunctionDef, MethodDef,
+        ParamDef, ParamPassing, Receiver, RecordDef, ReturnDef, VariantPayload,
     };
     use crate::ir::ids::{
-        ClassId, EnumId, FieldName, FunctionId, MethodId, ParamName, RecordId, VariantName,
+        CallbackId, ClassId, EnumId, FieldName, FunctionId, MethodId, ParamName, RecordId,
+        VariantName,
     };
     use crate::ir::types::{PrimitiveType, TypeExpr};
     use crate::render::java::JavaVersion;
@@ -2173,6 +2162,21 @@ mod tests {
             is_async: false,
             doc: None,
             deprecated: None,
+        }
+    }
+
+    fn callback_method(
+        id: &str,
+        params: Vec<ParamDef>,
+        returns: ReturnDef,
+        is_async: bool,
+    ) -> CallbackMethodDef {
+        CallbackMethodDef {
+            id: MethodId::new(id),
+            params,
+            returns,
+            is_async,
+            doc: None,
         }
     }
 
@@ -2887,6 +2891,60 @@ mod tests {
     }
 
     #[test]
+    fn function_vec_isize_param_uses_long_array() {
+        let mut contract = empty_contract();
+        contract.functions.push(function(
+            "echo_vec_isize",
+            vec![param(
+                "values",
+                TypeExpr::Vec(Box::new(TypeExpr::Primitive(PrimitiveType::ISize))),
+            )],
+            ReturnDef::Void,
+        ));
+
+        let module = lower(&contract);
+        let func = &module.functions[0];
+        let param = &func.params[0];
+        assert_eq!(param.java_type, "long[]");
+        assert_eq!(param.native_type, "long[]");
+        assert_eq!(param.native_expr, "values");
+    }
+
+    #[test]
+    fn function_vec_blittable_record_param_uses_raw_blittable_buffer() {
+        let mut contract = empty_contract();
+        contract.catalog.insert_record(RecordDef {
+            is_repr_c: true,
+            id: RecordId::new("Point"),
+            fields: vec![
+                field("x", TypeExpr::Primitive(PrimitiveType::F64)),
+                field("y", TypeExpr::Primitive(PrimitiveType::F64)),
+            ],
+            constructors: vec![],
+            methods: vec![],
+            doc: None,
+            deprecated: None,
+        });
+        contract.functions.push(function(
+            "make_polygon",
+            vec![param(
+                "points",
+                TypeExpr::Vec(Box::new(TypeExpr::Record(RecordId::new("Point")))),
+            )],
+            ReturnDef::Void,
+        ));
+
+        let module = lower(&contract);
+        let func = &module.functions[0];
+        assert_eq!(func.params[0].native_type, "ByteBuffer");
+        assert!(func.wire_writers.is_empty());
+        assert_eq!(
+            func.params[0].native_expr,
+            "Point.encodeBlittableVecInput(points)"
+        );
+    }
+
+    #[test]
     fn function_option_return_is_wire_decode() {
         let mut contract = empty_contract();
         contract.functions.push(function(
@@ -3039,6 +3097,66 @@ mod tests {
 
         let module = lower(&contract);
         assert_eq!(module.functions.len(), 2);
+    }
+
+    #[test]
+    fn async_callback_methods_are_preserved() {
+        let mut contract = empty_contract();
+        contract.catalog.insert_callback(CallbackTraitDef {
+            id: CallbackId::new("Listener"),
+            methods: vec![callback_method(
+                "on_value",
+                vec![param("value", TypeExpr::Primitive(PrimitiveType::I32))],
+                ReturnDef::Value(TypeExpr::Primitive(PrimitiveType::I32)),
+                true,
+            )],
+            kind: CallbackKind::Trait,
+            doc: None,
+        });
+
+        let module = lower(&contract);
+        let callback = module
+            .callbacks
+            .iter()
+            .find(|callback| callback.interface_name == "Listener")
+            .expect("callback should be lowered");
+
+        assert!(callback.sync_methods.is_empty());
+        assert_eq!(callback.async_methods.len(), 1);
+        assert_eq!(module.async_callback_invokers.len(), 1);
+        assert_eq!(module.async_callback_invokers[0].result_jni_type(), "int");
+    }
+
+    #[test]
+    fn encoded_callback_params_follow_abi_decode_path() {
+        let mut contract = empty_contract();
+        contract.catalog.insert_callback(CallbackTraitDef {
+            id: CallbackId::new("Decoder"),
+            methods: vec![callback_method(
+                "on_values",
+                vec![param(
+                    "values",
+                    TypeExpr::Vec(Box::new(TypeExpr::Primitive(PrimitiveType::I32))),
+                )],
+                ReturnDef::Void,
+                false,
+            )],
+            kind: CallbackKind::Trait,
+            doc: None,
+        });
+
+        let module = lower(&contract);
+        let callback = module
+            .callbacks
+            .iter()
+            .find(|callback| callback.interface_name == "Decoder")
+            .expect("callback should be lowered");
+        let method = &callback.sync_methods[0];
+        let param = &method.params[0];
+
+        assert_eq!(param.jni_type, "java.nio.ByteBuffer");
+        assert!(param.decode_expr.contains("WireReader.decodeBuffer"));
+        assert!(param.decode_expr.contains("reader.readIntArray()"));
     }
 
     #[test]

@@ -57,10 +57,7 @@ public final class {{ record.class_name }} {
     byte[] wireEncodeToBytes() {
         try (WireWriter wire = new WireWriter(wireEncodedSize())) {
             wireEncodeTo(wire);
-            java.nio.ByteBuffer buf = wire.toBuffer();
-            byte[] bytes = new byte[buf.remaining()];
-            buf.get(bytes);
-            return bytes;
+            return wire.toByteArray();
         }
     }
 
@@ -118,6 +115,16 @@ public final class {{ record.class_name }} {
                 writeBlittableToBuffer(buf, base, items.get(index));
             }
         });
+    }
+
+    static ByteBuffer encodeBlittableVecInput(List<{{ record.class_name }}> items) {
+        int byteCount = items.size() * STRUCT_SIZE;
+        ByteBuffer buf = ByteBuffer.allocateDirect(byteCount).order(ByteOrder.LITTLE_ENDIAN);
+        for (int index = 0; index < items.size(); index++) {
+            int base = index * STRUCT_SIZE;
+            writeBlittableToBuffer(buf, base, items.get(index));
+        }
+        return buf;
     }
 {% endif %}
 
