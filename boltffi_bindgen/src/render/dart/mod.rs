@@ -1,4 +1,5 @@
 mod emit;
+mod lower;
 pub mod names;
 
 pub use emit::*;

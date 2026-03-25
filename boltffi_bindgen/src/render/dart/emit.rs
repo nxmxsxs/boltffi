@@ -1,6 +1,8 @@
 use crate::ir::types::{PrimitiveType, TypeExpr};
 use crate::render::dart::NamingConvention;
 
+pub struct DartEmitter {}
+
 fn render_type_name(name: &str) -> String {
     NamingConvention::class_name(name)
 }
