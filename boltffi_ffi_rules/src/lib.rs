@@ -899,6 +899,82 @@ pub mod transport {
         CStyleEnumTag,
     }
 
+    #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+    pub enum ScalarParamStrategy {
+        PrimitiveValue,
+        CStyleEnumTag,
+    }
+
+    #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+    pub enum DirectBufferParamStrategy {
+        ScalarElements,
+        CompositeElements,
+    }
+
+    #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+    pub enum WireParamStrategy {
+        SingleValue,
+        Vec,
+        Option,
+    }
+
+    #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+    pub enum CallbackParamStyle {
+        InlineClosure,
+        ImplTrait,
+        BoxedDyn,
+        ArcDyn,
+    }
+
+    #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+    pub enum ParamValueStrategy {
+        Scalar(ScalarParamStrategy),
+        CompositeValue,
+        Utf8String,
+        DirectBuffer(DirectBufferParamStrategy),
+        WireEncoded(WireParamStrategy),
+        ObjectHandle {
+            nullable: bool,
+        },
+        CallbackHandle {
+            nullable: bool,
+            style: CallbackParamStyle,
+        },
+    }
+
+    #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+    pub enum ParamPassingStrategy {
+        ByValue,
+        SharedRef,
+        MutableRef,
+    }
+
+    #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+    pub struct ParamContract {
+        value_strategy: ParamValueStrategy,
+        passing_strategy: ParamPassingStrategy,
+    }
+
+    impl ParamContract {
+        pub fn new(
+            value_strategy: ParamValueStrategy,
+            passing_strategy: ParamPassingStrategy,
+        ) -> Self {
+            Self {
+                value_strategy,
+                passing_strategy,
+            }
+        }
+
+        pub fn value_strategy(self) -> ParamValueStrategy {
+            self.value_strategy
+        }
+
+        pub fn passing_strategy(self) -> ParamPassingStrategy {
+            self.passing_strategy
+        }
+    }
+
     /// Describes the value itself that comes back across the boundary.
     ///
     /// This is about the returned value, not about the surrounding call shape.
