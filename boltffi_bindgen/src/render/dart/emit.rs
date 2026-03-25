@@ -1,7 +1,39 @@
+use askama::Template as _;
+
 use crate::ir::types::{PrimitiveType, TypeExpr};
+use crate::ir::{AbiContract, FfiContract};
 use crate::render::dart::NamingConvention;
+use crate::render::dart::lower::DartLowerer;
+use crate::render::dart::templates::EnhancedEnumTemplate;
 
 pub struct DartEmitter {}
+
+impl DartEmitter {
+    pub fn emit(
+        ffi: &FfiContract,
+        abi: &AbiContract,
+        package_name: String,
+        module_name: String,
+    ) -> String {
+        let lowerer = DartLowerer::new(ffi, abi, package_name, module_name);
+        let library = lowerer.library();
+
+        let mut output = String::new();
+
+        for en in &library.enums {
+            let template = match en.kind {
+                super::DartEnumKind::CStyle | super::DartEnumKind::Enhanced => {
+                    EnhancedEnumTemplate { dart_enum: &en }
+                }
+                super::DartEnumKind::SealedClass => todo!(),
+            };
+
+            output.push_str(&template.render().unwrap());
+        }
+
+        output
+    }
+}
 
 fn render_type_name(name: &str) -> String {
     NamingConvention::class_name(name)
