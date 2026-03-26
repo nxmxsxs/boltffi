@@ -820,6 +820,21 @@ pub mod transport {
         }
     }
 
+    #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+    pub enum EnumTagStrategy {
+        Discriminant,
+        OrdinalIndex,
+    }
+
+    impl EnumTagStrategy {
+        pub fn resolve_tag(self, ordinal: usize, discriminant: i128) -> i128 {
+            match self {
+                Self::Discriminant => discriminant,
+                Self::OrdinalIndex => ordinal as i128,
+            }
+        }
+    }
+
     /// Describes the encoded shape used when a return value is already crossing
     /// the boundary as bytes.
     ///

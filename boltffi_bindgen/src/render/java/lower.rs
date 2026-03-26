@@ -1,8 +1,8 @@
 use std::collections::{HashMap, HashSet};
 
 use boltffi_ffi_rules::transport::{
-    EncodedReturnStrategy, ReturnInvocationContext, ReturnPlatform, ScalarReturnStrategy,
-    ValueReturnMethod, ValueReturnStrategy,
+    EncodedReturnStrategy, EnumTagStrategy, ReturnInvocationContext, ReturnPlatform,
+    ScalarReturnStrategy, ValueReturnMethod, ValueReturnStrategy,
 };
 
 use super::JavaOptions;
@@ -18,7 +18,6 @@ use crate::ir::abi::{
     AbiCall, AbiContract, AbiEnum, AbiEnumField, AbiEnumPayload, AbiEnumVariant, AbiParam,
     AbiRecord, CallId, CallMode, ParamRole,
 };
-use crate::ir::codec::EnumTagStrategy;
 use crate::ir::contract::FfiContract;
 use crate::ir::definitions::{
     ClassDef, ConstructorDef, EnumDef, EnumRepr, FieldDef, FunctionDef, MethodDef, Receiver,
