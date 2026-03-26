@@ -1113,6 +1113,90 @@ mod tests {
     }
 
     #[test]
+    fn composite_span_param_uses_vec_codec_ops() {
+        let mut contract = test_contract();
+        let record_id = RecordId::new("Vec2");
+        contract.catalog.insert_record(RecordDef {
+            is_repr_c: true,
+            id: record_id.clone(),
+            fields: vec![
+                FieldDef {
+                    name: FieldName::new("x"),
+                    type_expr: TypeExpr::Primitive(PrimitiveType::F64),
+                    doc: None,
+                    default: None,
+                },
+                FieldDef {
+                    name: FieldName::new("y"),
+                    type_expr: TypeExpr::Primitive(PrimitiveType::F64),
+                    doc: None,
+                    default: None,
+                },
+            ],
+            constructors: vec![],
+            methods: vec![],
+            doc: None,
+            deprecated: None,
+        });
+        contract.functions.push(FunctionDef {
+            id: FunctionId::new("take_points"),
+            params: vec![ParamDef {
+                name: ParamName::new("points"),
+                type_expr: TypeExpr::Vec(Box::new(TypeExpr::Record(record_id.clone()))),
+                passing: ParamPassing::Value,
+                doc: None,
+            }],
+            returns: ReturnDef::Void,
+            is_async: false,
+            doc: None,
+            deprecated: None,
+        });
+
+        let abi = lowerer_for_contract(&contract).to_abi_contract();
+        let points_param = abi
+            .calls
+            .iter()
+            .find_map(|call| match &call.id {
+                CallId::Function(function_id) if function_id.as_str() == "take_points" => call
+                    .params
+                    .iter()
+                    .find(|param| param.name.as_str() == "points"),
+                _ => None,
+            })
+            .expect("points param should exist");
+
+        let ParamRole::Input {
+            decode_ops: Some(decode_ops),
+            encode_ops: Some(encode_ops),
+            ..
+        } = &points_param.role
+        else {
+            panic!("composite span param should expose vec codec ops");
+        };
+
+        match &decode_ops.ops[0] {
+            ReadOp::Vec { element, .. } => {
+                assert!(matches!(element.ops[0], ReadOp::Record { .. }));
+            }
+            other => panic!("expected vec decode op, got {:?}", other),
+        }
+
+        match &encode_ops.ops[0] {
+            WriteOp::Vec {
+                value,
+                element_type,
+                element,
+                ..
+            } => {
+                assert_eq!(value, &ValueExpr::Named("points".to_string()));
+                assert_eq!(element_type, &TypeExpr::Record(record_id));
+                assert!(matches!(element.ops[0], WriteOp::Record { .. }));
+            }
+            other => panic!("expected vec write op, got {:?}", other),
+        }
+    }
+
+    #[test]
     fn build_codec_result() {
         let contract = test_contract();
         let lowerer = lowerer_for_contract(&contract);

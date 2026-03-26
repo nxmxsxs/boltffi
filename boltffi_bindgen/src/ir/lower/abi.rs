@@ -717,8 +717,8 @@ impl<'c> Lowerer<'c> {
                 SpanContent::Scalar(_) | SpanContent::Utf8 => {
                     make_span_params(span.clone(), param.contract, param.mutability, None, None)
                 }
-                SpanContent::Composite(layout) => {
-                    let codec = self.build_codec(&TypeExpr::Record(layout.record_id.clone()));
+                SpanContent::Composite(_) => {
+                    let codec = self.codec_from_span_content(content);
                     let decode_ops = self.expand_decode(&codec);
                     let encode_ops = self
                         .expand_encode(&codec, ValueExpr::Named(param.name.as_str().to_string()));
@@ -864,7 +864,10 @@ impl<'c> Lowerer<'c> {
             ReturnDef::Value(ty) => {
                 let transport = self.classify_type(ty);
                 let shape = match &transport {
-                    Transport::Scalar(_) => self.return_shape_from_transport(&transport),
+                    Transport::Scalar(_)
+                    | Transport::Composite(_)
+                    | Transport::Handle { .. }
+                    | Transport::Callback { .. } => self.return_shape_from_transport(&transport),
                     _ => {
                         let codec = self.build_codec(ty);
                         let decode_ops = self.expand_decode(&codec);
