@@ -7,7 +7,9 @@ use crate::ir::{
 };
 use crate::render::dart::NamingConvention;
 use crate::render::dart::lower::DartLowerer;
-use crate::render::dart::templates::EnhancedEnumTemplate;
+use crate::render::dart::templates::{
+    EnhancedEnumTemplate, RecordTemplate, SealedClassEnumTemplate,
+};
 
 pub struct DartEmitter {}
 
@@ -22,6 +24,11 @@ impl DartEmitter {
         let library = lowerer.library();
 
         let mut output = String::new();
+
+        for r in &library.records {
+            output.push_str(RecordTemplate { record: r }.render().unwrap().as_str());
+            output.push('\n');
+        }
 
         for en in &library.enums {
             let template = match en.kind {

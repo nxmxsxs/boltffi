@@ -1,11 +1,15 @@
 use crate::{
     ir::{
-        AbiEnumField, AbiEnumPayload, AbiEnumVariant, EnumDef, EnumRepr, abi::AbiContract,
+        AbiEnumField, AbiEnumPayload, AbiEnumVariant, AbiRecord, EnumDef, EnumRepr, FieldDef,
+        FieldName, ReadOp, ReadSeq, RecordDef, RecordId, WriteOp, WriteSeq, abi::AbiContract,
         contract::FfiContract,
     },
     render::{
         TypeMappings,
-        dart::{DartEnum, DartEnumKind, DartEnumVariant, DartLibrary, NamingConvention},
+        dart::{
+            DartEnum, DartEnumKind, DartEnumVariant, DartLibrary, DartRecord, DartRecordField,
+            NamingConvention,
+        },
     },
 };
 
@@ -43,7 +47,14 @@ impl<'a> DartLowerer<'a> {
             .map(|e| self.lower_enum(e))
             .collect();
 
-        DartLibrary { enums }
+        let records = self
+            .ffi
+            .catalog
+            .all_records()
+            .map(|r| self.lower_record(r))
+            .collect();
+
+        DartLibrary { enums, records }
     }
 
     fn lower_enum_field(&self, field: &AbiEnumField) -> super::DartEnumField {
@@ -128,5 +139,69 @@ impl<'a> DartLowerer<'a> {
             tag_type,
             variants: enum_variants,
         }
+    }
+
+    fn abi_record_for(&self, record_id: &RecordId) -> Option<&AbiRecord> {
+        self.abi
+            .records
+            .iter()
+            .find(|record| record.id == *record_id)
+    }
+
+    fn record_field_read_seq(
+        &self,
+        abi_record: &AbiRecord,
+        field_name: &FieldName,
+    ) -> Option<ReadSeq> {
+        match abi_record.decode_ops.ops.first() {
+            Some(ReadOp::Record { fields, .. }) => fields
+                .iter()
+                .find(|field| field.name == *field_name)
+                .map(|field| field.seq.clone()),
+            _ => None,
+        }
+    }
+
+    fn record_field_write_seq(
+        &self,
+        abi_record: &AbiRecord,
+        field_name: &FieldName,
+    ) -> Option<WriteSeq> {
+        match abi_record.encode_ops.ops.first() {
+            Some(WriteOp::Record { fields, .. }) => fields
+                .iter()
+                .find(|field| field.name == *field_name)
+                .map(|field| field.seq.clone()),
+            _ => None,
+        }
+    }
+
+    fn lower_record_field(&self, field: &FieldDef, abi_record: &AbiRecord) -> DartRecordField {
+        let record_field_write_seq = self
+            .record_field_write_seq(abi_record, &field.name)
+            .unwrap();
+        let record_field_read_seq = self.record_field_read_seq(abi_record, &field.name).unwrap();
+
+        DartRecordField {
+            name: field.name.to_string(),
+            offset: 0,
+            dart_type: super::emit::type_expr_dart_type(&field.type_expr),
+            wire_decode_expr: super::emit::emit_reader_read(&record_field_read_seq),
+            wire_encode_expr: super::emit::emit_write_expr(&record_field_write_seq, "writer"),
+        }
+    }
+
+    fn lower_record(&self, record: &RecordDef) -> DartRecord {
+        let name = NamingConvention::class_name(record.id.as_str());
+
+        let abi_record = self.abi_record_for(&record.id).unwrap();
+
+        let fields = record
+            .fields
+            .iter()
+            .map(|f| self.lower_record_field(f, abi_record))
+            .collect();
+
+        DartRecord { name, fields }
     }
 }
