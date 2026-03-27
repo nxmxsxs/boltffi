@@ -7,6 +7,12 @@ pub struct EnhancedEnumTemplate<'a> {
 }
 
 #[derive(Template)]
+#[template(path = "render_dart/sealed_class_enum.txt", escape = "none")]
+pub struct SealedClassEnumTemplate<'a> {
+    pub dart_enum: &'a super::DartEnum,
+}
+
+#[derive(Template)]
 #[template(path = "render_dart/record.txt", escape = "none")]
 pub struct RecordTemplate<'a> {
     pub record: &'a super::DartRecord

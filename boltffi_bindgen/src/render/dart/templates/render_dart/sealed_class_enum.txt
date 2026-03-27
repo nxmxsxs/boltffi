@@ -1,0 +1,50 @@
+sealed class {{ dart_enum.name }} {
+  const {{ dart_enum.name }}();
+{% for variant in dart_enum.variants %}
+  factory {{ dart_enum.name }}.{{ variant.name }}({
+{%- for field in variant.fields %}required {{ field.dart_type }} {{ field.name }}{% if !loop.last %}, {% endif %}{%- endfor %}}) = {{ variant.class_name }};
+{% endfor %}
+  factory {{ dart_enum.name }}.decode(WireReader reader) {
+    final tag = reader.readI32();
+
+    return switch (tag) {
+      {%- for variant in dart_enum.variants %}
+      {{ variant.tag }} => {{ dart_enum.name }}.{{ variant.name }}({%- for field in variant.fields %}{{ field.name }}: {{ field.wire_decode_expr }}{%- if !loop.last %}, {% endif %}{%- endfor %}),{%- endfor %}
+      _ => throw ArgumentError('Unknown {{ dart_enum.name }} tag: $tag'),
+    };
+  }
+
+  int wireEncodedSize() => 4 + switch (this) {
+{%- for variant in dart_enum.variants %}
+    {{ variant.class_name }}({% for field in variant.fields %}:final {{ field.name }}{%- if !loop.last %}, {% endif %}{% endfor %}) => {% for field in variant.fields %}{{ field.wire_size_expr }}{% if !loop.last %} + {% endif %}{% endfor %},
+{%- endfor %}
+  };
+
+  void wireEncodeTo(WireWriter writer) {
+    switch (this) {
+{%- for variant in dart_enum.variants %}
+      case {{ variant.class_name }}({% for field in variant.fields%}:final {{ field.name }}{% if !loop.last %}, {% endif %}{% endfor %}):
+        writer.writeI32({{ variant.tag }});
+{%- for field in variant.fields %}
+        {{ field.wire_encode_expr }};
+{%- endfor %}
+{%- endfor %}
+    }
+  }
+}
+{% for variant in dart_enum.variants %}
+final class {{ variant.class_name }} extends {{ dart_enum.name }} {
+  {%- for field in variant.fields %}
+  final {{ field.dart_type }} {{ field.name }};
+  {%- endfor %}
+
+  const {{ variant.class_name }}({
+{%- for field in variant.fields %}required this.{{ field.name }}{% if !loop.last %}, {% endif %}{% endfor -%}
+  });
+
+  @override
+  String toString() {
+    return "{{ variant.class_name }} { {% for field in variant.fields %}{{ field.name }}=${{field.name}}{%if !loop.last %}, {% endif %}{% endfor %} }";
+  }
+}
+{% endfor %}

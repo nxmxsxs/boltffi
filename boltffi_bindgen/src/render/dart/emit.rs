@@ -31,14 +31,16 @@ impl DartEmitter {
         }
 
         for en in &library.enums {
-            let template = match en.kind {
+            let src = match en.kind {
                 super::DartEnumKind::CStyle | super::DartEnumKind::Enhanced => {
-                    EnhancedEnumTemplate { dart_enum: &en }
+                    EnhancedEnumTemplate { dart_enum: en }.render().unwrap()
                 }
-                super::DartEnumKind::SealedClass => todo!(),
+                super::DartEnumKind::SealedClass => {
+                    SealedClassEnumTemplate { dart_enum: en }.render().unwrap()
+                }
             };
 
-            output.push_str(&template.render().unwrap());
+            output.push_str(&src);
         }
 
         output

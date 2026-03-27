@@ -65,9 +65,9 @@ impl<'a> DartLowerer<'a> {
         super::DartEnumField {
             name: field_name,
             dart_type,
-            wire_decode_expr: todo!(),
-            wire_size_expr: todo!(),
-            wire_encode_expr: todo!(),
+            wire_decode_expr: super::emit::emit_reader_read(&field.decode),
+            wire_size_expr: super::emit::emit_size_expr(&field.decode.size),
+            wire_encode_expr: super::emit::emit_write_expr(&field.encode, "writer"),
         }
     }
 
@@ -77,16 +77,12 @@ impl<'a> DartLowerer<'a> {
         enum_name: &str,
         enum_kind: DartEnumKind,
     ) -> DartEnumVariant {
-        let variant_name = match enum_kind {
-            DartEnumKind::CStyle | DartEnumKind::Enhanced => {
-                NamingConvention::property_name(variant.name.as_str())
-            }
-            DartEnumKind::SealedClass => format!(
-                "{}{}",
-                enum_name,
-                NamingConvention::class_name(variant.name.as_str())
-            ),
-        };
+        let variant_name = NamingConvention::property_name(variant.name.as_str());
+        let variant_class_name = format!(
+            "{}{}",
+            enum_name,
+            NamingConvention::class_name(variant.name.as_str())
+        );
 
         let fields = match &variant.payload {
             AbiEnumPayload::Unit => Vec::new(),
@@ -100,6 +96,7 @@ impl<'a> DartLowerer<'a> {
 
         DartEnumVariant {
             name: variant_name,
+            class_name: variant_class_name,
             tag: variant.discriminant,
             fields,
         }

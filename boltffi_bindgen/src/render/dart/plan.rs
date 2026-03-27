@@ -20,6 +20,7 @@ pub struct DartEnumField {
 
 pub struct DartEnumVariant {
     pub name: String,
+    pub class_name: String,
     pub tag: i128,
     pub fields: Vec<DartEnumField>,
 }
