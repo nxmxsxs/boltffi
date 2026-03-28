@@ -112,24 +112,18 @@ impl Module {
         self.functions
             .iter()
             .any(|function| function.execution_kind == ExecutionKind::Async)
-            || self
-                .classes
-                .iter()
-                .any(|class| {
-                    class
-                        .methods
-                        .iter()
-                        .any(|method| method.execution_kind == ExecutionKind::Async)
-                })
-            || self
-                .records
-                .iter()
-                .any(|record| {
-                    record
-                        .methods
-                        .iter()
-                        .any(|method| method.execution_kind == ExecutionKind::Async)
-                })
+            || self.classes.iter().any(|class| {
+                class
+                    .methods
+                    .iter()
+                    .any(|method| method.execution_kind == ExecutionKind::Async)
+            })
+            || self.records.iter().any(|record| {
+                record
+                    .methods
+                    .iter()
+                    .any(|method| method.execution_kind == ExecutionKind::Async)
+            })
     }
 
     pub fn has_streams(&self) -> bool {

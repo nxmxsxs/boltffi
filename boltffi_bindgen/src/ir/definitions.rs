@@ -1,5 +1,5 @@
-use boltffi_ffi_rules::classification::{self, FieldPrimitive, PassableCategory};
 use boltffi_ffi_rules::callable::{CallableForm, ExecutionKind};
+use boltffi_ffi_rules::classification::{self, FieldPrimitive, PassableCategory};
 
 use crate::ir::abi::CallId;
 use crate::ir::ids::{

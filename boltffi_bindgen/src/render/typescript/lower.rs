@@ -1,7 +1,7 @@
 use std::collections::{HashMap, HashSet};
 
-use boltffi_ffi_rules::callback as cb_naming;
 use boltffi_ffi_rules::callable::CallableForm;
+use boltffi_ffi_rules::callback as cb_naming;
 use boltffi_ffi_rules::naming::{self, snake_to_camel as camel_case};
 use boltffi_ffi_rules::transport::{
     EncodedReturnStrategy, ErrorReturnStrategy, ValueReturnStrategy,

@@ -169,16 +169,12 @@ impl<'a> KotlinLowerer<'a> {
             .into_iter()
             .filter_map(|id| self.builtin_import(&id))
             .collect::<Vec<_>>();
-        let has_async_callbacks = self
-            .contract
-            .catalog
-            .all_callbacks()
-            .any(|callback| {
-                callback
-                    .methods
-                    .iter()
-                    .any(|method| method.execution_kind() == ExecutionKind::Async)
-            });
+        let has_async_callbacks = self.contract.catalog.all_callbacks().any(|callback| {
+            callback
+                .methods
+                .iter()
+                .any(|method| method.execution_kind() == ExecutionKind::Async)
+        });
         let coroutine_imports = if has_async_callbacks || has_streams {
             vec![
                 "kotlinx.coroutines.CoroutineScope".to_string(),
