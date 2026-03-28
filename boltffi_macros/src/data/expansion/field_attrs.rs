@@ -3,26 +3,18 @@ pub(super) struct BoltffiFieldAttributes;
 #[derive(Clone)]
 enum BoltffiFieldAttribute {
     Default,
-    Extension(syn::Ident),
+    Extension,
 }
 
 impl BoltffiFieldAttributes {
     pub(super) fn strip_from_fields(fields: &mut syn::Fields) {
-        fields
-            .iter_mut()
-            .for_each(|field| Self::strip_from_field(field));
+        fields.iter_mut().for_each(Self::strip_from_field);
     }
 
     fn strip_from_field(field: &mut syn::Field) {
         field
             .attrs
-            .retain(|attribute| match BoltffiFieldAttribute::parse(attribute) {
-                Some(field_attribute) => {
-                    std::mem::drop(field_attribute.attribute_name());
-                    false
-                }
-                None => true,
-            });
+            .retain(|attribute| BoltffiFieldAttribute::parse(attribute).is_none());
     }
 }
 
@@ -37,14 +29,7 @@ impl BoltffiFieldAttribute {
 
         Some(match field_attribute_segment.ident.to_string().as_str() {
             "default" => Self::Default,
-            _ => Self::Extension(field_attribute_segment.ident.clone()),
+            _ => Self::Extension,
         })
-    }
-
-    fn attribute_name(&self) -> String {
-        match self {
-            Self::Default => "default".to_string(),
-            Self::Extension(attribute_name) => attribute_name.to_string(),
-        }
     }
 }

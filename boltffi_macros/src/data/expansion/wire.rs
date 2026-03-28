@@ -15,6 +15,16 @@ pub(super) struct EnumWireExpansion<'a> {
     custom_types: &'a CustomTypeRegistry,
 }
 
+struct StructWireRenderContext<'a> {
+    struct_name: &'a syn::Ident,
+    impl_generics: &'a syn::ImplGenerics<'a>,
+    ty_generics: &'a syn::TypeGenerics<'a>,
+    where_clause: Option<&'a syn::WhereClause>,
+    field_names: &'a [&'a syn::Ident],
+    field_types: &'a [&'a Type],
+    is_blittable: bool,
+}
+
 struct WireTypePlan<'a> {
     rust_type: &'a Type,
     custom_types: &'a CustomTypeRegistry,
@@ -382,35 +392,19 @@ impl<'a> StructWireExpansion<'a> {
             .filter_map(|field| field.ident.as_ref())
             .collect::<Vec<_>>();
         let field_types = fields.iter().map(|field| &field.ty).collect::<Vec<_>>();
-        let is_blittable = StructDataShape::new(self.item_struct).is_blittable();
-        let wire_size_impl = self.render_wire_size_impl(
+        let render_context = StructWireRenderContext {
             struct_name,
-            &impl_generics,
-            &ty_generics,
+            impl_generics: &impl_generics,
+            ty_generics: &ty_generics,
             where_clause,
-            &field_names,
-            &field_types,
-            is_blittable,
-        );
-        let wire_encode_impl = self.render_wire_encode_impl(
-            struct_name,
-            &impl_generics,
-            &ty_generics,
-            where_clause,
-            &field_names,
-            &field_types,
-            is_blittable,
-        );
-        let wire_decode_impl = self.render_wire_decode_impl(
-            struct_name,
-            &impl_generics,
-            &ty_generics,
-            where_clause,
-            &field_names,
-            &field_types,
-            is_blittable,
-        );
-        let blittable_impl = if is_blittable {
+            field_names: &field_names,
+            field_types: &field_types,
+            is_blittable: StructDataShape::new(self.item_struct).is_blittable(),
+        };
+        let wire_size_impl = self.render_wire_size_impl(&render_context);
+        let wire_encode_impl = self.render_wire_encode_impl(&render_context);
+        let wire_decode_impl = self.render_wire_decode_impl(&render_context);
+        let blittable_impl = if render_context.is_blittable {
             quote! {
                 unsafe impl #impl_generics ::boltffi::__private::wire::Blittable for #struct_name #ty_generics #where_clause {}
             }
@@ -453,17 +447,12 @@ impl<'a> StructWireExpansion<'a> {
         }
     }
 
-    fn render_wire_size_impl(
-        &self,
-        struct_name: &syn::Ident,
-        impl_generics: &syn::ImplGenerics,
-        ty_generics: &syn::TypeGenerics,
-        where_clause: Option<&syn::WhereClause>,
-        field_names: &[&syn::Ident],
-        field_types: &[&Type],
-        is_blittable: bool,
-    ) -> TokenStream {
-        if is_blittable {
+    fn render_wire_size_impl(&self, render_context: &StructWireRenderContext<'_>) -> TokenStream {
+        if render_context.is_blittable {
+            let struct_name = render_context.struct_name;
+            let impl_generics = render_context.impl_generics;
+            let ty_generics = render_context.ty_generics;
+            let where_clause = render_context.where_clause;
             return quote! {
                 impl #impl_generics ::boltffi::__private::wire::WireSize for #struct_name #ty_generics #where_clause {
                     fn is_fixed_size() -> bool { true }
@@ -473,7 +462,7 @@ impl<'a> StructWireExpansion<'a> {
             };
         }
 
-        let all_fixed_check = field_types.iter().map(|field_type| {
+        let all_fixed_check = render_context.field_types.iter().map(|field_type| {
             if contains_custom_types(field_type, self.custom_types) {
                 let wire_type = WireTypePlan::new(field_type, self.custom_types).wire_type();
                 quote! { <#wire_type as ::boltffi::__private::wire::WireSize>::is_fixed_size() }
@@ -481,7 +470,7 @@ impl<'a> StructWireExpansion<'a> {
                 quote! { <#field_type as ::boltffi::__private::wire::WireSize>::is_fixed_size() }
             }
         });
-        let fixed_size_sum = field_types.iter().map(|field_type| {
+        let fixed_size_sum = render_context.field_types.iter().map(|field_type| {
             if contains_custom_types(field_type, self.custom_types) {
                 let wire_type = WireTypePlan::new(field_type, self.custom_types).wire_type();
                 quote! { <#wire_type as ::boltffi::__private::wire::WireSize>::fixed_size().unwrap_or(0) }
@@ -489,14 +478,18 @@ impl<'a> StructWireExpansion<'a> {
                 quote! { <#field_type as ::boltffi::__private::wire::WireSize>::fixed_size().unwrap_or(0) }
             }
         });
-        let field_wire_sizes =
-            field_names
-                .iter()
-                .zip(field_types.iter())
-                .map(|(field_name, field_type)| {
-                    WireTypePlan::new(field_type, self.custom_types)
-                        .wire_size_expr(quote! { &self.#field_name })
-                });
+        let field_wire_sizes = render_context
+            .field_names
+            .iter()
+            .zip(render_context.field_types.iter())
+            .map(|(field_name, field_type)| {
+                WireTypePlan::new(field_type, self.custom_types)
+                    .wire_size_expr(quote! { &self.#field_name })
+            });
+        let struct_name = render_context.struct_name;
+        let impl_generics = render_context.impl_generics;
+        let ty_generics = render_context.ty_generics;
+        let where_clause = render_context.where_clause;
 
         quote! {
             impl #impl_generics ::boltffi::__private::wire::WireSize for #struct_name #ty_generics #where_clause {
@@ -521,17 +514,12 @@ impl<'a> StructWireExpansion<'a> {
         }
     }
 
-    fn render_wire_encode_impl(
-        &self,
-        struct_name: &syn::Ident,
-        impl_generics: &syn::ImplGenerics,
-        ty_generics: &syn::TypeGenerics,
-        where_clause: Option<&syn::WhereClause>,
-        field_names: &[&syn::Ident],
-        field_types: &[&Type],
-        is_blittable: bool,
-    ) -> TokenStream {
-        if is_blittable {
+    fn render_wire_encode_impl(&self, render_context: &StructWireRenderContext<'_>) -> TokenStream {
+        if render_context.is_blittable {
+            let struct_name = render_context.struct_name;
+            let impl_generics = render_context.impl_generics;
+            let ty_generics = render_context.ty_generics;
+            let where_clause = render_context.where_clause;
             return quote! {
                 impl #impl_generics ::boltffi::__private::wire::WireEncode for #struct_name #ty_generics #where_clause {
                     const IS_BLITTABLE: bool = true;
@@ -548,22 +536,24 @@ impl<'a> StructWireExpansion<'a> {
             };
         }
 
-        let encode_fields =
-            field_names
-                .iter()
-                .zip(field_types.iter())
-                .map(|(field_name, field_type)| {
-                    let field_buffer = syn::Ident::new(
-                        &format!("__boltffi_buf_{}", field_name),
-                        field_name.span(),
-                    );
-                    let encode_expr = WireTypePlan::new(field_type, self.custom_types)
-                        .encode_to_expr(quote! { &self.#field_name }, quote! { #field_buffer });
-                    quote! {
-                        let #field_buffer = &mut buf[written..];
-                        written += #encode_expr;
-                    }
-                });
+        let encode_fields = render_context
+            .field_names
+            .iter()
+            .zip(render_context.field_types.iter())
+            .map(|(field_name, field_type)| {
+                let field_buffer =
+                    syn::Ident::new(&format!("__boltffi_buf_{}", field_name), field_name.span());
+                let encode_expr = WireTypePlan::new(field_type, self.custom_types)
+                    .encode_to_expr(quote! { &self.#field_name }, quote! { #field_buffer });
+                quote! {
+                    let #field_buffer = &mut buf[written..];
+                    written += #encode_expr;
+                }
+            });
+        let struct_name = render_context.struct_name;
+        let impl_generics = render_context.impl_generics;
+        let ty_generics = render_context.ty_generics;
+        let where_clause = render_context.where_clause;
 
         quote! {
             impl #impl_generics ::boltffi::__private::wire::WireEncode for #struct_name #ty_generics #where_clause {
@@ -576,22 +566,18 @@ impl<'a> StructWireExpansion<'a> {
         }
     }
 
-    fn render_wire_decode_impl(
-        &self,
-        struct_name: &syn::Ident,
-        impl_generics: &syn::ImplGenerics,
-        ty_generics: &syn::TypeGenerics,
-        where_clause: Option<&syn::WhereClause>,
-        field_names: &[&syn::Ident],
-        field_types: &[&Type],
-        is_blittable: bool,
-    ) -> TokenStream {
-        let field_names_for_struct = field_names
+    fn render_wire_decode_impl(&self, render_context: &StructWireRenderContext<'_>) -> TokenStream {
+        let field_names_for_struct = render_context
+            .field_names
             .iter()
             .map(|field_name| quote! { #field_name })
             .collect::<Vec<_>>();
 
-        if is_blittable {
+        if render_context.is_blittable {
+            let struct_name = render_context.struct_name;
+            let impl_generics = render_context.impl_generics;
+            let ty_generics = render_context.ty_generics;
+            let where_clause = render_context.where_clause;
             return quote! {
                 impl #impl_generics ::boltffi::__private::wire::WireDecode for #struct_name #ty_generics #where_clause {
                     const IS_BLITTABLE: bool = true;
@@ -608,10 +594,11 @@ impl<'a> StructWireExpansion<'a> {
             };
         }
 
-        let struct_name_literal = struct_name.to_string();
-        let decode_fields = field_names
+        let struct_name_literal = render_context.struct_name.to_string();
+        let decode_fields = render_context
+            .field_names
             .iter()
-            .zip(field_types.iter())
+            .zip(render_context.field_types.iter())
             .map(|(field_name, field_type)| {
                 let decode_expr = WireTypePlan::new(field_type, self.custom_types)
                     .decode_from_expr(quote! { &buf[position..] });
@@ -625,6 +612,10 @@ impl<'a> StructWireExpansion<'a> {
                     position += size;
                 }
             });
+        let struct_name = render_context.struct_name;
+        let impl_generics = render_context.impl_generics;
+        let ty_generics = render_context.ty_generics;
+        let where_clause = render_context.where_clause;
 
         quote! {
             impl #impl_generics ::boltffi::__private::wire::WireDecode for #struct_name #ty_generics #where_clause {

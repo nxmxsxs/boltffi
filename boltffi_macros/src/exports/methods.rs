@@ -46,6 +46,16 @@ struct StaticMethodExport<'a> {
     ffi_params: &'a [proc_macro2::TokenStream],
 }
 
+struct StaticCallbackReturnPlan<'a> {
+    safety: ExportSafety,
+    wasm_params: &'a [proc_macro2::TokenStream],
+    native_params: &'a [proc_macro2::TokenStream],
+    wasm_return_type: proc_macro2::TokenStream,
+    native_return_type: proc_macro2::TokenStream,
+    wasm_body: proc_macro2::TokenStream,
+    native_body: proc_macro2::TokenStream,
+}
+
 impl ClassExportConfig {
     fn from_attr(attr: &TokenStream) -> Self {
         use syn::parse::Parser;
@@ -394,14 +404,18 @@ impl<'a> StaticMethodExport<'a> {
 
     fn render_callback_return(
         self,
-        safety: ExportSafety,
-        wasm_params: &'a [proc_macro2::TokenStream],
-        native_params: &'a [proc_macro2::TokenStream],
-        wasm_return_type: proc_macro2::TokenStream,
-        native_return_type: proc_macro2::TokenStream,
-        wasm_body: proc_macro2::TokenStream,
-        native_body: proc_macro2::TokenStream,
+        callback_return_plan: StaticCallbackReturnPlan<'a>,
     ) -> proc_macro2::TokenStream {
+        let StaticCallbackReturnPlan {
+            safety,
+            wasm_params,
+            native_params,
+            wasm_return_type,
+            native_return_type,
+            wasm_body,
+            native_body,
+        } = callback_return_plan;
+
         DualPlatformExternExport {
             wasm: ExternExport {
                 visibility: self.visibility,
@@ -954,13 +968,15 @@ fn generate_static_method_export(
 
         return Some(
             StaticMethodExport::new(&visibility, &export_name, &[]).render_callback_return(
-                safety,
-                &wasm_ffi_params,
-                &native_ffi_params,
-                quote! { #wasm_return_type },
-                quote! { #native_return_type },
-                wasm_body,
-                native_body,
+                StaticCallbackReturnPlan {
+                    safety,
+                    wasm_params: &wasm_ffi_params,
+                    native_params: &native_ffi_params,
+                    wasm_return_type: quote! { #wasm_return_type },
+                    native_return_type: quote! { #native_return_type },
+                    wasm_body,
+                    native_body,
+                },
             ),
         );
     }
