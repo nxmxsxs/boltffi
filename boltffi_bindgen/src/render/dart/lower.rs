@@ -42,6 +42,24 @@ impl<'a> DartLowerer<'a> {
     pub fn library(&self) -> DartLibrary {
         let prefix = boltffi_ffi_rules::naming::ffi_prefix().to_string();
 
+        let native_functions = self
+            .ffi
+            .functions
+            .iter()
+            .map(|f| {
+                let abi_call = self
+                    .abi
+                    .calls
+                    .iter()
+                    .find(|c| match &c.id {
+                        CallId::Function(id) => id == &f.id,
+                        _ => false,
+                    })
+                    .unwrap();
+                self.lower_native_function(abi_call)
+            })
+            .collect();
+
         let enums = self
             .ffi
             .catalog
@@ -56,7 +74,13 @@ impl<'a> DartLowerer<'a> {
             .map(|r| self.lower_record(r))
             .collect();
 
-        DartLibrary { enums, records }
+        DartLibrary {
+            enums,
+            records,
+            native: DartNative {
+                functions: native_functions,
+            },
+        }
     }
 
     fn lower_enum_field(&self, field: &AbiEnumField) -> super::DartEnumField {
@@ -253,5 +277,32 @@ impl<'a> DartLowerer<'a> {
         }
     }
 
+    fn lower_native_function_param(&self, abi_param: &AbiParam) -> DartNativeFunctionParam {
+        DartNativeFunctionParam {
+            name: abi_param.name.to_string(),
+            native_type: DartNativeType::from_abi_param(abi_param),
+        }
+    }
+
+    fn lower_native_function(&self, abi_call: &AbiCall) -> DartNativeFunction {
+        let symbol = abi_call.symbol.to_string();
+
+        let params = abi_call
+            .params
+            .iter()
+            .map(|p| self.lower_native_function_param(p))
+            .collect();
+
+        let is_not_leaf = abi_call
+            .params
+            .iter()
+            .any(|p| matches!(p.abi_type, AbiType::InlineCallbackFn { .. }));
+
+        DartNativeFunction {
+            symbol,
+            params,
+            return_type: DartNativeType::abi_call_return_type(abi_call),
+            is_leaf: !is_not_leaf,
+        }
     }
 }

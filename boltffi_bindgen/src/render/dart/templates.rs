@@ -23,6 +23,12 @@ pub struct RecordTemplate<'a> {
 }
 
 #[derive(Template)]
+#[template(path = "render_dart/native_functions.txt", escape = "none")]
+pub struct NativeFunctionsTemplate<'a> {
+    pub cfuncs: &'a [super::DartNativeFunction],
+}
+
+#[derive(Template)]
 #[template(path = "render_dart/native_record.txt", escape = "none")]
 pub struct NativeRecordTemplate<'a> {
     pub layout: &'a super::DartBlittableLayout,

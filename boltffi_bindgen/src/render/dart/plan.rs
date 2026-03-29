@@ -5,6 +5,7 @@ use crate::{
 
 #[derive(Debug, Clone)]
 pub struct DartLibrary {
+    pub native: DartNative,
     pub enums: Vec<DartEnum>,
     pub records: Vec<DartRecord>,
 }
@@ -72,6 +73,11 @@ pub struct DartRecord {
     pub name: String,
     pub fields: Vec<DartRecordField>,
     pub blittable_layout: Option<DartBlittableLayout>,
+}
+
+#[derive(Debug, Clone)]
+pub struct DartNative {
+    pub functions: Vec<DartNativeFunction>,
 }
 
 #[derive(Clone, Debug)]
@@ -269,4 +275,17 @@ impl DartNativeType {
         }
     }
 }
+
+#[derive(Debug, Clone)]
+pub struct DartNativeFunctionParam {
+    pub name: String,
+    pub native_type: DartNativeType,
+}
+
+#[derive(Debug, Clone)]
+pub struct DartNativeFunction {
+    pub symbol: String,
+    pub params: Vec<DartNativeFunctionParam>,
+    pub return_type: DartNativeType,
+    pub is_leaf: bool,
 }

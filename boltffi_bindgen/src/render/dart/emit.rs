@@ -9,8 +9,8 @@ use crate::ir::{
 use crate::render::dart::NamingConvention;
 use crate::render::dart::lower::DartLowerer;
 use crate::render::dart::templates::{
-    EnhancedEnumTemplate, NativeRecordTemplate, PreludeTemplate, RecordTemplate,
-    SealedClassEnumTemplate,
+    EnhancedEnumTemplate, NativeFunctionsTemplate, NativeRecordTemplate, PreludeTemplate,
+    RecordTemplate, SealedClassEnumTemplate,
 };
 
 pub struct DartEmitter {}
@@ -46,6 +46,16 @@ impl DartEmitter {
             }
         }
 
+        output.push('\n');
+
+        output.push_str(
+            NativeFunctionsTemplate {
+                cfuncs: &library.native.functions,
+            }
+            .render()
+            .unwrap()
+            .as_str(),
+        );
         output.push('\n');
 
         for r in &library.records {

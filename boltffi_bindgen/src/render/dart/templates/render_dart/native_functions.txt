@@ -1,0 +1,16 @@
+final class _$Native {
+{%- for cfunc in cfuncs %}
+  @ffi.Native<
+    {{ cfunc.return_type.native_type() }} Function(
+  {%- for param in cfunc.params %}
+      {{ param.native_type.native_type() }},
+  {%- endfor %}
+    )
+  >({%if cfunc.is_leaf %}isLeaf: true{% endif %})
+  external static {{ cfunc.return_type.dart_sub_type() }} {{ cfunc.symbol }}(
+  {%- for param in cfunc.params %}
+    {{ param.native_type.dart_sub_type() }} {{ param.name }},
+  {%- endfor %}
+  );
+{% endfor -%}
+}
