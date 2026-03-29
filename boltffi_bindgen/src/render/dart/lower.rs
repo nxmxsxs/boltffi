@@ -8,8 +8,9 @@ use crate::{
     render::{
         TypeMappings,
         dart::{
-            DartEnum, DartEnumKind, DartEnumVariant, DartLibrary, DartRecord, DartRecordField,
-            NamingConvention,
+            DartBlittableField, DartBlittableLayout, DartEnum, DartEnumKind, DartEnumVariant,
+            DartLibrary, DartNative, DartNativeFunction, DartNativeFunctionParam, DartNativeType,
+            DartRecord, DartRecordField, NamingConvention, emit,
         },
     },
 };
@@ -189,6 +190,47 @@ impl<'a> DartLowerer<'a> {
         }
     }
 
+    fn lower_record_blittable_field(&self, field: &FieldReadOp) -> DartBlittableField {
+        let (primitive, offset) = match field.seq.ops.first() {
+            Some(ReadOp::Primitive { primitive, offset }) => (*primitive, offset),
+            _ => unreachable!(),
+        };
+        let offset = match offset {
+            OffsetExpr::Base => 0,
+            OffsetExpr::BasePlus(offset) => *offset,
+            _ => unreachable!(),
+        };
+        let name = NamingConvention::property_name(field.name.as_str());
+        // let const_name = NamingConvention::enum_constant_name(field.name.as_str());
+        DartBlittableField {
+            name,
+            offset,
+            native_type: DartNativeType::from_primitive(&primitive),
+            const_name: String::new(),
+            // decode_expr: java_blittable_decode_expr(primitive, &const_name),
+            // encode_expr: java_blittable_encode_expr(primitive, &const_name, &name),
+            decode_expr: String::new(),
+            encode_expr: String::new(),
+        }
+    }
+
+    fn lower_record_blittable_layout(&self, abi_record: &AbiRecord) -> DartBlittableLayout {
+        let fields = match abi_record.decode_ops.ops.first() {
+            Some(ReadOp::Record { fields, .. }) => fields
+                .iter()
+                .map(|f| self.lower_record_blittable_field(f))
+                .collect(),
+            _ => unreachable!(),
+        };
+
+        DartBlittableLayout {
+            fields,
+            struct_size: abi_record
+                .size
+                .expect("record.is_blittable <=> size != None"),
+        }
+    }
+
     fn lower_record(&self, record: &RecordDef) -> DartRecord {
         let name = NamingConvention::class_name(record.id.as_str());
 
@@ -200,6 +242,16 @@ impl<'a> DartLowerer<'a> {
             .map(|f| self.lower_record_field(f, abi_record))
             .collect();
 
-        DartRecord { name, fields }
+        let blittable_layout = abi_record
+            .is_blittable
+            .then(|| self.lower_record_blittable_layout(abi_record));
+
+        DartRecord {
+            name,
+            fields,
+            blittable_layout,
+        }
+    }
+
     }
 }

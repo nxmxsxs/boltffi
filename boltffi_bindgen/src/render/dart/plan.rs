@@ -50,10 +50,30 @@ pub struct DartRecordField {
     pub wire_encode_expr: String,
 }
 
+
+#[derive(Debug, Clone)]
+pub struct DartBlittableLayout {
+    pub struct_size: usize,
+    pub fields: Vec<DartBlittableField>,
+}
+
+#[derive(Debug, Clone)]
+pub struct DartBlittableField {
+    pub name: String,
+    pub native_type: DartNativeType,
+    pub const_name: String,
+    pub offset: usize,
+    pub decode_expr: String,
+    pub encode_expr: String,
+}
+
 #[derive(Debug, Clone)]
 pub struct DartRecord {
     pub name: String,
     pub fields: Vec<DartRecordField>,
+    pub blittable_layout: Option<DartBlittableLayout>,
+}
+
 #[derive(Clone, Debug)]
 pub enum DartNativeType {
     Void,

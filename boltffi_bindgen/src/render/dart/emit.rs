@@ -2,13 +2,15 @@ use askama::Template as _;
 
 use crate::ir::types::{PrimitiveType, TypeExpr};
 use crate::ir::{
-    AbiContract, BuiltinId, EnumLayout, FfiContract, ReadOp, ReadSeq, SizeExpr, ValueExpr,
-    VecLayout, WriteOp, WriteSeq,
+    AbiCall, AbiContract, AbiParam, AbiType, BuiltinId, EnumLayout, ErrorTransport, FfiContract,
+    Mutability, ParamRole, ReadOp, ReadSeq, ReturnShape, SizeExpr, SpanContent, Transport,
+    ValueExpr, VecLayout, WriteOp, WriteSeq,
 };
 use crate::render::dart::NamingConvention;
 use crate::render::dart::lower::DartLowerer;
 use crate::render::dart::templates::{
-    EnhancedEnumTemplate, PreludeTemplate, RecordTemplate, SealedClassEnumTemplate,
+    EnhancedEnumTemplate, NativeRecordTemplate, PreludeTemplate, RecordTemplate,
+    SealedClassEnumTemplate,
 };
 
 pub struct DartEmitter {}
@@ -27,6 +29,23 @@ impl DartEmitter {
 
         output.push_str(PreludeTemplate {}.render().unwrap().as_str());
         output.push('\n');
+        output.push('\n');
+
+        for r in &library.records {
+            if let Some(layout) = &r.blittable_layout {
+                output.push_str(
+                    NativeRecordTemplate {
+                        layout,
+                        name: &r.name,
+                    }
+                    .render()
+                    .unwrap()
+                    .as_str(),
+                );
+                output.push('\n');
+            }
+        }
+
         output.push('\n');
 
         for r in &library.records {

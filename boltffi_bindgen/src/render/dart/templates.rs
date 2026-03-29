@@ -19,5 +19,12 @@ pub struct SealedClassEnumTemplate<'a> {
 #[derive(Template)]
 #[template(path = "render_dart/record.txt", escape = "none")]
 pub struct RecordTemplate<'a> {
-    pub record: &'a super::DartRecord
+    pub record: &'a super::DartRecord,
+}
+
+#[derive(Template)]
+#[template(path = "render_dart/native_record.txt", escape = "none")]
+pub struct NativeRecordTemplate<'a> {
+    pub layout: &'a super::DartBlittableLayout,
+    pub name: &'a str,
 }
