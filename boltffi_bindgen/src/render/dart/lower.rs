@@ -1,7 +1,8 @@
 use crate::{
     ir::{
-        AbiEnumField, AbiEnumPayload, AbiEnumVariant, AbiRecord, EnumDef, EnumRepr, FieldDef,
-        FieldName, ReadOp, ReadSeq, RecordDef, RecordId, WriteOp, WriteSeq, abi::AbiContract,
+        AbiCall, AbiEnumField, AbiEnumPayload, AbiEnumVariant, AbiParam, AbiRecord, AbiType,
+        CallId, EnumDef, EnumRepr, FieldDef, FieldName, FieldReadOp, FunctionDef, OffsetExpr,
+        ParamRole, ReadOp, ReadSeq, RecordDef, RecordId, WriteOp, WriteSeq, abi::AbiContract,
         contract::FfiContract,
     },
     render::{
