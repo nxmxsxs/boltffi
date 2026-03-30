@@ -823,7 +823,7 @@ fn generate_sync_method_export(
 
             let native_body = quote! {
                 #call_and_bind
-                <::boltffi::__private::Seal as ::boltffi::__private::VecTransport<_>>::pack(#result_ident)
+                <_ as ::boltffi::__private::VecTransport>::pack_vec(#result_ident)
             };
 
             let wasm_body = quote! {
@@ -1090,7 +1090,7 @@ fn generate_static_method_export(
 
             let native_body = quote! {
                 #call_and_bind
-                <::boltffi::__private::Seal as ::boltffi::__private::VecTransport<_>>::pack(#result_ident)
+                <_ as ::boltffi::__private::VecTransport>::pack_vec(#result_ident)
             };
 
             let wasm_body = quote! {

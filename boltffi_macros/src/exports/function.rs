@@ -433,7 +433,7 @@ fn ffi_export_item_impl(input: ItemFn) -> proc_macro2::TokenStream {
 
             let native_body = quote! {
                 #call_and_bind
-                <::boltffi::__private::Seal as ::boltffi::__private::VecTransport<_>>::pack(#result_ident)
+                <_ as ::boltffi::__private::VecTransport>::pack_vec(#result_ident)
             };
 
             let wasm_body = quote! {

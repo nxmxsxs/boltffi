@@ -25,7 +25,7 @@ pub use callback::WasmCallbackOwner;
 pub use callback::{CallbackForeignType, CallbackHandle, FromCallbackHandle};
 pub use custom_ffi::CustomFfiConvertible;
 pub use handle::HandleBox;
-pub use passable::{Passable, Seal, VecTransport, WirePassable};
+pub use passable::{Passable, VecTransport, WirePassable};
 pub use ringbuffer::SpscRingBuffer;
 pub use runtime::async_callback;
 pub use runtime::async_callback::{
