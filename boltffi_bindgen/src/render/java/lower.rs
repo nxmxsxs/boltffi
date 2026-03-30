@@ -1505,11 +1505,7 @@ impl<'a> JavaLowerer<'a> {
         }
     }
 
-    fn lower_stream(
-        &self,
-        class: &ClassDef,
-        stream_def: &StreamDef,
-    ) -> JavaStream {
+    fn lower_stream(&self, class: &ClassDef, stream_def: &StreamDef) -> JavaStream {
         let abi_stream = self.abi_stream(class, stream_def);
         let mode = match stream_def.mode {
             StreamMode::Async => JavaStreamMode::Async,
@@ -1535,18 +1531,12 @@ impl<'a> JavaLowerer<'a> {
             Transport::Scalar(origin) => self.scalar_stream_items_expr(origin),
             Transport::Composite(layout) => {
                 let class_name = NamingConvention::class_name(layout.record_id.as_str());
-                format!(
-                    "{}.decodeBlittableVecFromRawBuffer(_bytes)",
-                    class_name
-                )
+                format!("{}.decodeBlittableVecFromRawBuffer(_bytes)", class_name)
             }
             _ => {
                 let StreamItemTransport::WireEncoded { decode_ops } = &stream.item;
                 let item_decode = super::emit::emit_reader_read(decode_ops);
-                format!(
-                    "WireReader.readList(_bytes, _i -> {})",
-                    item_decode
-                )
+                format!("WireReader.readList(_bytes, _i -> {})", item_decode)
             }
         }
     }
@@ -1555,11 +1545,19 @@ impl<'a> JavaLowerer<'a> {
         match origin {
             ScalarOrigin::Primitive(primitive) => match primitive {
                 PrimitiveType::Bool => "WireReader.readPackedBools(_bytes)".to_string(),
-                PrimitiveType::I8 | PrimitiveType::U8 => "WireReader.readPackedBytes(_bytes)".to_string(),
-                PrimitiveType::I16 | PrimitiveType::U16 => "WireReader.readPackedShorts(_bytes)".to_string(),
-                PrimitiveType::I32 | PrimitiveType::U32 => "WireReader.readPackedInts(_bytes)".to_string(),
-                PrimitiveType::I64 | PrimitiveType::U64
-                | PrimitiveType::ISize | PrimitiveType::USize => "WireReader.readPackedLongs(_bytes)".to_string(),
+                PrimitiveType::I8 | PrimitiveType::U8 => {
+                    "WireReader.readPackedBytes(_bytes)".to_string()
+                }
+                PrimitiveType::I16 | PrimitiveType::U16 => {
+                    "WireReader.readPackedShorts(_bytes)".to_string()
+                }
+                PrimitiveType::I32 | PrimitiveType::U32 => {
+                    "WireReader.readPackedInts(_bytes)".to_string()
+                }
+                PrimitiveType::I64
+                | PrimitiveType::U64
+                | PrimitiveType::ISize
+                | PrimitiveType::USize => "WireReader.readPackedLongs(_bytes)".to_string(),
                 PrimitiveType::F32 => "WireReader.readPackedFloats(_bytes)".to_string(),
                 PrimitiveType::F64 => "WireReader.readPackedDoubles(_bytes)".to_string(),
             },
