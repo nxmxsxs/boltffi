@@ -10,23 +10,23 @@ final class FfiStatus extends ffi.Struct {
 final class FfiString extends ffi.Struct {
   external ffi.Pointer<ffi.Uint8> ptr;
 
-  @ffi.Int()
+  @ffi.UintPtr()
   external int len;
 
-  @ffi.Int()
+  @ffi.UintPtr()
   external int cap;
 }
 
 final class FfiBuf_u8 extends ffi.Struct {
   external ffi.Pointer<ffi.Uint8> ptr;
 
-  @ffi.Int()
+  @ffi.UintPtr()
   external int len;
 
-  @ffi.Int()
+  @ffi.UintPtr()
   external int cap;
 
-  @ffi.Int()
+  @ffi.UintPtr()
   external int align;
 }
 
@@ -142,11 +142,23 @@ final class WireWriter {
 }
 
 class WireReader {
-  final typed_data.Uint8List _buf;
+  static final Finalizer<FfiBuf_u8> _finalizer = Finalizer(
+    (buf) => boltffi_free_buf(buf),
+  );
 
+  final FfiBuf_u8 owned;
+  final typed_data.Uint8List _buf;
   int _offset;
 
-  WireReader(this._buf, [this._offset = 0]);
+  WireReader(this.owned, [this._offset = 0])
+    : _buf = owned.ptr.asTypedList(owned.len) {
+    _finalizer.attach(this, owned, detach: this);
+  }
+
+  void free() {
+    boltffi_free_buf(owned);
+    _finalizer.detach(this);
+  }
 
   T withByteData<T>(int size, T Function(typed_data.ByteData) reader) {
     final nextOffset = _offset + size;
@@ -191,151 +203,151 @@ class WireReader {
   }
 
   typed_data.Uint8List readUint8List() {
-    final len = readU32();
+    final len = readI32();
 
     return read(len, (b) => b.buffer.asUint8List(b.offsetInBytes, len));
   }
 
   typed_data.Int8List readInt8List() {
-    final len = readU32();
+    final len = readI32();
 
     return read(len, (b) => b.buffer.asInt8List(b.offsetInBytes, len));
   }
 
   typed_data.Uint16List readUint16List() {
-    final len = readU32();
+    final len = readI32();
+    final size = len * 2;
 
-    return read(
-      len * 2,
-      (b) => switch (b.offsetInBytes & 1 == 0) {
-        true => b.buffer.asUint16List(b.offsetInBytes, len),
-        false => typed_data.Uint16List.fromList(
-          List.generate(
-            len,
-            (i) => b.getUint16(i * 2, typed_data.Endian.little),
-          ),
-        ),
-      },
-    );
+    return read(size, (b) {
+      final offset = b.offsetInBytes;
+
+      if (offset & 1 == 0) {
+        return b.buffer.asUint16List(offset, len);
+      } else {
+        final dst = typed_data.Uint8List(size);
+        dst.setAll(0, b.buffer.asUint8List(offset, size));
+        return dst.buffer.asUint16List(0, len);
+      }
+    });
   }
 
   typed_data.Int16List readInt16List() {
-    final len = readU32();
+    final len = readI32();
+    final size = len * 2;
 
-    return read(
-      len * 2,
-      (b) => switch (b.offsetInBytes & 1 == 0) {
-        true => b.buffer.asInt16List(b.offsetInBytes, len),
-        false => typed_data.Int16List.fromList(
-          List.generate(
-            len,
-            (i) => b.getInt16(i * 2, typed_data.Endian.little),
-          ),
-        ),
-      },
-    );
+    return read(size, (b) {
+      final offset = b.offsetInBytes;
+
+      if (offset & 1 == 0) {
+        return b.buffer.asInt16List(offset, len);
+      } else {
+        final dst = typed_data.Uint8List(size);
+        dst.setAll(0, b.buffer.asUint8List(offset, size));
+        return dst.buffer.asInt16List(0, len);
+      }
+    });
   }
 
   typed_data.Uint32List readUint32List() {
-    final len = readU32();
+    final len = readI32();
+    final size = len * 4;
 
-    return read(
-      len * 4,
-      (b) => switch (b.offsetInBytes & 3 == 0) {
-        true => b.buffer.asUint32List(b.offsetInBytes, len),
-        false => typed_data.Uint32List.fromList(
-          List.generate(
-            len,
-            (i) => b.getUint32(i * 4, typed_data.Endian.little),
-          ),
-        ),
-      },
-    );
+    return read(size, (b) {
+      final offset = b.offsetInBytes;
+
+      if (offset & 3 == 0) {
+        return b.buffer.asUint32List(offset, len);
+      } else {
+        final dst = typed_data.Uint8List(size);
+        dst.setAll(0, b.buffer.asUint8List(offset, size));
+        return dst.buffer.asUint32List(0, len);
+      }
+    });
   }
 
   typed_data.Int32List readInt32List() {
-    final len = readU32();
+    final len = readI32();
+    final size = len * 4;
 
-    return read(
-      len * 4,
-      (b) => switch (b.offsetInBytes & 3 == 0) {
-        true => b.buffer.asInt32List(b.offsetInBytes, len),
-        false => typed_data.Int32List.fromList(
-          List.generate(
-            len,
-            (i) => b.getInt32(i * 4, typed_data.Endian.little),
-          ),
-        ),
-      },
-    );
+    return read(size, (b) {
+      final offset = b.offsetInBytes;
+
+      if (offset & 3 == 0) {
+        return b.buffer.asInt32List(offset, len);
+      } else {
+        final dst = typed_data.Uint8List(size);
+        dst.setAll(0, b.buffer.asUint8List(offset, size));
+        return dst.buffer.asInt32List(0, len);
+      }
+    });
   }
 
   typed_data.Uint64List readUint64List() {
-    final len = readU32();
+    final len = readI32();
+    final size = len * 8;
 
-    return read(
-      len * 8,
-      (b) => switch (b.offsetInBytes & 7 == 0) {
-        true => b.buffer.asUint64List(b.offsetInBytes, len),
-        false => typed_data.Uint64List.fromList(
-          List.generate(
-            len,
-            (i) => b.getUint64(i * 8, typed_data.Endian.little),
-          ),
-        ),
-      },
-    );
+    return read(size, (b) {
+      final offset = b.offsetInBytes;
+
+      if (offset & 7 == 0) {
+        return b.buffer.asUint64List(offset, len);
+      } else {
+        final dst = typed_data.Uint8List(size);
+        dst.setAll(0, b.buffer.asUint8List(offset, size));
+        return dst.buffer.asUint64List(0, len);
+      }
+    });
   }
 
   typed_data.Int64List readInt64List() {
-    final len = readU32();
+    final len = readI32();
+    final size = len * 8;
 
-    return read(
-      len * 8,
-      (b) => switch (b.offsetInBytes & 7 == 0) {
-        true => b.buffer.asInt64List(b.offsetInBytes, len),
-        false => typed_data.Int64List.fromList(
-          List.generate(
-            len,
-            (i) => b.getUint64(i * 8, typed_data.Endian.little),
-          ),
-        ),
-      },
-    );
+    return read(size, (b) {
+      final offset = b.offsetInBytes;
+
+      if (offset & 7 == 0) {
+        return b.buffer.asInt64List(offset, len);
+      } else {
+        final dst = typed_data.Uint8List(size);
+        dst.setAll(0, b.buffer.asUint8List(offset, size));
+        return dst.buffer.asInt64List(0, len);
+      }
+    });
   }
 
   typed_data.Float32List readFloat32List() {
-    final len = readU32();
+    final len = readI32();
+    final size = len * 4;
 
-    return read(
-      len * 4,
-      (b) => switch (b.offsetInBytes & 3 == 0) {
-        true => b.buffer.asFloat32List(b.offsetInBytes, len),
-        false => typed_data.Float32List.fromList(
-          List.generate(
-            len,
-            (i) => b.getFloat32(i * 4, typed_data.Endian.little),
-          ),
-        ),
-      },
-    );
+    return read(size, (b) {
+      final offset = b.offsetInBytes;
+
+      if (offset & 3 == 0) {
+        return b.buffer.asFloat32List(offset, len);
+      } else {
+        final dst = typed_data.Uint8List(size);
+        dst.setAll(0, b.buffer.asUint8List(offset, size));
+        return dst.buffer.asFloat32List(0, len);
+      }
+    });
   }
 
   typed_data.Float64List readFloat64List() {
-    final len = readU32();
+    final len = readI32();
+    final size = len * 8;
 
-    return read(
-      len * 8,
-      (b) => switch (b.offsetInBytes & 7 == 0) {
-        true => b.buffer.asFloat64List(b.offsetInBytes, len),
-        false => typed_data.Float64List.fromList(
-          List.generate(
-            len,
-            (i) => b.getFloat64(i * 8, typed_data.Endian.little),
-          ),
-        ),
-      },
-    );
+    return read(size, (b) {
+      final offset = b.offsetInBytes;
+
+      if (offset & 7 == 0) {
+        return b.buffer.asFloat64List(offset, len);
+      } else {
+        final dst = typed_data.Uint8List(size);
+        dst.setAll(0, b.buffer.asUint8List(offset, size));
+        return dst.buffer.asFloat64List(0, len);
+      }
+    });
   }
 
   T? readOptional<T>(T Function(WireReader) readValue) {
@@ -349,10 +361,10 @@ class WireReader {
   }
 
   List<T> readList<T>(T Function(WireReader) readValue) {
-    final len = readU32();
+    final len = readI32();
 
     return List.generate(len, (_) => readValue(this));
   }
 
-  String readString() => convert.utf8.decoder.convert(readUint8List());
+  String readString() => convert.utf8.decode(readUint8List());
 }
