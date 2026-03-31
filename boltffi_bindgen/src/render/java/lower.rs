@@ -27,11 +27,11 @@ use crate::ir::abi::{
 };
 use crate::ir::contract::FfiContract;
 use crate::ir::definitions::{
-    CallbackKind, CallbackMethodDef, CallbackTraitDef, ClassDef, ConstructorDef, EnumDef, EnumRepr,
-    FieldDef, FunctionDef, MethodDef, ParamDef, Receiver, RecordDef, ReturnDef, StreamDef,
-    StreamMode,
+    CallbackKind, CallbackMethodDef, CallbackTraitDef, ClassDef, ConstructorDef, CustomTypeDef,
+    EnumDef, EnumRepr, FieldDef, FunctionDef, MethodDef, ParamDef, Receiver, RecordDef, ReturnDef,
+    StreamDef, StreamMode,
 };
-use crate::ir::ids::{CallbackId, FieldName, RecordId};
+use crate::ir::ids::{CallbackId, CustomTypeId, FieldName, RecordId};
 use crate::ir::ops::{
     FieldReadOp, FieldWriteOp, OffsetExpr, ReadOp, ReadSeq, SizeExpr, ValueExpr, WriteOp, WriteSeq,
     remap_root_in_seq,
@@ -129,13 +129,17 @@ impl<'a> JavaLowerer<'a> {
         }
     }
 
-    fn is_leaf_supported(ty: &TypeExpr, supported: &HashSet<String>) -> bool {
+    fn is_leaf_supported(ffi: &FfiContract, ty: &TypeExpr, supported: &HashSet<String>) -> bool {
         match ty {
             TypeExpr::Primitive(_) | TypeExpr::String | TypeExpr::Bytes | TypeExpr::Void => true,
             TypeExpr::Record(id) => supported.contains(id.as_str()),
             TypeExpr::Enum(id) => supported.contains(id.as_str()),
-            TypeExpr::Option(inner) => Self::is_leaf_supported(inner, supported),
-            TypeExpr::Vec(inner) => Self::is_leaf_supported(inner, supported),
+            TypeExpr::Custom(id) => ffi
+                .catalog
+                .resolve_custom(id)
+                .is_some_and(|custom| Self::is_leaf_supported(ffi, &custom.repr, supported)),
+            TypeExpr::Option(inner) => Self::is_leaf_supported(ffi, inner, supported),
+            TypeExpr::Vec(inner) => Self::is_leaf_supported(ffi, inner, supported),
             TypeExpr::Callback(_) => true,
             TypeExpr::Handle(_) => true,
             _ => false,
@@ -157,7 +161,7 @@ impl<'a> JavaLowerer<'a> {
                 let all_ok = record
                     .fields
                     .iter()
-                    .all(|f| Self::is_leaf_supported(&f.type_expr, &supported));
+                    .all(|f| Self::is_leaf_supported(ffi, &f.type_expr, &supported));
                 if all_ok {
                     supported.insert(id.to_string());
                     changed = true;
@@ -186,7 +190,7 @@ impl<'a> JavaLowerer<'a> {
                             AbiEnumPayload::Tuple(fields) | AbiEnumPayload::Struct(fields) => {
                                 fields
                                     .iter()
-                                    .all(|f| Self::is_leaf_supported(&f.type_expr, &supported))
+                                    .all(|f| Self::is_leaf_supported(ffi, &f.type_expr, &supported))
                             }
                         })
                 };
@@ -302,7 +306,201 @@ impl<'a> JavaLowerer<'a> {
     }
 
     fn is_supported_type(&self, ty: &TypeExpr) -> bool {
-        Self::is_leaf_supported(ty, &self.supported_types)
+        Self::is_leaf_supported(self.ffi, ty, &self.supported_types)
+    }
+
+    fn resolve_custom_type(&self, id: &CustomTypeId) -> &CustomTypeDef {
+        self.ffi
+            .catalog
+            .resolve_custom(id)
+            .unwrap_or_else(|| panic!("custom type should be resolved: {:?}", id))
+    }
+
+    fn custom_repr_type(&self, id: &CustomTypeId) -> &TypeExpr {
+        &self.resolve_custom_type(id).repr
+    }
+
+    fn normalize_custom_type_expr(&self, ty: &TypeExpr) -> TypeExpr {
+        match ty {
+            TypeExpr::Custom(id) => self.normalize_custom_type_expr(self.custom_repr_type(id)),
+            TypeExpr::Option(inner) => {
+                TypeExpr::Option(Box::new(self.normalize_custom_type_expr(inner)))
+            }
+            TypeExpr::Vec(inner) => TypeExpr::Vec(Box::new(self.normalize_custom_type_expr(inner))),
+            TypeExpr::Result { ok, err } => TypeExpr::Result {
+                ok: Box::new(self.normalize_custom_type_expr(ok)),
+                err: Box::new(self.normalize_custom_type_expr(err)),
+            },
+            _ => ty.clone(),
+        }
+    }
+
+    fn normalize_custom_size_expr(&self, size: &SizeExpr) -> SizeExpr {
+        match size {
+            SizeExpr::OptionSize { value, inner } => SizeExpr::OptionSize {
+                value: value.clone(),
+                inner: Box::new(self.normalize_custom_size_expr(inner)),
+            },
+            SizeExpr::VecSize {
+                value,
+                inner,
+                layout,
+            } => SizeExpr::VecSize {
+                value: value.clone(),
+                inner: Box::new(self.normalize_custom_size_expr(inner)),
+                layout: layout.clone(),
+            },
+            SizeExpr::ResultSize { value, ok, err } => SizeExpr::ResultSize {
+                value: value.clone(),
+                ok: Box::new(self.normalize_custom_size_expr(ok)),
+                err: Box::new(self.normalize_custom_size_expr(err)),
+            },
+            SizeExpr::Sum(parts) => SizeExpr::Sum(
+                parts
+                    .iter()
+                    .map(|part| self.normalize_custom_size_expr(part))
+                    .collect(),
+            ),
+            _ => size.clone(),
+        }
+    }
+
+    fn normalize_custom_read_seq(&self, seq: &ReadSeq) -> ReadSeq {
+        if let Some(ReadOp::Custom { underlying, .. }) = seq.ops.first() {
+            return self.normalize_custom_read_seq(underlying);
+        }
+
+        ReadSeq {
+            size: self.normalize_custom_size_expr(&seq.size),
+            ops: seq
+                .ops
+                .iter()
+                .map(|op| self.normalize_custom_read_op(op))
+                .collect(),
+            shape: seq.shape,
+        }
+    }
+
+    fn normalize_custom_read_op(&self, op: &ReadOp) -> ReadOp {
+        match op {
+            ReadOp::Option { tag_offset, some } => ReadOp::Option {
+                tag_offset: tag_offset.clone(),
+                some: Box::new(self.normalize_custom_read_seq(some)),
+            },
+            ReadOp::Vec {
+                len_offset,
+                element_type,
+                element,
+                layout,
+            } => ReadOp::Vec {
+                len_offset: len_offset.clone(),
+                element_type: self.normalize_custom_type_expr(element_type),
+                element: Box::new(self.normalize_custom_read_seq(element)),
+                layout: layout.clone(),
+            },
+            ReadOp::Record { id, offset, fields } => ReadOp::Record {
+                id: id.clone(),
+                offset: offset.clone(),
+                fields: fields
+                    .iter()
+                    .map(|field| FieldReadOp {
+                        name: field.name.clone(),
+                        seq: self.normalize_custom_read_seq(&field.seq),
+                    })
+                    .collect(),
+            },
+            ReadOp::Result {
+                tag_offset,
+                ok,
+                err,
+            } => ReadOp::Result {
+                tag_offset: tag_offset.clone(),
+                ok: Box::new(self.normalize_custom_read_seq(ok)),
+                err: Box::new(self.normalize_custom_read_seq(err)),
+            },
+            ReadOp::Custom { underlying, .. } => self
+                .normalize_custom_read_seq(underlying)
+                .ops
+                .into_iter()
+                .next()
+                .expect("normalized custom read op should not be empty"),
+            _ => op.clone(),
+        }
+    }
+
+    fn normalize_custom_write_seq(&self, seq: &WriteSeq) -> WriteSeq {
+        if let Some(WriteOp::Custom { underlying, .. }) = seq.ops.first() {
+            return self.normalize_custom_write_seq(underlying);
+        }
+
+        WriteSeq {
+            size: self.normalize_custom_size_expr(&seq.size),
+            ops: seq
+                .ops
+                .iter()
+                .map(|op| self.normalize_custom_write_op(op))
+                .collect(),
+            shape: seq.shape,
+        }
+    }
+
+    fn normalize_custom_write_op(&self, op: &WriteOp) -> WriteOp {
+        match op {
+            WriteOp::Option { value, some } => WriteOp::Option {
+                value: value.clone(),
+                some: Box::new(self.normalize_custom_write_seq(some)),
+            },
+            WriteOp::Vec {
+                value,
+                element_type,
+                element,
+                layout,
+            } => WriteOp::Vec {
+                value: value.clone(),
+                element_type: self.normalize_custom_type_expr(element_type),
+                element: Box::new(self.normalize_custom_write_seq(element)),
+                layout: layout.clone(),
+            },
+            WriteOp::Record { id, value, fields } => WriteOp::Record {
+                id: id.clone(),
+                value: value.clone(),
+                fields: fields
+                    .iter()
+                    .map(|field| crate::ir::ops::FieldWriteOp {
+                        name: field.name.clone(),
+                        accessor: field.accessor.clone(),
+                        seq: self.normalize_custom_write_seq(&field.seq),
+                    })
+                    .collect(),
+            },
+            WriteOp::Result { value, ok, err } => WriteOp::Result {
+                value: value.clone(),
+                ok: Box::new(self.normalize_custom_write_seq(ok)),
+                err: Box::new(self.normalize_custom_write_seq(err)),
+            },
+            WriteOp::Custom { underlying, .. } => self
+                .normalize_custom_write_seq(underlying)
+                .ops
+                .into_iter()
+                .next()
+                .expect("normalized custom write op should not be empty"),
+            _ => op.clone(),
+        }
+    }
+
+    fn emit_reader_read(&self, seq: &ReadSeq) -> String {
+        let normalized = self.normalize_custom_read_seq(seq);
+        super::emit::emit_reader_read(&normalized)
+    }
+
+    fn emit_write_expr(&self, seq: &WriteSeq, writer_name: &str) -> String {
+        let normalized = self.normalize_custom_write_seq(seq);
+        super::emit::emit_write_expr(&normalized, writer_name)
+    }
+
+    fn emit_size_expr(&self, size: &SizeExpr) -> String {
+        let normalized = self.normalize_custom_size_expr(size);
+        super::emit::emit_size_expr(&normalized)
     }
 
     fn lower_record(&self, record: &RecordDef) -> JavaRecord {
@@ -322,6 +520,7 @@ impl<'a> JavaLowerer<'a> {
         JavaRecord {
             doc: record.doc.clone(),
             shape,
+            is_error: record.is_error,
             class_name,
             fields,
             blittable_layout,
@@ -331,24 +530,28 @@ impl<'a> JavaLowerer<'a> {
     }
 
     fn can_use_native_record_syntax(&self, record: &RecordDef) -> bool {
-        self.options.min_java_version.supports_records()
+        !record.is_error
+            && self.options.min_java_version.supports_records()
             && !record
                 .fields
                 .iter()
-                .any(|field| Self::contains_primitive_array_component(&field.type_expr))
+                .any(|field| self.contains_primitive_array_component(&field.type_expr))
     }
 
-    fn contains_primitive_array_component(ty: &TypeExpr) -> bool {
+    fn contains_primitive_array_component(&self, ty: &TypeExpr) -> bool {
         match ty {
             TypeExpr::Bytes => true,
             TypeExpr::Vec(inner) => {
                 matches!(inner.as_ref(), TypeExpr::Primitive(_))
-                    || Self::contains_primitive_array_component(inner)
+                    || self.contains_primitive_array_component(inner)
             }
-            TypeExpr::Option(inner) => Self::contains_primitive_array_component(inner),
+            TypeExpr::Option(inner) => self.contains_primitive_array_component(inner),
             TypeExpr::Result { ok, err } => {
-                Self::contains_primitive_array_component(ok)
-                    || Self::contains_primitive_array_component(err)
+                self.contains_primitive_array_component(ok)
+                    || self.contains_primitive_array_component(err)
+            }
+            TypeExpr::Custom(id) => {
+                self.contains_primitive_array_component(self.custom_repr_type(id))
             }
             _ => false,
         }
@@ -405,9 +608,9 @@ impl<'a> JavaLowerer<'a> {
             doc: field.doc.clone(),
             name: NamingConvention::field_name(field.name.as_str()),
             java_type: self.java_type(&field.type_expr),
-            wire_decode_expr: super::emit::emit_reader_read(&decode_seq),
-            wire_size_expr: super::emit::emit_size_expr(&encode_seq.size),
-            wire_encode_expr: super::emit::emit_write_expr(&encode_seq, "wire"),
+            wire_decode_expr: self.emit_reader_read(&decode_seq),
+            wire_size_expr: self.emit_size_expr(&encode_seq.size),
+            wire_encode_expr: self.emit_write_expr(&encode_seq, "wire"),
             equals_expr: self.record_field_equals_expr(&field.type_expr, field.name.as_str()),
             hash_expr: self.record_field_hash_expr(&field.type_expr, field.name.as_str()),
         }
@@ -491,8 +694,8 @@ impl<'a> JavaLowerer<'a> {
                     wire_writers: vec![JavaWireWriter {
                         binding_name: "_wire_self".to_string(),
                         param_name: "self".to_string(),
-                        size_expr: super::emit::emit_size_expr(&remapped.size),
-                        encode_expr: super::emit::emit_write_expr(&remapped, "_wire_self"),
+                        size_expr: self.emit_size_expr(&remapped.size),
+                        encode_expr: self.emit_write_expr(&remapped, "_wire_self"),
                     }],
                 }
             }
@@ -559,6 +762,9 @@ impl<'a> JavaLowerer<'a> {
         depth: usize,
     ) -> String {
         match ty {
+            TypeExpr::Custom(id) => {
+                self.value_equals_expr_with_depth(self.custom_repr_type(id), left, right, depth)
+            }
             TypeExpr::Primitive(PrimitiveType::F32) => {
                 format!("Float.compare({left}, {right}) == 0")
             }
@@ -609,6 +815,9 @@ impl<'a> JavaLowerer<'a> {
 
     fn value_hash_expr_with_depth(&self, ty: &TypeExpr, value: &str, depth: usize) -> String {
         match ty {
+            TypeExpr::Custom(id) => {
+                self.value_hash_expr_with_depth(self.custom_repr_type(id), value, depth)
+            }
             TypeExpr::Primitive(PrimitiveType::Bool) => format!("Boolean.hashCode({value})"),
             TypeExpr::Primitive(PrimitiveType::I8) | TypeExpr::Primitive(PrimitiveType::U8) => {
                 format!("Byte.hashCode({value})")
@@ -808,7 +1017,7 @@ impl<'a> JavaLowerer<'a> {
                     (java_type.clone(), field_name.to_string())
                 }
             }
-            TypeExpr::Record(_) | TypeExpr::Enum(_) | TypeExpr::Option(_) => {
+            TypeExpr::Record(_) | TypeExpr::Enum(_) | TypeExpr::Option(_) | TypeExpr::Custom(_) => {
                 let binding_name = input_bindings
                     .binding_name_for(source_name)
                     .expect("encoded input binding must exist");
@@ -944,11 +1153,11 @@ impl<'a> JavaLowerer<'a> {
         self.input_write_ops(param).map(|encode_ops| {
             let param_name = param.name.as_str().to_string();
             let binding_name = format!("_wire_{}", param.name.as_str());
-            let encode_expr = super::emit::emit_write_expr(&encode_ops, &binding_name);
+            let encode_expr = self.emit_write_expr(&encode_ops, &binding_name);
             JavaWireWriter {
                 binding_name,
                 param_name,
-                size_expr: super::emit::emit_size_expr(&encode_ops.size),
+                size_expr: self.emit_size_expr(&encode_ops.size),
                 encode_expr,
             }
         })
@@ -993,11 +1202,11 @@ impl<'a> JavaLowerer<'a> {
             Some(ReadOp::Result { ok, err, .. }) => (ok.as_ref(), err.as_ref()),
             _ => panic!("expected ReadOp::Result in decode ops"),
         };
-        let ok_decode_expr = super::emit::emit_reader_read(ok_seq);
-        let err_decode_expr = super::emit::emit_reader_read(err_seq);
+        let ok_decode_expr = self.emit_reader_read(ok_seq);
+        let err_decode_expr = self.emit_reader_read(err_seq);
         let err_is_string =
             matches!(returns, ReturnDef::Result { err, .. } if matches!(err, TypeExpr::String));
-        let err_exception_class = match returns {
+        let (err_exception_class, err_throw_direct) = match returns {
             ReturnDef::Result {
                 err: TypeExpr::Enum(id),
                 ..
@@ -1006,8 +1215,21 @@ impl<'a> JavaLowerer<'a> {
                 .catalog
                 .resolve_enum(id)
                 .filter(|e| e.is_error)
-                .map(|_| format!("{}.Exception", NamingConvention::class_name(id.as_str()))),
-            _ => None,
+                .map(|_| {
+                    (
+                        Some(format!(
+                            "{}.Exception",
+                            NamingConvention::class_name(id.as_str())
+                        )),
+                        false,
+                    )
+                })
+                .unwrap_or((None, false)),
+            ReturnDef::Result {
+                err: TypeExpr::Record(id),
+                ..
+            } if self.is_error_record(id) => (None, true),
+            _ => (None, false),
         };
         JavaReturnPlan {
             native_return_type: "byte[]".to_string(),
@@ -1016,6 +1238,7 @@ impl<'a> JavaLowerer<'a> {
                 err_decode_expr,
                 err_is_string,
                 err_exception_class,
+                err_throw_direct,
             },
         }
     }
@@ -1125,8 +1348,17 @@ impl<'a> JavaLowerer<'a> {
     fn java_decode_return_plan(&self, ty: &TypeExpr, ret_shape: &ReturnShape) -> JavaReturnPlan {
         let decode_expr = match ty {
             TypeExpr::String => "reader.readString()".to_string(),
+            TypeExpr::Custom(_) => match &ret_shape.decode_ops {
+                Some(decode_seq) => self.emit_reader_read(decode_seq),
+                None => {
+                    return JavaReturnPlan {
+                        native_return_type: "void".to_string(),
+                        render: JavaReturnRender::Void,
+                    };
+                }
+            },
             TypeExpr::Option(_) => match &ret_shape.decode_ops {
-                Some(decode_seq) => super::emit::emit_reader_read(decode_seq),
+                Some(decode_seq) => self.emit_reader_read(decode_seq),
                 None => panic!(
                     "unsupported direct Option return transport for Java backend: {:?}",
                     ty
@@ -1145,7 +1377,7 @@ impl<'a> JavaLowerer<'a> {
                 )
             }
             TypeExpr::Vec(_) => match &ret_shape.decode_ops {
-                Some(decode_seq) => super::emit::emit_reader_read(decode_seq),
+                Some(decode_seq) => self.emit_reader_read(decode_seq),
                 None => {
                     return JavaReturnPlan {
                         native_return_type: "void".to_string(),
@@ -1428,6 +1660,13 @@ impl<'a> JavaLowerer<'a> {
         }
     }
 
+    fn is_error_record(&self, id: &RecordId) -> bool {
+        self.ffi
+            .catalog
+            .resolve_record(id)
+            .is_some_and(|record| record.is_error)
+    }
+
     fn lower_constructor(
         &self,
         class: &ClassDef,
@@ -1542,7 +1781,7 @@ impl<'a> JavaLowerer<'a> {
             }
             _ => {
                 let StreamItemTransport::WireEncoded { decode_ops } = &stream.item;
-                let item_decode = super::emit::emit_reader_read(decode_ops);
+                let item_decode = self.emit_reader_read(decode_ops);
                 format!("WireReader.readList(_bytes, _i -> {})", item_decode)
             }
         }
@@ -1632,6 +1871,7 @@ impl<'a> JavaLowerer<'a> {
             TypeExpr::String => "String".to_string(),
             TypeExpr::Bytes => "byte[]".to_string(),
             TypeExpr::Record(id) => NamingConvention::class_name(id.as_str()),
+            TypeExpr::Custom(id) => self.java_type(self.custom_repr_type(id)),
             TypeExpr::Enum(id) => NamingConvention::class_name(id.as_str()),
             TypeExpr::Handle(id) => NamingConvention::class_name(id.as_str()),
             TypeExpr::Callback(id) => self.callback_java_type(id),
@@ -1646,6 +1886,7 @@ impl<'a> JavaLowerer<'a> {
     fn java_vec_type(&self, inner: &TypeExpr) -> String {
         match inner {
             TypeExpr::Primitive(p) => mappings::java_primitive_array_type(*p).to_string(),
+            TypeExpr::Custom(id) => self.java_vec_type(self.custom_repr_type(id)),
             _ => format!("java.util.List<{}>", self.java_boxed_type(inner)),
         }
     }
@@ -1656,6 +1897,7 @@ impl<'a> JavaLowerer<'a> {
             TypeExpr::String => "String".to_string(),
             TypeExpr::Bytes => "byte[]".to_string(),
             TypeExpr::Record(id) => NamingConvention::class_name(id.as_str()),
+            TypeExpr::Custom(id) => self.java_boxed_type(self.custom_repr_type(id)),
             TypeExpr::Enum(id) => NamingConvention::class_name(id.as_str()),
             TypeExpr::Handle(id) => NamingConvention::class_name(id.as_str()),
             TypeExpr::Callback(id) => self.callback_java_type(id),
@@ -1675,7 +1917,7 @@ impl<'a> JavaLowerer<'a> {
         } else if abi_enum.is_c_style {
             JavaEnumKind::CStyle
         } else if self.options.min_java_version.supports_sealed()
-            && !Self::requires_manual_enum_value_semantics(abi_enum)
+            && !self.requires_manual_enum_value_semantics(abi_enum)
         {
             JavaEnumKind::SealedInterface
         } else {
@@ -1719,7 +1961,7 @@ impl<'a> JavaLowerer<'a> {
         }
     }
 
-    fn requires_manual_enum_value_semantics(enumeration: &AbiEnum) -> bool {
+    fn requires_manual_enum_value_semantics(&self, enumeration: &AbiEnum) -> bool {
         enumeration
             .variants
             .iter()
@@ -1727,7 +1969,7 @@ impl<'a> JavaLowerer<'a> {
                 AbiEnumPayload::Unit => false,
                 AbiEnumPayload::Tuple(fields) | AbiEnumPayload::Struct(fields) => fields
                     .iter()
-                    .any(|field| Self::contains_primitive_array_component(&field.type_expr)),
+                    .any(|field| self.contains_primitive_array_component(&field.type_expr)),
             })
     }
 
@@ -1795,9 +2037,9 @@ impl<'a> JavaLowerer<'a> {
         let hash_expr = self.value_hash_expr(&field.type_expr, field_name.as_str());
         let prefixed = Self::prefix_write_seq(&field.encode, "_v");
         let mut java_type = self.java_type(&field.type_expr);
-        let mut decode_expr = super::emit::emit_reader_read(&field.decode);
-        let mut size_expr = super::emit::emit_size_expr(&prefixed.size);
-        let mut encode_expr = super::emit::emit_write_expr(&prefixed, "wire");
+        let mut decode_expr = self.emit_reader_read(&field.decode);
+        let mut size_expr = self.emit_size_expr(&prefixed.size);
+        let mut encode_expr = self.emit_write_expr(&prefixed, "wire");
         if sibling_names.contains(&java_type) {
             java_type = format!("{}.{}", self.package_name, java_type);
         }
@@ -2176,11 +2418,11 @@ impl<'a> JavaLowerer<'a> {
                 self.input_write_ops(abi_param).map(|encode_ops| {
                     let param_name = param.name.as_str().to_string();
                     let binding_name = format!("_wire_{}", param.name.as_str());
-                    let encode_expr = super::emit::emit_write_expr(&encode_ops, &binding_name);
+                    let encode_expr = self.emit_write_expr(&encode_ops, &binding_name);
                     JavaWireWriter {
                         binding_name,
                         param_name,
-                        size_expr: super::emit::emit_size_expr(&encode_ops.size),
+                        size_expr: self.emit_size_expr(&encode_ops.size),
                         encode_expr,
                     }
                 })
@@ -2327,7 +2569,7 @@ impl<'a> JavaLowerer<'a> {
     }
 
     fn callback_encoded_param_decode_expr(&self, decode_ops: &ReadSeq, name: &str) -> String {
-        let decode_expr = super::emit::emit_reader_read(decode_ops);
+        let decode_expr = self.emit_reader_read(decode_ops);
         format!(
             "WireReader.decodeBuffer({}, reader -> {})",
             name, decode_expr
@@ -2453,19 +2695,13 @@ impl<'a> JavaLowerer<'a> {
     fn encoded_return_render(&self, encode_ops: &WriteSeq, binding: &str) -> JavaValueBridgeRender {
         let remapped = remap_root_in_seq(encode_ops, ValueExpr::Var(binding.to_string()));
         JavaValueBridgeRender::Encode {
-            size_expr: super::emit::emit_size_expr(&self.write_seq_size_expr(&remapped)),
-            encode_expr: super::emit::emit_write_expr(&remapped, "wire"),
+            size_expr: self.emit_size_expr(&self.write_seq_size_expr(&remapped)),
+            encode_expr: self.emit_write_expr(&remapped, "wire"),
         }
     }
 
     fn write_seq_size_expr(&self, encode_ops: &WriteSeq) -> SizeExpr {
-        match encode_ops.ops.first() {
-            Some(WriteOp::Custom { value, .. }) => SizeExpr::WireSize {
-                value: value.clone(),
-                owner: None,
-            },
-            _ => encode_ops.size.clone(),
-        }
+        self.normalize_custom_write_seq(encode_ops).size
     }
 
     fn callback_error_capture(&self, err: &TypeExpr) -> JavaCallbackErrorCapture {
@@ -2476,6 +2712,9 @@ impl<'a> JavaLowerer<'a> {
                 .resolve_enum(id)
                 .filter(|enumeration| enumeration.is_error)
                 .map(|_| format!("{}.Exception", NamingConvention::class_name(id.as_str()))),
+            TypeExpr::Record(id) if self.is_error_record(id) => {
+                Some(NamingConvention::class_name(id.as_str()))
+            }
             _ => None,
         };
 
@@ -2874,12 +3113,12 @@ mod tests {
     use crate::ir::contract::{FfiContract, PackageInfo};
     use crate::ir::definitions::{
         CStyleVariant, CallbackKind, CallbackMethodDef, CallbackTraitDef, ClassDef, ConstructorDef,
-        DataVariant, EnumDef, EnumRepr, FieldDef, FunctionDef, MethodDef, ParamDef, ParamPassing,
-        Receiver, RecordDef, ReturnDef, VariantPayload,
+        CustomTypeDef, DataVariant, EnumDef, EnumRepr, FieldDef, FunctionDef, MethodDef, ParamDef,
+        ParamPassing, Receiver, RecordDef, ReturnDef, VariantPayload,
     };
     use crate::ir::ids::{
-        CallbackId, ClassId, EnumId, FieldName, FunctionId, MethodId, ParamName, RecordId,
-        VariantName,
+        CallbackId, ClassId, ConverterPath, CustomTypeId, EnumId, FieldName, FunctionId, MethodId,
+        ParamName, QualifiedName, RecordId, VariantName,
     };
     use crate::ir::types::{PrimitiveType, TypeExpr};
     use crate::render::java::JavaVersion;
@@ -2918,12 +3157,26 @@ mod tests {
     fn record_def(id: &str, fields: Vec<FieldDef>) -> RecordDef {
         RecordDef {
             is_repr_c: true,
+            is_error: false,
             id: RecordId::new(id),
             fields,
             constructors: vec![],
             methods: vec![],
             doc: None,
             deprecated: None,
+        }
+    }
+
+    fn custom_type_def(id: &str, repr: TypeExpr) -> CustomTypeDef {
+        CustomTypeDef {
+            id: CustomTypeId::new(id),
+            rust_type: QualifiedName::new(format!("crate::{id}")),
+            repr,
+            converters: ConverterPath {
+                into_ffi: QualifiedName::new(format!("crate::{id}::into_ffi")),
+                try_from_ffi: QualifiedName::new(format!("crate::{id}::try_from_ffi")),
+            },
+            doc: None,
         }
     }
 
@@ -3711,6 +3964,7 @@ mod tests {
         let mut contract = empty_contract();
         contract.catalog.insert_record(RecordDef {
             is_repr_c: true,
+            is_error: false,
             id: RecordId::new("Point"),
             fields: vec![
                 field("x", TypeExpr::Primitive(PrimitiveType::F64)),
@@ -3756,6 +4010,44 @@ mod tests {
         assert_eq!(func.return_type, "java.util.Optional<Integer>");
         assert!(func.return_plan.is_decode());
         assert!(func.return_plan.decode_expr().contains("Optional"));
+    }
+
+    #[test]
+    fn function_error_record_result_throws_direct_exception() {
+        let mut contract = empty_contract();
+        contract.catalog.insert_record(RecordDef {
+            id: RecordId::new("AppError"),
+            is_repr_c: true,
+            is_error: true,
+            fields: vec![
+                field("code", TypeExpr::Primitive(PrimitiveType::I32)),
+                field("message", TypeExpr::String),
+            ],
+            constructors: vec![],
+            methods: vec![],
+            doc: None,
+            deprecated: None,
+        });
+        contract.functions.push(function(
+            "may_fail",
+            vec![],
+            ReturnDef::Result {
+                ok: TypeExpr::String,
+                err: TypeExpr::Record(RecordId::new("AppError")),
+            },
+        ));
+
+        let module = lower(&contract);
+        let func = &module.functions[0];
+
+        assert_eq!(func.return_type, "String");
+        assert!(func.return_plan.is_result());
+        assert!(func.return_plan.result_has_typed_exception());
+        assert!(func.return_plan.result_err_throws_directly());
+        assert_eq!(
+            func.return_plan.result_err_decode(),
+            "AppError.decode(reader)"
+        );
     }
 
     #[test]
@@ -3843,6 +4135,67 @@ mod tests {
             .find(|r| r.class_name == "Container")
             .unwrap();
         assert_eq!(container.fields[0].java_type, "java.util.List<Item>");
+    }
+
+    #[test]
+    fn custom_type_record_and_functions_are_lowered_for_java() {
+        let mut contract = empty_contract();
+        contract.catalog.insert_custom(custom_type_def(
+            "UtcDateTime",
+            TypeExpr::Primitive(PrimitiveType::I64),
+        ));
+        contract.catalog.insert_record(record_def(
+            "Event",
+            vec![
+                field("name", TypeExpr::String),
+                field(
+                    "timestamp",
+                    TypeExpr::Custom(CustomTypeId::new("UtcDateTime")),
+                ),
+            ],
+        ));
+        contract.functions.push(function(
+            "event_timestamp",
+            vec![param("event", TypeExpr::Record(RecordId::new("Event")))],
+            ReturnDef::Value(TypeExpr::Primitive(PrimitiveType::I64)),
+        ));
+        contract.functions.push(function(
+            "format_timestamp",
+            vec![param(
+                "timestamp",
+                TypeExpr::Custom(CustomTypeId::new("UtcDateTime")),
+            )],
+            ReturnDef::Value(TypeExpr::String),
+        ));
+
+        let module = lower(&contract);
+        let event = module
+            .records
+            .iter()
+            .find(|record| record.class_name == "Event")
+            .expect("Event record should be generated");
+        let timestamp_field = event
+            .fields
+            .iter()
+            .find(|field| field.name == "timestamp")
+            .expect("timestamp field should be generated");
+        assert_eq!(timestamp_field.java_type, "long");
+
+        let event_timestamp = module
+            .functions
+            .iter()
+            .find(|function| function.name == "eventTimestamp")
+            .expect("eventTimestamp should be generated");
+        assert_eq!(event_timestamp.params[0].java_type, "Event");
+
+        let format_timestamp = module
+            .functions
+            .iter()
+            .find(|function| function.name == "formatTimestamp")
+            .expect("formatTimestamp should be generated");
+        assert_eq!(format_timestamp.params[0].java_type, "long");
+        assert_eq!(format_timestamp.params[0].native_type, "ByteBuffer");
+        assert_eq!(format_timestamp.return_type, "String");
     }
 
     #[test]
@@ -4638,6 +4991,7 @@ mod tests {
         let mut contract = empty_contract();
         contract.catalog.insert_record(RecordDef {
             is_repr_c: true,
+            is_error: false,
             id: RecordId::new("point"),
             fields: vec![
                 field("x", TypeExpr::Primitive(PrimitiveType::F64)),

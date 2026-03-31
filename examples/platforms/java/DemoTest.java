@@ -15,6 +15,7 @@ public final class DemoTest {
         testF32();
         testF64();
         testStrings();
+        testCustomTypes();
         testPointRecords();
         testLineRecords();
         testPersonRecords();
@@ -93,6 +94,24 @@ public final class DemoTest {
         assert Demo.stringLength("") == 0 : "stringLength(empty)";
         assert Demo.stringLength("café") == 5 : "stringLength(utf8 bytes)";
         assert Demo.stringLength("🌍") == 4 : "stringLength(emoji 4 bytes)";
+        System.out.println("  PASS\n");
+    }
+
+    private static void testCustomTypes() {
+        System.out.println("Testing custom types...");
+        long timestamp = 1_710_000_000_000L;
+        assert Demo.echoDatetime(timestamp) == timestamp : "echoDatetime";
+        assert Demo.datetimeToMillis(timestamp) == timestamp : "datetimeToMillis";
+        assert Demo.formatTimestamp(timestamp).startsWith("2024-03-") : "formatTimestamp";
+
+        Event event = new Event("launch", timestamp);
+        assert event.name().equals("launch") : "Event.name";
+        assert event.timestamp() == timestamp : "Event.timestamp";
+
+        Event echoed = Demo.echoEvent(event);
+        assert echoed.name().equals("launch") : "echoEvent.name";
+        assert echoed.timestamp() == timestamp : "echoEvent.timestamp";
+        assert Demo.eventTimestamp(event) == timestamp : "eventTimestamp";
         System.out.println("  PASS\n");
     }
 
