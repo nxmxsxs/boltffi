@@ -114,6 +114,10 @@ impl NamingConvention {
     pub fn ffi_module_name(crate_name: &str) -> String {
         naming::ffi_module_name(crate_name)
     }
+
+    pub fn private_name(name: &str) -> String {
+        format!("$${}", name)
+    }
 }
 
 #[cfg(test)]

@@ -24,14 +24,22 @@ sealed class {{ dart_enum.name }} {
 
   int wireEncodedSize() => 4 + switch (this) {
 {%- for variant in dart_enum.variants %}
-    {{ variant.class_name }}({% for field in variant.fields %}:final {{ field.name }}{%- if !loop.last %}, {% endif %}{% endfor %}) => {% for field in variant.fields %}{{ field.wire_size_expr }}{% if !loop.last %} + {% endif %}{% endfor %},
+    {{ variant.class_name }}(
+{%- for field in variant.fields %}
+      :final {{ field.name }},
+{%- endfor %}
+    ) => {% for field in variant.fields %}{{ field.wire_size_expr }}{% if !loop.last %} + {% endif %}{% endfor %},
 {%- endfor %}
   };
 
   void wireEncodeTo(WireWriter writer) {
     switch (this) {
 {%- for variant in dart_enum.variants %}
-      case {{ variant.class_name }}({% for field in variant.fields%}:final {{ field.name }}{% if !loop.last %}, {% endif %}{% endfor %}):
+      case {{ variant.class_name }}(
+{%- for field in variant.fields -%}
+        :final {{ field.name }}{% if !loop.last %}, {% endif %}
+{%- endfor -%}
+      ):
         writer.writeI32({{ variant.tag }});
 {%- for field in variant.fields %}
         {{ field.wire_encode_expr }};

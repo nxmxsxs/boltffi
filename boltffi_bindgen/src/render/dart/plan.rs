@@ -1,6 +1,6 @@
 use crate::{
     Primitive,
-    ir::{AbiCall, AbiParam, AbiType, ErrorTransport, ParamRole, Transport},
+    ir::{AbiCall, AbiParam, AbiType, ErrorTransport, ParamRole, PrimitiveType, Transport},
 };
 
 #[derive(Debug, Clone)]
@@ -51,7 +51,6 @@ pub struct DartRecordField {
     pub wire_encode_expr: String,
 }
 
-
 #[derive(Debug, Clone)]
 pub struct DartBlittableLayout {
     pub struct_size: usize,
@@ -61,11 +60,25 @@ pub struct DartBlittableLayout {
 #[derive(Debug, Clone)]
 pub struct DartBlittableField {
     pub name: String,
+    pub primitive: PrimitiveType,
     pub native_type: DartNativeType,
-    pub const_name: String,
+    pub offset_const_name: String,
     pub offset: usize,
-    pub decode_expr: String,
-    pub encode_expr: String,
+}
+
+impl DartBlittableField {
+    pub fn decode_expr(&self, bytes_name: &str) -> String {
+        super::emit_read_blittable_value(&self.offset_const_name, self.primitive, bytes_name)
+    }
+
+    pub fn encode_expr(&self, bytes_name: &str) -> String {
+        super::emit_write_blittable_value(
+            &self.offset_const_name,
+            self.primitive,
+            &self.name,
+            bytes_name,
+        )
+    }
 }
 
 #[derive(Debug, Clone)]
@@ -150,7 +163,7 @@ impl DartNativeType {
                 return_ty: Box::new(Self::from_abi_type(return_type)),
             },
             AbiType::Handle(class_id) => {
-                DartNativeType::Custom("ffi.Pointer<ffi.Void>".to_string())
+                DartNativeType::Custom("$$ffi.Pointer<$$ffi.Void>".to_string())
             }
             AbiType::CallbackHandle => DartNativeType::Custom("BoltFFICallbackHandle".to_string()),
             AbiType::Struct(record_id) => {
@@ -160,25 +173,25 @@ impl DartNativeType {
     }
     pub fn native_type(&self) -> String {
         match self {
-            DartNativeType::Void => "ffi.Void".to_string(),
-            DartNativeType::Bool => "ffi.Bool".to_string(),
-            DartNativeType::Int8 => "ffi.Int8".to_string(),
-            DartNativeType::Int16 => "ffi.Int16".to_string(),
-            DartNativeType::Int32 => "ffi.Int32".to_string(),
-            DartNativeType::Int64 => "ffi.Int64".to_string(),
-            DartNativeType::Uint8 => "ffi.Uint8".to_string(),
-            DartNativeType::Uint16 => "ffi.Uint16".to_string(),
-            DartNativeType::Uint32 => "ffi.Uint32".to_string(),
-            DartNativeType::Uint64 => "ffi.Uint64".to_string(),
-            DartNativeType::IntPtr => "ffi.IntPtr".to_string(),
-            DartNativeType::UintPtr => "ffi.UintPtr".to_string(),
-            DartNativeType::Float => "ffi.Float".to_string(),
-            DartNativeType::Double => "ffi.Double".to_string(),
+            DartNativeType::Void => "$$ffi.Void".to_string(),
+            DartNativeType::Bool => "$$ffi.Bool".to_string(),
+            DartNativeType::Int8 => "$$ffi.Int8".to_string(),
+            DartNativeType::Int16 => "$$ffi.Int16".to_string(),
+            DartNativeType::Int32 => "$$ffi.Int32".to_string(),
+            DartNativeType::Int64 => "$$ffi.Int64".to_string(),
+            DartNativeType::Uint8 => "$$ffi.Uint8".to_string(),
+            DartNativeType::Uint16 => "$$ffi.Uint16".to_string(),
+            DartNativeType::Uint32 => "$$ffi.Uint32".to_string(),
+            DartNativeType::Uint64 => "$$ffi.Uint64".to_string(),
+            DartNativeType::IntPtr => "$$ffi.IntPtr".to_string(),
+            DartNativeType::UintPtr => "$$ffi.UintPtr".to_string(),
+            DartNativeType::Float => "$$ffi.Float".to_string(),
+            DartNativeType::Double => "$$ffi.Double".to_string(),
             DartNativeType::Function { params, return_ty } => format!(
-                "ffi.Pointer<ffi.NativeFunction<{} Function({})>>",
+                "$$ffi.Pointer<$$ffi.NativeFunction<{} Function({})>>",
                 return_ty.native_type(),
                 std::iter::chain(
-                    std::iter::once("ffi.Pointer<ffi.Void>".to_string()),
+                    std::iter::once("$$ffi.Pointer<$$ffi.Void>".to_string()),
                     params.iter().map(|p| p.native_type())
                 )
                 .fold(String::new(), |acc, p| if acc.is_empty() {
@@ -187,7 +200,7 @@ impl DartNativeType {
                     acc + ", " + p.as_str()
                 })
             ),
-            DartNativeType::Pointer(inner) => format!("ffi.Pointer<{}>", inner.native_type()),
+            DartNativeType::Pointer(inner) => format!("$$ffi.Pointer<{}>", inner.native_type()),
             DartNativeType::Custom(ty) => ty.clone(),
         }
     }
@@ -208,7 +221,7 @@ impl DartNativeType {
             | DartNativeType::UintPtr => "int".to_string(),
             DartNativeType::Float | DartNativeType::Double => "double".to_string(),
             o @ DartNativeType::Function { .. } => o.native_type(),
-            DartNativeType::Pointer(inner) => format!("ffi.Pointer<{}>", inner.native_type()),
+            DartNativeType::Pointer(inner) => format!("$$ffi.Pointer<{}>", inner.native_type()),
             DartNativeType::Custom(ty) => ty.clone(),
         }
     }
@@ -248,7 +261,9 @@ impl DartNativeType {
 
         match &abi_param.role {
             ParamRole::OutDirect | ParamRole::OutLen { .. } => Self::Pointer(Box::new(native_type)),
-            ParamRole::CallbackContext { .. } => Self::Custom("ffi.Pointer<ffi.Void>".to_string()),
+            ParamRole::CallbackContext { .. } => {
+                Self::Custom("$$ffi.Pointer<$$ffi.Void>".to_string())
+            }
             _ => native_type,
         }
     }
@@ -256,19 +271,19 @@ impl DartNativeType {
     pub fn field_annot(&self) -> String {
         match self {
             DartNativeType::Void => String::new(),
-            DartNativeType::Bool => "@ffi.Bool()".to_string(),
-            DartNativeType::Int8 => "@ffi.Int8()".to_string(),
-            DartNativeType::Int16 => "@ffi.Int16()".to_string(),
-            DartNativeType::Int32 => "@ffi.Int32()".to_string(),
-            DartNativeType::Int64 => "@ffi.Int64()".to_string(),
-            DartNativeType::Uint8 => "@ffi.Uint8()".to_string(),
-            DartNativeType::Uint16 => "@ffi.Uint16()".to_string(),
-            DartNativeType::Uint32 => "@ffi.Uint32()".to_string(),
-            DartNativeType::Uint64 => "@ffi.Uint64()".to_string(),
-            DartNativeType::IntPtr => "@ffi.IntPtr()".to_string(),
-            DartNativeType::UintPtr => "@ffi.UintPtr()".to_string(),
-            DartNativeType::Float => "@ffi.Float()".to_string(),
-            DartNativeType::Double => "@ffi.Double()".to_string(),
+            DartNativeType::Bool => "@$$ffi.Bool()".to_string(),
+            DartNativeType::Int8 => "@$$ffi.Int8()".to_string(),
+            DartNativeType::Int16 => "@$$ffi.Int16()".to_string(),
+            DartNativeType::Int32 => "@$$ffi.Int32()".to_string(),
+            DartNativeType::Int64 => "@$$ffi.Int64()".to_string(),
+            DartNativeType::Uint8 => "@$$ffi.Uint8()".to_string(),
+            DartNativeType::Uint16 => "@$$ffi.Uint16()".to_string(),
+            DartNativeType::Uint32 => "@$$ffi.Uint32()".to_string(),
+            DartNativeType::Uint64 => "@$$ffi.Uint64()".to_string(),
+            DartNativeType::IntPtr => "@$$ffi.IntPtr()".to_string(),
+            DartNativeType::UintPtr => "@$$ffi.UintPtr()".to_string(),
+            DartNativeType::Float => "@$$ffi.Float()".to_string(),
+            DartNativeType::Double => "@$$ffi.Double()".to_string(),
             DartNativeType::Function { params, return_ty } => String::new(),
             DartNativeType::Pointer(inner) => String::new(),
             DartNativeType::Custom(_) => String::new(),

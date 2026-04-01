@@ -225,16 +225,15 @@ impl<'a> DartLowerer<'a> {
             _ => unreachable!(),
         };
         let name = NamingConvention::property_name(field.name.as_str());
-        // let const_name = NamingConvention::enum_constant_name(field.name.as_str());
+        let offset_const_name =
+            NamingConvention::property_name(format!("offset_{}", field.name.as_str()).as_str());
+
         DartBlittableField {
             name,
             offset,
             native_type: DartNativeType::from_primitive(&primitive),
-            const_name: String::new(),
-            // decode_expr: java_blittable_decode_expr(primitive, &const_name),
-            // encode_expr: java_blittable_encode_expr(primitive, &const_name, &name),
-            decode_expr: String::new(),
-            encode_expr: String::new(),
+            primitive,
+            offset_const_name,
         }
     }
 

@@ -35,8 +35,8 @@ impl DartEmitter {
             if let Some(layout) = &r.blittable_layout {
                 output.push_str(
                     NativeRecordTemplate {
-                        layout,
                         name: &r.name,
+                        layout,
                     }
                     .render()
                     .unwrap()
@@ -145,6 +145,34 @@ pub fn type_expr_dart_type(ty: &TypeExpr) -> String {
         TypeExpr::Void => "void".to_string(),
     }
 }
+
+// pub fn type_expr_native_type(ty: &TypeExpr) -> String {
+//     match ty {
+//         TypeExpr::Primitive(p) => primitive_native_type(*p),
+//         TypeExpr::String => "FfiBuf_u8".to_string(),
+//         TypeExpr::Bytes => "FfiBuf_u8".to_string(),
+//         TypeExpr::Vec(inner) => "FfiBuf_u8".to_string(),
+//         TypeExpr::Option(inner) => format!("{}?", type_expr_dart_type(inner)),
+//         TypeExpr::Result { ok, err } => format!(
+//             "BoltFFIResult<{}, {}>",
+//             type_expr_dart_type(ok),
+//             type_expr_dart_type(err)
+//         ),
+//         TypeExpr::Record(id) => render_type_name(id.as_str()),
+//         TypeExpr::Enum(id) => render_type_name(id.as_str()),
+//         TypeExpr::Custom(id) => render_type_name(id.as_str()),
+//         TypeExpr::Builtin(id) => match id.as_str() {
+//             "Duration" => "Duration".to_string(),
+//             "SystemTime" => "Datetime".to_string(),
+//             "Uuid" => "(int, int)".to_string(), // NOTE: not builtin
+//             "Url" => "Uri".to_string(),
+//             _ => "String".to_string(),
+//         },
+//         TypeExpr::Handle(class_id) => render_type_name(class_id.as_str()),
+//         TypeExpr::Callback(callback_id) => render_type_name(callback_id.as_str()),
+//         TypeExpr::Void => "void".to_string(),
+//     }
+// }
 
 pub fn primitive_read_method(primitive: PrimitiveType) -> &'static str {
     match primitive {
@@ -485,4 +513,80 @@ pub fn emit_write_expr(seq: &WriteSeq, writer_name: &str) -> String {
             format!("{}.wireEncodeTo({writer_name})", render_value(value))
         }
     }
+}
+
+pub fn primitive_as_num(primitive: PrimitiveType, value: &str) -> String {
+    match primitive {
+        PrimitiveType::Bool => format!("({} ? 1 : 0)", value),
+        PrimitiveType::I8
+        | PrimitiveType::U8
+        | PrimitiveType::I16
+        | PrimitiveType::U16
+        | PrimitiveType::I32
+        | PrimitiveType::U32
+        | PrimitiveType::I64
+        | PrimitiveType::U64
+        | PrimitiveType::ISize
+        | PrimitiveType::USize
+        | PrimitiveType::F32
+        | PrimitiveType::F64 => value.to_string(),
+    }
+}
+
+pub fn primitive_blittable_write_method(primitive: PrimitiveType) -> &'static str {
+    match primitive {
+        PrimitiveType::I8 => "setInt8",
+        PrimitiveType::Bool | PrimitiveType::U8 => "setUint8",
+        PrimitiveType::I16 => "setInt16",
+        PrimitiveType::U16 => "setUint16",
+        PrimitiveType::I32 => "setInt32",
+        PrimitiveType::U32 => "setUint32",
+        PrimitiveType::I64 | PrimitiveType::ISize => "setInt64",
+        PrimitiveType::U64 | PrimitiveType::USize => "setUint64",
+        PrimitiveType::F32 => "setFloat32",
+        PrimitiveType::F64 => "setFloat64",
+    }
+}
+
+pub fn emit_write_blittable_value(
+    offset: &str,
+    primitive: PrimitiveType,
+    value: &str,
+    writer_name: &str,
+) -> String {
+    format!(
+        "{}.{}({}, {}, $$typed_data.Endian.little)",
+        writer_name,
+        primitive_blittable_write_method(primitive),
+        offset,
+        primitive_as_num(primitive, value)
+    )
+}
+
+pub fn primitive_blittable_read_method(primitive: PrimitiveType) -> &'static str {
+    match primitive {
+        PrimitiveType::I8 => "getInt8",
+        PrimitiveType::Bool | PrimitiveType::U8 => "getUint8",
+        PrimitiveType::I16 => "getInt16",
+        PrimitiveType::U16 => "getUint16",
+        PrimitiveType::I32 => "getInt32",
+        PrimitiveType::U32 => "getUint32",
+        PrimitiveType::I64 | PrimitiveType::ISize => "getInt64",
+        PrimitiveType::U64 | PrimitiveType::USize => "getUint64",
+        PrimitiveType::F32 => "getFloat32",
+        PrimitiveType::F64 => "getFloat64",
+    }
+}
+
+pub fn emit_read_blittable_value(
+    offset: &str,
+    primitive: PrimitiveType,
+    bytes_name: &str,
+) -> String {
+    format!(
+        "{}.{}({}, $$typed_data.Endian.little)",
+        bytes_name,
+        primitive_blittable_read_method(primitive),
+        offset,
+    )
 }

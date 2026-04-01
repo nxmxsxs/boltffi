@@ -1,18 +1,18 @@
 final class {{ record.name }} {
 {%- for field in record.fields %}
-  final {{ field.dart_type }} {{ field.name }};
+  {{ field.dart_type }} {{ field.name }};
 {%- endfor %}
 
-  const {{ record.name }}({
+  {{ record.name }}({
 {%- for field in record.fields %}
-    required this.{{ field.name }}{% if !loop.last %},{% endif %}
+    required this.{{ field.name }},
 {%- endfor %}
   });
 
   {{ record.name }}.decode(WireReader reader): this(
-{%- for field in record.fields -%}
-    {{ field.name }}: {{ field.wire_decode_expr }}{% if !loop.last %}, {% endif %}
-{%- endfor -%}
+{%- for field in record.fields %}
+    {{ field.name }}: {{ field.wire_decode_expr }},
+{%- endfor %}
   );
 
   void wireEncodeTo(WireWriter writer) {
@@ -20,4 +20,35 @@ final class {{ record.name }} {
     {{ field.wire_encode_expr }};
 {%- endfor %}
   }
+{% match record.blittable_layout %}
+{% when None%}
+{% when Some with (layout) %}
+{%- for field in layout.fields %}
+  static const {{ field.offset_const_name }} = {{ field.offset }};
+{%- endfor %}
+  static const $$structSize = {{ layout.struct_size }};
+
+  ___{{ record.name }} asNative() {
+    return $$ffi.Struct.create<___{{ record.name }}>()
+{%- for field in layout.fields %}
+      ..{{ field.name }} = {{ field.name }}{% if loop.last%};{% endif %}
+{%- endfor %}
+  }
+
+  void encodeBlittable(WireWriter $$writer) {
+    $$writer.write($$structSize, ($$bytes) {
+{%- for field in layout.fields %}
+      {{ field.encode_expr("$$bytes") }};
+{%- endfor %}
+    });
+  }
+
+  {{ record.name }} decodeBlittable(WireReader $$reader) {
+    return $$reader.read($$structSize, ($$bytes) => {{ record.name }}(
+{%- for field in layout.fields %}
+      {{ field.name }}: {{ field.decode_expr("$$bytes") }},
+{%- endfor %}
+    ));
+  }
+{% endmatch %}
 }
