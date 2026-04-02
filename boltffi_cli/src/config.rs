@@ -9,6 +9,7 @@ pub enum Target {
     Java,
     TypeScript,
     Header,
+    Dart,
 }
 
 impl Target {
@@ -19,6 +20,7 @@ impl Target {
             Target::Java => "java",
             Target::TypeScript => "typescript",
             Target::Header => "header",
+            Target::Dart => "dart",
         }
     }
 }
@@ -30,10 +32,13 @@ pub enum Experimental {
 }
 
 impl Experimental {
-    pub const ALL: &'static [Experimental] = &[Experimental::Feature {
-        target: Target::TypeScript,
-        name: "async_streams",
-    }];
+    pub const ALL: &'static [Experimental] = &[
+        Experimental::Feature {
+            target: Target::TypeScript,
+            name: "async_streams",
+        },
+        Experimental::WholeTarget(Target::Dart),
+    ];
 
     pub fn is_target_experimental(target: Target) -> bool {
         Self::ALL.iter().any(
@@ -52,8 +57,6 @@ pub struct Config {
     pub package: PackageConfig,
     #[serde(default)]
     pub targets: TargetsConfig,
-    #[serde(default)]
-    pub languages: LanguagesConfig,
 }
 
 #[derive(Debug, Deserialize, Serialize, Clone, Default)]
@@ -85,18 +88,25 @@ pub struct TargetsConfig {
     pub wasm: WasmConfig,
     #[serde(default)]
     pub java: JavaConfig,
-}
-
-#[derive(Debug, Serialize, Deserialize, Clone, Default)]
-pub struct LanguagesConfig {
     #[serde(default)]
     pub dart: DartConfig,
 }
 
-#[derive(Debug, Serialize, Deserialize, Clone, Default)]
+#[derive(Debug, Serialize, Deserialize, Clone)]
 pub struct DartConfig {
     #[serde(default = "default_dart_output")]
     pub output: PathBuf,
+    #[serde(default)]
+    pub enabled: bool,
+}
+
+impl Default for DartConfig {
+    fn default() -> Self {
+        Self {
+            output: default_dart_output(),
+            enabled: false,
+        }
+    }
 }
 
 #[derive(Debug, Deserialize, Serialize, Clone, Copy, PartialEq, Eq, Default)]
@@ -585,6 +595,10 @@ impl Config {
         self.targets.wasm.enabled
     }
 
+    pub fn is_dart_enabled(&self) -> bool {
+        self.targets.dart.enabled
+    }
+
     pub fn apple_include_macos(&self) -> bool {
         self.targets.apple.include_macos
     }
@@ -764,6 +778,7 @@ impl Config {
             Target::Java => self.is_java_jvm_enabled(),
             Target::TypeScript => self.is_wasm_enabled(),
             Target::Header => self.is_apple_enabled() || self.is_android_enabled(),
+            Target::Dart => self.is_dart_enabled(),
         }
     }
 
