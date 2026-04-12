@@ -29,7 +29,7 @@ impl ResolvedReturn {
             }
             ValueReturnStrategy::Buffer(EncodedReturnStrategy::DirectVec) => {
                 quote! {
-                    return;
+                    return ::boltffi::__private::FfiBuf::default();
                 }
             }
             ValueReturnStrategy::Buffer(_) => match (
