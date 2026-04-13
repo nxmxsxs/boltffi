@@ -2535,7 +2535,9 @@ impl<'a> KotlinLowerer<'a> {
         let call = self.abi_call_for_function(func);
         let return_jni_type = self.jni_type_for_return_shape(&call.returns);
         let complete_return_jni_type = match &call.mode {
-            CallMode::Async(async_call) => self.jni_type_for_return_shape(&async_call.result),
+            CallMode::Async(async_call) => {
+                self.jni_type_for_async_complete_shape(&async_call.result)
+            }
             CallMode::Sync => String::new(),
         };
         let async_ffi = match &call.mode {
@@ -2608,7 +2610,7 @@ impl<'a> KotlinLowerer<'a> {
                             jni_type: self.jni_type_for_param(param),
                         })
                         .collect(),
-                    return_jni_type: self.jni_type_for_return_shape(&async_call.result),
+                    return_jni_type: self.jni_type_for_async_complete_shape(&async_call.result),
                 }
             })
             .collect();
@@ -2673,13 +2675,18 @@ impl<'a> KotlinLowerer<'a> {
             ValueReturnStrategy::ObjectHandle | ValueReturnStrategy::CallbackHandle => {
                 "Long".to_string()
             }
-            ValueReturnStrategy::Buffer(EncodedReturnStrategy::Utf8String) => {
-                "String".to_string()
-            }
+            ValueReturnStrategy::Buffer(EncodedReturnStrategy::Utf8String) => "String".to_string(),
             ValueReturnStrategy::CompositeValue | ValueReturnStrategy::Buffer(_) => {
                 "ByteArray?".to_string()
             }
         }
+    }
+
+    fn jni_type_for_async_complete_shape(&self, ret_shape: &ReturnShape) -> String {
+        if Self::is_utf8_string_return(ret_shape) {
+            return "ByteArray?".to_string();
+        }
+        self.jni_type_for_return_shape(ret_shape)
     }
 
     fn jni_type_for_abi(&self, abi: &AbiType) -> String {
@@ -3132,6 +3139,23 @@ impl<'a> KotlinLowerer<'a> {
             };
         }
         self.kotlin_return_meta(ret_shape)
+    }
+
+    fn kotlin_async_host_return_meta(
+        &self,
+        ret_shape: &ReturnShape,
+        returns_def: &ReturnDef,
+    ) -> KotlinReturnMeta {
+        if matches!(returns_def, ReturnDef::Value(TypeExpr::String))
+            && Self::is_utf8_string_return(ret_shape)
+        {
+            return KotlinReturnMeta {
+                is_unit: false,
+                is_direct: false,
+                cast: String::new(),
+            };
+        }
+        self.kotlin_host_return_meta(ret_shape, returns_def)
     }
 
     fn is_utf8_string_return(ret_shape: &ReturnShape) -> bool {
@@ -3628,7 +3652,7 @@ impl<'a> KotlinLowerer<'a> {
             CallMode::Sync => unreachable!("async method missing async call"),
         };
         let result_route = &async_call.result;
-        let return_meta = self.kotlin_host_return_meta(result_route, &method.returns);
+        let return_meta = self.kotlin_async_host_return_meta(result_route, &method.returns);
         let decode_expr = self.decode_expr_for_call_return(result_route, &method.returns);
         let is_blittable_return = self.is_blittable_return(result_route, &method.returns);
         KotlinAsyncCall {
@@ -3670,7 +3694,7 @@ impl<'a> KotlinLowerer<'a> {
             CallMode::Sync => unreachable!("async function missing async call"),
         };
         let result_route = &async_call.result;
-        let return_meta = self.kotlin_host_return_meta(result_route, &func.returns);
+        let return_meta = self.kotlin_async_host_return_meta(result_route, &func.returns);
         let decode_expr = self.decode_expr_for_call_return(result_route, &func.returns);
         let is_blittable_return = self.is_blittable_return(result_route, &func.returns);
         KotlinAsyncCall {
@@ -4800,10 +4824,14 @@ impl JniParamMapping {
 mod tests {
     use super::*;
     use crate::ir::Lowerer as IrLowerer;
-    use crate::ir::contract::{FfiContract, PackageInfo};
-    use crate::ir::definitions::{ClassDef, FieldDef, RecordDef, StreamDef, StreamMode};
-    use crate::ir::ids::{ClassId, FieldName, RecordId, StreamId};
+    use crate::ir::contract::{FfiContract, PackageInfo, TypeCatalog};
+    use crate::ir::definitions::{
+        ClassDef, FieldDef, FunctionDef, MethodDef, ParamDef, ParamPassing, Receiver, RecordDef,
+        StreamDef, StreamMode,
+    };
+    use crate::ir::ids::{ClassId, FieldName, FunctionId, MethodId, ParamName, RecordId, StreamId};
     use crate::ir::types::{PrimitiveType, TypeExpr};
+    use boltffi_ffi_rules::callable::ExecutionKind;
 
     fn field(name: &str, primitive: PrimitiveType) -> FieldDef {
         FieldDef {
@@ -4824,6 +4852,69 @@ mod tests {
             methods: vec![],
             doc: None,
             deprecated: None,
+        }
+    }
+
+    fn lower_module(contract: &FfiContract) -> KotlinModule {
+        let abi = IrLowerer::new(contract).to_abi_contract();
+        KotlinLowerer::new(
+            contract,
+            &abi,
+            "com.example.demo".to_string(),
+            "demo".to_string(),
+            KotlinOptions::default(),
+        )
+        .lower()
+    }
+
+    fn async_string_function_contract() -> FfiContract {
+        FfiContract {
+            package: PackageInfo {
+                name: "demo".to_string(),
+                version: None,
+            },
+            catalog: TypeCatalog::default(),
+            functions: vec![FunctionDef {
+                id: FunctionId::new("fetch_name"),
+                params: vec![],
+                returns: ReturnDef::Value(TypeExpr::String),
+                execution_kind: ExecutionKind::Async,
+                doc: None,
+                deprecated: None,
+            }],
+        }
+    }
+
+    fn async_string_method_contract() -> FfiContract {
+        let mut catalog = TypeCatalog::default();
+        catalog.insert_class(ClassDef {
+            id: ClassId::new("Named"),
+            constructors: vec![],
+            methods: vec![MethodDef {
+                id: MethodId::new("load"),
+                receiver: Receiver::OwnedSelf,
+                params: vec![ParamDef {
+                    name: ParamName::new("refresh"),
+                    type_expr: TypeExpr::Primitive(PrimitiveType::Bool),
+                    passing: ParamPassing::Value,
+                    doc: None,
+                }],
+                returns: ReturnDef::Value(TypeExpr::String),
+                execution_kind: ExecutionKind::Async,
+                doc: None,
+                deprecated: None,
+            }],
+            streams: vec![],
+            doc: None,
+            deprecated: None,
+        });
+        FfiContract {
+            package: PackageInfo {
+                name: "demo".to_string(),
+                version: None,
+            },
+            catalog,
+            functions: vec![],
         }
     }
 
@@ -4894,5 +4985,72 @@ mod tests {
             "expected stream items to be decoded via PointReader, got: {}",
             stream.pop_batch_items_expr,
         );
+    }
+
+    #[test]
+    fn async_string_function_uses_status_checked_buffer_completion() {
+        let contract = async_string_function_contract();
+        let module = lower_module(&contract);
+        let function = module
+            .functions
+            .iter()
+            .find(|function| function.func_name == "fetchName")
+            .expect("async function should be lowered");
+        let native = module
+            .native
+            .functions
+            .iter()
+            .find(|function| function.ffi_name == "boltffi_fetch_name")
+            .expect("native async function should be lowered");
+        let async_call = function
+            .async_call
+            .as_ref()
+            .expect("async function should include async metadata");
+        let native_async = native
+            .async_ffi
+            .as_ref()
+            .expect("native async function should include async ffi metadata");
+
+        assert!(!async_call.return_is_direct);
+        assert_eq!(async_call.decode_expr, "reader.readString()");
+        assert_eq!(native_async.complete_return_jni_type, "ByteArray?");
+    }
+
+    #[test]
+    fn async_string_method_uses_status_checked_buffer_completion() {
+        let contract = async_string_method_contract();
+        let module = lower_module(&contract);
+        let class = module
+            .classes
+            .iter()
+            .find(|class| class.class_name == "Named")
+            .expect("record methods should be lowered to a class");
+        let method = class
+            .methods
+            .iter()
+            .find_map(|method| match &method.impl_ {
+                KotlinMethodImpl::AsyncMethod(rendered)
+                    if rendered.contains("suspend fun load(") =>
+                {
+                    Some(rendered)
+                }
+                _ => None,
+            })
+            .expect("async method should be lowered");
+        let native_class = module
+            .native
+            .classes
+            .iter()
+            .find(|class| class.ffi_free == "boltffi_named_free")
+            .expect("native class should be lowered");
+        let native_method = native_class
+            .async_methods
+            .iter()
+            .find(|method| method.ffi_name == "boltffi_named_load")
+            .expect("native async method should be lowered");
+
+        assert!(method.contains("val buf = Native.boltffi_named_load_complete(handle, future)"));
+        assert!(method.contains("reader.readString()"));
+        assert_eq!(native_method.return_jni_type, "ByteArray?");
     }
 }

@@ -1419,6 +1419,12 @@ impl<'a> JniLowerer<'a> {
         returns: &ReturnDef,
         ret_shape: &ReturnShape,
     ) -> JniAsyncCompleteKind {
+        if self.supports_direct_utf8_string_return()
+            && matches!(returns, ReturnDef::Value(TypeExpr::String))
+            && Self::is_utf8_string_return(ret_shape)
+        {
+            return JniAsyncCompleteKind::WireEncoded;
+        }
         match (ret_shape.value_return_strategy(), &ret_shape.transport) {
             (ValueReturnStrategy::CompositeValue, Some(Transport::Composite(layout))) => {
                 JniAsyncCompleteKind::BlittableStruct {
@@ -3011,6 +3017,21 @@ mod tests {
     }
 
     #[test]
+    fn kotlin_async_string_complete_uses_wire_encoded_status_path() {
+        let contract = contract_with_async_string_function();
+        let lowerer = lowerer_from_contract_with_binding_style(&contract, JvmBindingStyle::Kotlin);
+        let module = lowerer.lower();
+        let async_fn = module
+            .async_functions
+            .iter()
+            .find(|function| function.ffi_name == "boltffi_get_name")
+            .expect("expected async get_name function");
+
+        assert!(async_fn.complete_kind.is_wire_encoded());
+        assert_eq!(async_fn.complete_kind.jni_return(), "jbyteArray");
+    }
+
+    #[test]
     fn closure_return_bytes_is_wire_encoded() {
         let lowerer = test_lowerer();
         let ret = lowerer.closure_return_info(&closure_return_shape_from_contract(
@@ -3258,6 +3279,24 @@ mod tests {
                 params: vec![],
                 returns: ReturnDef::Value(TypeExpr::String),
                 execution_kind: ExecutionKind::Sync,
+                doc: None,
+                deprecated: None,
+            }],
+        }
+    }
+
+    fn contract_with_async_string_function() -> FfiContract {
+        FfiContract {
+            package: PackageInfo {
+                name: "test".to_string(),
+                version: None,
+            },
+            catalog: TypeCatalog::default(),
+            functions: vec![FunctionDef {
+                id: FunctionId::new("get_name"),
+                params: vec![],
+                returns: ReturnDef::Value(TypeExpr::String),
+                execution_kind: ExecutionKind::Async,
                 doc: None,
                 deprecated: None,
             }],
