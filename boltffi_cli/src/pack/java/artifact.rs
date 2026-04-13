@@ -1,7 +1,7 @@
 use std::path::Path;
 
 use crate::cargo::CargoMetadata;
-use crate::error::Result;
+use crate::cli::Result;
 
 use super::plan::JvmCrateOutputs;
 

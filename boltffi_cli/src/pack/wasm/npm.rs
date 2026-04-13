@@ -3,8 +3,8 @@ use std::path::{Path, PathBuf};
 
 use serde::Serialize;
 
+use crate::cli::{CliError, Result};
 use crate::config::{Config, WasmNpmTarget};
-use crate::error::{CliError, Result};
 
 pub(crate) fn generate_wasm_loader_entrypoints(
     module_name: &str,

@@ -1,5 +1,5 @@
+use crate::cli::Result;
 use crate::config::{Config, Target};
-use crate::error::Result;
 use crate::reporter::Reporter;
 
 use super::{

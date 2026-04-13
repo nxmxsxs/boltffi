@@ -2,9 +2,9 @@ use std::path::{Path, PathBuf};
 
 use crate::build::CargoBuildProfile;
 use crate::cargo::Cargo;
+use crate::cli::{CliError, Result};
 use crate::commands::generate::run_generate_java_with_output_from_source_dir;
 use crate::config::{Config, Target};
-use crate::error::{CliError, Result};
 use crate::pack::resolve_build_cargo_args;
 use crate::reporter::Reporter;
 use crate::target::JavaHostTarget;
@@ -355,8 +355,8 @@ mod tests {
         ensure_java_pack_cargo_args_supported, selected_jvm_package_source_directory,
     };
     use crate::build::CargoBuildProfile;
+    use crate::cli::CliError;
     use crate::config::{CargoConfig, Config, PackageConfig, TargetsConfig};
-    use crate::error::CliError;
     use crate::target::JavaHostTarget;
     use crate::toolchain::NativeHostToolchain;
 

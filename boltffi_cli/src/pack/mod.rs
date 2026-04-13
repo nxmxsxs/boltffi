@@ -8,9 +8,33 @@ use std::process::Command;
 
 use console::style;
 
+use crate::cli::{CliError, Result};
 use crate::config::Config;
-use crate::error::{CliError, Result};
 use crate::target::{BuiltLibrary, RustTarget};
+
+#[derive(Debug, thiserror::Error)]
+pub enum PackError {
+    #[error("no built libraries found for {platform}")]
+    NoLibrariesFound { platform: String },
+
+    #[error("missing built libraries for {platform}: {targets:?}")]
+    MissingBuiltLibraries {
+        platform: String,
+        targets: Vec<String>,
+    },
+
+    #[error("xcframework creation failed")]
+    XcframeworkFailed { source: std::io::Error },
+
+    #[error("lipo failed for simulator fat library")]
+    LipoFailed { source: std::io::Error },
+
+    #[error("zip creation failed")]
+    ZipFailed { source: std::io::Error },
+
+    #[error("build failed for targets: {targets:?}")]
+    BuildFailed { targets: Vec<String> },
+}
 
 pub(crate) fn resolve_build_cargo_args(config: &Config, cli_cargo_args: &[String]) -> Vec<String> {
     config

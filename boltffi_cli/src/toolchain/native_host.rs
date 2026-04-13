@@ -2,7 +2,7 @@ use std::collections::{HashMap, HashSet};
 use std::path::{Component, Path, PathBuf};
 use std::process::Command;
 
-use crate::error::{CliError, Result};
+use crate::cli::{CliError, Result};
 use crate::target::JavaHostTarget;
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -1752,7 +1752,7 @@ mod tests {
         validate_windows_rust_target_triple, windows_host_linker_args,
         write_linux_cross_linker_wrapper,
     };
-    use crate::error::CliError;
+    use crate::cli::CliError;
     use crate::target::JavaHostTarget;
     use std::fs;
     use std::path::{Path, PathBuf};

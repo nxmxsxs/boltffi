@@ -1,8 +1,9 @@
 use std::path::{Path, PathBuf};
 use std::process::{Command, Stdio};
 
+use crate::cli::{CliError, Result};
 use crate::config::Config;
-use crate::error::{CliError, PackError, Result};
+use crate::pack::PackError;
 use crate::target::{BuiltLibrary, Platform};
 
 pub struct XcframeworkBuilder<'a> {

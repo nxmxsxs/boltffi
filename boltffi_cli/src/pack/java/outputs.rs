@@ -1,6 +1,6 @@
 use std::path::Path;
 
-use crate::error::{CliError, Result};
+use crate::cli::{CliError, Result};
 use crate::target::JavaHostTarget;
 
 pub(crate) fn remove_file_if_exists(path: &Path) -> Result<()> {

@@ -11,8 +11,8 @@ use languages::{
     TypeScriptGenerator,
 };
 
+use crate::cli::Result;
 use crate::config::{Config, Target};
-use crate::error::Result;
 
 pub enum GenerateTarget {
     Swift,
@@ -94,8 +94,8 @@ mod tests {
     use std::time::{SystemTime, UNIX_EPOCH};
 
     use super::{GenerateOptions, GenerateTarget, PythonGenerator, run_generate_with_output};
+    use crate::cli::CliError;
     use crate::config::Config;
-    use crate::error::CliError;
 
     fn parse_config(input: &str) -> Config {
         let parsed: Config = toml::from_str(input).expect("toml parse failed");

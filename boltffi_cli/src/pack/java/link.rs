@@ -3,8 +3,9 @@ use std::process::Command;
 use std::sync::{Arc, Mutex};
 
 use crate::build::{OutputCallback, run_command_streaming};
+use crate::cli::{CliError, Result};
 use crate::config::Config;
-use crate::error::{CliError, PackError, Result};
+use crate::pack::PackError;
 use crate::pack::{format_command_for_log, print_cargo_line, print_verbose_detail};
 use crate::reporter::Step;
 use crate::target::JavaHostTarget;
@@ -1035,7 +1036,7 @@ mod tests {
         target_specific_java_include_env_key,
     };
     use crate::build::CargoBuildProfile;
-    use crate::error::CliError;
+    use crate::cli::CliError;
     use crate::pack::java::plan::{JvmCargoContext, JvmCrateOutputs};
     use crate::target::JavaHostTarget;
 

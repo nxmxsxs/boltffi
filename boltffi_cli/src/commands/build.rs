@@ -2,8 +2,9 @@ use crate::build::{
     BuildOptions, BuildResult, Builder, all_successful, count_successful, failed_targets,
     resolve_build_profile,
 };
+use crate::cli::Result;
 use crate::config::Config;
-use crate::error::{PackError, Result};
+use crate::pack::PackError;
 
 pub enum BuildPlatform {
     Apple,

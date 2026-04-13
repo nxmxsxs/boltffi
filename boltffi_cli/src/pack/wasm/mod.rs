@@ -4,10 +4,11 @@ use std::path::Path;
 use std::process::Command;
 
 use crate::build::{BuildOptions, Builder, OutputCallback, all_successful, failed_targets};
+use crate::cli::{CliError, Result};
 use crate::commands::generate::{GenerateOptions, GenerateTarget, run_generate_with_output};
 use crate::commands::pack::PackWasmOptions;
 use crate::config::{Config, WasmOptimizeLevel, WasmOptimizeOnMissing, WasmProfile};
-use crate::error::{CliError, PackError, Result};
+use crate::pack::PackError;
 use crate::reporter::Reporter;
 
 use super::{print_cargo_line, resolve_build_cargo_args};
