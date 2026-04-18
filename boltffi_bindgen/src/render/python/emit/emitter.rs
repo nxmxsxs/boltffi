@@ -381,6 +381,7 @@ mod tests {
         assert!(native_source.contains("static int boltffi_python_parse_i32"));
         assert!(native_source.contains("static int boltffi_python_parse_status"));
         assert!(native_source.contains("static PyObject *boltffi_python_box_status"));
+        assert!(native_source.contains("if (boxed_value == NULL) {"));
         assert!(native_source.contains("static int boltffi_python_status_native_to_wire_tag"));
         assert!(native_source.contains("static PyObject *boltffi_python_box_status_from_wire_tag"));
         assert!(native_source.contains("static int boltffi_python_parse_vec_status"));

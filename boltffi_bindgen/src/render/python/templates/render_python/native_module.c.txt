@@ -573,6 +573,9 @@ static PyObject *boltffi_python_box_registered_enum(
     const char *enum_name
 ) {
     PyObject *enum_value = NULL;
+    if (boxed_value == NULL) {
+        return NULL;
+    }
     if (!boltffi_python_expect_registered_enum(type_object, enum_name)) {
         Py_DECREF(boxed_value);
         return NULL;
@@ -697,6 +700,7 @@ static int {{ enumeration.vector_parser_name() }}(PyObject *value, boltffi_pytho
     }
     Py_DECREF(sequence);
     out->ptr = encoded_values;
+    /* Encoded enum vectors cross the ABI as a byte buffer, so len is the encoded byte count here. */
     out->len = (uintptr_t)encoded_size;
     out->owned_copy = encoded_values;
     return 1;
