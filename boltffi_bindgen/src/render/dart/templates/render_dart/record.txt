@@ -1,0 +1,65 @@
+{% match record.blittable_layout %}
+{% when None%}
+{%- when Some with (layout) %}
+final class {{ layout.struct_name }} extends $$ffi.Struct {
+{%- for field in layout.fields %}
+  {{ field.native_type.field_annot() }}
+  external {{ field.native_type.dart_sub_type() }} {{ field.name }};
+{% endfor -%}
+}
+{% endmatch %}
+final class {{ record.name }} {
+{%- for field in record.fields %}
+  {{ field.dart_type }} {{ field.name }};
+{%- endfor %}
+
+  {{ record.name }}({
+{%- for field in record.fields %}
+    required this.{{ field.name }},
+{%- endfor %}
+  });
+
+  static {{ record.name }} _m$wireDecode(_$$WireReader _p$reader) {
+    return {{ record.name }}(
+{%- for field in record.fields %}
+      {{ field.name }}: {{ field.wire_decode_expr("_p$reader")|indent(6)|trim }},
+{%- endfor %}
+    );
+  }
+
+  void _m$wireEncode(_$$WireWriter _p$writer) {
+{%- for field in record.fields %}
+    {{ field.wire_encode_expr("_p$writer")|indent(4)|trim }}
+{%- endfor %}
+  }
+{% match record.blittable_layout %}
+{% when None %}
+{%- when Some with (layout) %}
+{%- for field in layout.fields %}
+  static const {{ field.offset_const_name }} = {{ field.offset }};
+{%- endfor %}
+  static const _k$structSize = {{ layout.struct_size }};
+
+  void _m$blittableEncode(_$$WireWriter _p$writer) {
+    _p$writer.write(_k$structSize, (_p$bytes) {
+{%- for field in layout.fields %}
+      {{ field.blittable_encode_expr("_p$bytes")|indent(6)|trim }};
+{%- endfor %}
+    });
+  }
+
+  {{ record.name }} _m$blittableDecode(_$$WireReader _p$reader) {
+    return _p$reader.read(_k$structSize, (_p$bytes) => {{ record.name }}(
+{%- for field in layout.fields %}
+      {{ field.name }}: {{ field.blittable_decode_expr("_p$bytes") }},
+{%- endfor %}
+    ));
+  }
+
+  {{ layout.struct_name }} _m$toStruct({{ record.name }} value) {
+    final l$writer = _$$WireWriter(_k$structSize);
+    _m$blittableEncode(l$writer);
+    return $$ffi.Struct.create(l$writer._buf);
+  }
+{% endmatch -%}
+}

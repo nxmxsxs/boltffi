@@ -8,8 +8,8 @@ use crate::{
     render::dart::{
         DartLibrary, NamingConvention,
         templates::{
-            BuildHookTemplate, NativeFunctionsTemplate, NativeRecordTemplate, PreludeTemplate,
-            PubspecTemplate,
+            BuildHookTemplate, NativeFunctionsTemplate, PreludeTemplate, PubspecTemplate,
+            RecordTemplate,
         },
     },
 };
@@ -27,23 +27,13 @@ impl DartEmitter {
         let mut output = String::new();
 
         output.push_str(PreludeTemplate {}.render().unwrap().as_str());
-        output.push_str("\n\n");
 
         for r in &library.records {
-            if let Some(layout) = &r.blittable_layout {
-                output.push_str(
-                    NativeRecordTemplate {
-                        name: &r.name,
-                        layout,
-                    }
-                    .render()
-                    .unwrap()
-                    .as_str(),
-                );
-                output.push_str("\n\n");
-            }
+            output.push_str("\n\n");
+            output.push_str(RecordTemplate { record: r }.render().unwrap().as_str());
         }
 
+        output.push_str("\n\n");
         output.push_str(
             NativeFunctionsTemplate {
                 cfuncs: &library.native.functions,
@@ -52,7 +42,6 @@ impl DartEmitter {
             .unwrap()
             .as_str(),
         );
-        output.push_str("\n\n");
 
         DartPackage {
             pubspec: PubspecTemplate {
@@ -133,22 +122,22 @@ pub fn type_expr_dart_type(ty: &TypeExpr) -> String {
     match ty {
         TypeExpr::Primitive(p) => primitive_dart_type(*p),
         TypeExpr::String => "String".to_string(),
-        TypeExpr::Bytes => "Uint8List".to_string(),
+        TypeExpr::Bytes => "$$typed_data.Uint8List".to_string(),
         TypeExpr::Vec(inner) => match inner.as_ref() {
             TypeExpr::Primitive(primitive) => match primitive {
-                PrimitiveType::I32 => "Int32List".to_string(),
-                PrimitiveType::U32 => "Uint32List".to_string(),
-                PrimitiveType::I16 => "Int16List".to_string(),
-                PrimitiveType::U16 => "Uint16List".to_string(),
-                PrimitiveType::I64 => "Int64List".to_string(),
-                PrimitiveType::U64 => "Uint64List".to_string(),
-                PrimitiveType::ISize => "Int64List".to_string(),
-                PrimitiveType::USize => "Uint64List".to_string(),
-                PrimitiveType::F32 => "Float32List".to_string(),
-                PrimitiveType::F64 => "Float64List".to_string(),
-                PrimitiveType::U8 => "Uint8List".to_string(),
-                PrimitiveType::I8 => "Int8List".to_string(),
-                PrimitiveType::Bool => "Uint8List".to_string(),
+                PrimitiveType::I32 => "$$typed_data.Int32List".to_string(),
+                PrimitiveType::U32 => "$$typed_data.Uint32List".to_string(),
+                PrimitiveType::I16 => "$$typed_data.Int16List".to_string(),
+                PrimitiveType::U16 => "$$typed_data.Uint16List".to_string(),
+                PrimitiveType::I64 => "$$typed_data.Int64List".to_string(),
+                PrimitiveType::U64 => "$$typed_data.Uint64List".to_string(),
+                PrimitiveType::ISize => "$$typed_data.Int64List".to_string(),
+                PrimitiveType::USize => "$$typed_data.Uint64List".to_string(),
+                PrimitiveType::F32 => "$$typed_data.Float32List".to_string(),
+                PrimitiveType::F64 => "$$typed_data.Float64List".to_string(),
+                PrimitiveType::U8 => "$$typed_data.Uint8List".to_string(),
+                PrimitiveType::I8 => "$$typed_data.Int8List".to_string(),
+                PrimitiveType::Bool => "$$typed_data.Uint8List".to_string(),
             },
             _ => format!("List<{}>", type_expr_dart_type(inner)),
         },
@@ -204,6 +193,24 @@ pub fn primitive_as_num(primitive: PrimitiveType, value: &str) -> String {
     }
 }
 
+pub fn num_as_primitive(primitive: PrimitiveType, value: &str) -> String {
+    match primitive {
+        PrimitiveType::Bool => format!("({} == 1)", value),
+        PrimitiveType::I8
+        | PrimitiveType::U8
+        | PrimitiveType::I16
+        | PrimitiveType::U16
+        | PrimitiveType::I32
+        | PrimitiveType::U32
+        | PrimitiveType::I64
+        | PrimitiveType::U64
+        | PrimitiveType::ISize
+        | PrimitiveType::USize
+        | PrimitiveType::F32
+        | PrimitiveType::F64 => value.to_string(),
+    }
+}
+
 pub fn primitive_blittable_write_method(primitive: PrimitiveType) -> &'static str {
     match primitive {
         PrimitiveType::I8 => "setInt8",
@@ -223,14 +230,18 @@ pub fn emit_write_blittable_value(
     offset: &str,
     primitive: PrimitiveType,
     value: &str,
-    writer_name: &str,
+    bytes_name: &str,
 ) -> String {
     format!(
-        "{}.{}({}, {}, $$typed_data.Endian.little)",
-        writer_name,
+        "{}.{}({}, {}{})",
+        bytes_name,
         primitive_blittable_write_method(primitive),
         offset,
-        primitive_as_num(primitive, value)
+        primitive_as_num(primitive, value),
+        match primitive {
+            PrimitiveType::U8 | PrimitiveType::I8 | PrimitiveType::Bool => "",
+            _ => ", $$typed_data.Endian.little",
+        }
     )
 }
 
@@ -254,11 +265,19 @@ pub fn emit_read_blittable_value(
     primitive: PrimitiveType,
     bytes_name: &str,
 ) -> String {
-    format!(
-        "{}.{}({}, $$typed_data.Endian.little)",
-        bytes_name,
-        primitive_blittable_read_method(primitive),
-        offset,
+    num_as_primitive(
+        primitive,
+        format!(
+            "{}.{}({}{})",
+            bytes_name,
+            primitive_blittable_read_method(primitive),
+            offset,
+            match primitive {
+                PrimitiveType::U8 | PrimitiveType::I8 | PrimitiveType::Bool => "",
+                _ => ", $$typed_data.Endian.little",
+            }
+        )
+        .as_str(),
     )
 }
 
@@ -287,19 +306,19 @@ fn emit_write_primitive(primitive: PrimitiveType, writer_name: &str, value: &str
     )
 }
 
-fn enum_tag_write_expr(tag_type: PrimitiveType, writer_name: &str, value_expr: &str) -> String {
+fn enum_tag_write_expr(tag_type: PrimitiveType, writer_name: &str, value: &str) -> String {
     let write_method = primitive_write_method(tag_type);
 
-    format!("{}.{}({})", writer_name, write_method, value_expr)
+    format!("{}.{}({})", writer_name, write_method, value)
 }
 
 fn emit_write_builtin(id: &BuiltinId, writer_name: &str, value: &str) -> String {
     match id.as_str() {
-        "Duration" => format!("{}.writeDuration({})", writer_name, value),
-        "SystemTime" => format!("{}.writeInstant({})", writer_name, value),
-        "Uuid" => format!("{}.writeUuid({})", writer_name, value),
-        "Url" => format!("{}.writeUri({})", writer_name, value),
-        _ => format!("{}.writeString({})", writer_name, value),
+        "Duration" => format!("{}.writeDuration({});", writer_name, value),
+        "SystemTime" => format!("{}.writeInstant({});", writer_name, value),
+        "Uuid" => format!("{}.writeUuid({});", writer_name, value),
+        "Url" => format!("{}.writeUri({});", writer_name, value),
+        _ => format!("{}.writeString({});", writer_name, value),
     }
 }
 
@@ -336,8 +355,50 @@ fn emit_write_vec(
     String::new()
 }
 
-pub fn emit_write_expr(_seq: &WriteSeq, _writer_name: &str) -> String {
-    String::new()
+pub fn emit_write_expr(seq: &WriteSeq, writer_name: &str, value: &str) -> String {
+    match seq.ops.first() {
+        Some(WriteOp::Primitive { primitive, .. }) => {
+            format!(
+                "{writer_name}.{}({});",
+                primitive_write_method(*primitive),
+                value,
+            )
+        }
+        Some(WriteOp::String { .. }) => format!("{writer_name}.writeString({value});"),
+        Some(WriteOp::Bytes { .. }) => format!("{writer_name}.writeUint8List({value});"),
+        Some(WriteOp::Builtin { id, .. }) => emit_write_builtin(id, writer_name, value),
+        Some(WriteOp::Record { .. }) => format!("{value}._m$wireEncode({writer_name});",),
+        Some(WriteOp::Enum { .. }) => String::from("{value}._m$wireEncode({writer_name});"),
+        Some(WriteOp::Custom { .. }) => format!("{value}._m$wireEncode({writer_name});",),
+        Some(WriteOp::Vec {
+            element_type,
+            element,
+            layout,
+            ..
+        }) => emit_write_vec(value, element_type, element, layout),
+        Some(WriteOp::Option { some, .. }) => {
+            let value_rebind = NamingConvention::local_name(value.replace(".", "_").as_str());
+            let inner_write_expr = emit_write_expr(some, writer_name, value_rebind.as_str());
+
+            format!(
+                r#"
+final {value_rebind} = {value};
+if ({value_rebind} == null) {{
+  {writer_name}.writeU8(0);
+}} else {{
+  {writer_name}.writeU8(1);
+  {inner_write_expr}
+}}
+                "#
+            )
+        }
+        Some(WriteOp::Result { ok, err, .. }) => format!(
+            "todo!<{}, {}>;",
+            write_seq_dart_type(ok),
+            write_seq_dart_type(err)
+        ),
+        _ => ";".to_string(),
+    }
 }
 
 pub fn primitive_read_method(primitive: PrimitiveType) -> &'static str {
@@ -356,7 +417,12 @@ pub fn primitive_read_method(primitive: PrimitiveType) -> &'static str {
     }
 }
 
-fn emit_reader_vec(element_type: &TypeExpr, element: &ReadSeq, layout: &VecLayout) -> String {
+fn emit_reader_vec(
+    element_type: &TypeExpr,
+    element: &ReadSeq,
+    layout: &VecLayout,
+    reader_name: &str,
+) -> String {
     match layout {
         VecLayout::Blittable { .. } => match element_type {
             TypeExpr::Primitive(primitive) => {
@@ -372,30 +438,33 @@ fn emit_reader_vec(element_type: &TypeExpr, element: &ReadSeq, layout: &VecLayou
                     PrimitiveType::F32 => "readFloat32List",
                     PrimitiveType::F64 => "readFloat64List",
                 };
-                format!("reader.{}()", method)
+                format!("{reader_name}.{}()", method)
             }
             _ => {
-                let inner = emit_reader_read(element);
-                format!("reader.readList((reader) => {})", inner)
+                let inner_read_expr = emit_reader_read(element, reader_name);
+                format!("List.generate({reader_name}.readU32(), (_) => {inner_read_expr})")
             }
         },
         VecLayout::Encoded => {
-            let inner = emit_reader_read(element);
-            format!("reader.readList((reader) => {})", inner)
+            let inner_read_expr = emit_reader_read(element, reader_name);
+            format!("List.generate({reader_name}.readU32(), (_) => {inner_read_expr})")
         }
     }
 }
 
-pub fn emit_reader_read(seq: &ReadSeq) -> String {
+pub fn emit_reader_read(seq: &ReadSeq, reader_name: &str) -> String {
     let op = seq.ops.first().expect("read ops");
     match op {
         ReadOp::Primitive { primitive, .. } => {
-            format!("reader.{}()", primitive_read_method(*primitive))
+            format!("{reader_name}.{}()", primitive_read_method(*primitive))
         }
-        ReadOp::String { .. } => "reader.readString()".to_string(),
-        ReadOp::Bytes { .. } => "reader.readUint8List()".to_string(),
+        ReadOp::String { .. } => format!("{reader_name}.readString()"),
+        ReadOp::Bytes { .. } => format!("{reader_name}.readUint8List()"),
         ReadOp::Record { id, .. } => {
-            format!("{}.decode(reader)", render_type_name(id.as_str()))
+            format!(
+                "{}._m$wireDecode({reader_name})",
+                NamingConvention::class_name(id.as_str())
+            )
         }
         ReadOp::Enum { id, layout, .. } => match layout {
             EnumLayout::CStyle {
@@ -404,7 +473,7 @@ pub fn emit_reader_read(seq: &ReadSeq) -> String {
                 ..
             } => {
                 format!(
-                    "{}.fromValue(reader.{}())",
+                    "{}.fromValue({reader_name}.{}())",
                     render_type_name(id.as_str()),
                     primitive_read_method(*tag_type),
                 )
@@ -412,23 +481,23 @@ pub fn emit_reader_read(seq: &ReadSeq) -> String {
             EnumLayout::CStyle { is_error: true, .. }
             | EnumLayout::Data { .. }
             | EnumLayout::Recursive => {
-                format!("{}.decode(reader)", render_type_name(id.as_str()))
+                format!("{}.decode({reader_name})", render_type_name(id.as_str()))
             }
         },
         ReadOp::Option { some, .. } => {
-            let inner = emit_reader_read(some);
-            format!("reader.readOptional((reader) => {})", inner)
+            let inner_read_expr = emit_reader_read(some, reader_name);
+            format!("({reader_name}.readU8() == 0 ? null : {inner_read_expr})")
         }
         ReadOp::Vec {
             element_type,
             element,
             layout,
             ..
-        } => emit_reader_vec(element_type, element, layout),
+        } => emit_reader_vec(element_type, element, layout, reader_name),
         ReadOp::Result { ok, err, .. } => {
-            let _ok_expr = emit_reader_read(ok);
-            let _err_expr = emit_reader_read(err);
-            todo!()
+            let _ok_expr = emit_reader_read(ok, reader_name);
+            let _err_expr = emit_reader_read(err, reader_name);
+            String::new()
         }
         ReadOp::Builtin { id, .. } => match id.as_str() {
             "Duration" => "reader.readDuration()".to_string(),
@@ -438,7 +507,10 @@ pub fn emit_reader_read(seq: &ReadSeq) -> String {
             _ => "reader.readString()".to_string(),
         },
         ReadOp::Custom { id, .. } => {
-            format!("{}.decode(reader)", render_type_name(id.as_str()))
+            format!(
+                "{}._m$wireDecode({reader_name})",
+                render_type_name(id.as_str())
+            )
         }
     }
 }

@@ -1,15 +1,15 @@
-// ignore_for_file: camel_case_types, non_constant_identifier_names, unused_element, unused_local_variable, library_prefixes, library_private_types_in_public_api
+// ignore_for_file: camel_case_types, non_constant_identifier_names, unused_element, unused_local_variable, library_prefixes, library_private_types_in_public_api, no_leading_underscores_for_local_identifiers
 
 import 'dart:convert' as $$convert;
 import 'dart:typed_data' as $$typed_data;
 import 'dart:ffi' as $$ffi;
 
-final class FfiStatus extends $$ffi.Struct {
+final class _$$FFIStatus extends $$ffi.Struct {
   @$$ffi.Int32()
   external int code;
 }
 
-final class FfiString extends $$ffi.Struct {
+final class _$$FFIString extends $$ffi.Struct {
   external $$ffi.Pointer<$$ffi.Uint8> ptr;
 
   @$$ffi.UintPtr()
@@ -19,7 +19,7 @@ final class FfiString extends $$ffi.Struct {
   external int cap;
 }
 
-final class FfiBuf_u8 extends $$ffi.Struct {
+final class _$$FFIBuf extends $$ffi.Struct {
   external $$ffi.Pointer<$$ffi.Uint8> ptr;
 
   @$$ffi.UintPtr()
@@ -32,30 +32,30 @@ final class FfiBuf_u8 extends $$ffi.Struct {
   external int align;
 }
 
-final class FfiError extends $$ffi.Struct {
-  external FfiString message;
+final class _$$FFIError extends $$ffi.Struct {
+  external _$$FFIString message;
 }
 
-final class BoltFFICallbackHandle extends $$ffi.Struct {
+final class _$$BoltFFICallbackHandle extends $$ffi.Struct {
   @$$ffi.Uint64()
   external int handle;
 
   external $$ffi.Pointer<$$ffi.Void> vtable;
 }
 
-final class FfiException implements Exception {
+final class _$$FFIException implements Exception {
   final int code;
   final String message;
 
-  const FfiException(this.code, this.message);
+  const _$$FFIException(this.code, this.message);
 
   @override
   String toString() {
-    return 'FfiException ($code): $message';
+    return 'FFIException ($code): $message';
   }
 }
 
-final class WireWriter {
+final class _$$WireWriter {
   $$typed_data.Uint8List _buf;
 
   int _offset;
@@ -67,7 +67,7 @@ final class WireWriter {
     _offset = nextOffset;
   }
 
-  WireWriter([int initialCapacity = 256])
+  _$$WireWriter([int initialCapacity = 256])
     : _buf = $$typed_data.Uint8List(initialCapacity),
       _offset = 0;
 
@@ -143,23 +143,23 @@ final class WireWriter {
   void writeInstant(DateTime v) {}
 }
 
-class WireReader {
-  static final Finalizer<FfiBuf_u8> _finalizer = Finalizer(
-    (buf) => $$Native.boltffi_free_buf(buf),
+class _$$WireReader {
+  static final Finalizer<_$$FFIBuf> _finalizer = Finalizer(
+    (buf) => _$$Native.boltffi_free_buf(buf),
   );
 
-  final FfiBuf_u8 owned;
+  final _$$FFIBuf owned;
   final $$typed_data.Uint8List _buf;
   int _offset;
 
-  WireReader(this.owned, [this._offset = 0])
+  _$$WireReader(this.owned, [this._offset = 0])
     : _buf = owned.ptr.asTypedList(owned.len) {
     _finalizer.attach(this, owned, detach: this);
   }
 
   void free() {
     _finalizer.detach(this);
-    $$Native.boltffi_free_buf(owned);
+    _$$Native.boltffi_free_buf(owned);
   }
 
   T withByteData<T>(int size, T Function($$typed_data.ByteData) reader) {
@@ -200,12 +200,12 @@ class WireReader {
     return switch (b) {
       0 => false,
       1 => true,
-      _ => throw FfiException(-1, "Invalid bool value: $b"),
+      _ => throw _$$FFIException(-1, "Invalid bool value: $b"),
     };
   }
 
   $$typed_data.Uint8List readUint8List() {
-    final len = readI32();
+    final len = readU32();
     final size = len;
 
     return read(size, (b) {
@@ -216,7 +216,7 @@ class WireReader {
   }
 
   $$typed_data.Int8List readInt8List() {
-    final len = readI32();
+    final len = readU32();
     final size = len;
 
     return read(size, (b) {
@@ -227,7 +227,7 @@ class WireReader {
   }
 
   $$typed_data.Uint16List readUint16List() {
-    final len = readI32();
+    final len = readU32();
     final size = len * 2;
 
     return read(size, (b) {
@@ -238,7 +238,7 @@ class WireReader {
   }
 
   $$typed_data.Int16List readInt16List() {
-    final len = readI32();
+    final len = readU32();
     final size = len * 2;
 
     return read(size, (b) {
@@ -249,7 +249,7 @@ class WireReader {
   }
 
   $$typed_data.Uint32List readUint32List() {
-    final len = readI32();
+    final len = readU32();
     final size = len * 4;
 
     return read(size, (b) {
@@ -260,7 +260,7 @@ class WireReader {
   }
 
   $$typed_data.Int32List readInt32List() {
-    final len = readI32();
+    final len = readU32();
     final size = len * 4;
 
     return read(size, (b) {
@@ -271,7 +271,7 @@ class WireReader {
   }
 
   $$typed_data.Uint64List readUint64List() {
-    final len = readI32();
+    final len = readU32();
     final size = len * 8;
 
     return read(size, (b) {
@@ -282,7 +282,7 @@ class WireReader {
   }
 
   $$typed_data.Int64List readInt64List() {
-    final len = readI32();
+    final len = readU32();
     final size = len * 8;
 
     return read(size, (b) {
@@ -293,7 +293,7 @@ class WireReader {
   }
 
   $$typed_data.Float32List readFloat32List() {
-    final len = readI32();
+    final len = readU32();
     final size = len * 4;
 
     return read(size, (b) {
@@ -304,7 +304,7 @@ class WireReader {
   }
 
   $$typed_data.Float64List readFloat64List() {
-    final len = readI32();
+    final len = readU32();
     final size = len * 8;
 
     return read(size, (b) {
@@ -314,21 +314,61 @@ class WireReader {
     });
   }
 
-  T? readOptional<T>(T Function(WireReader) readValue) {
+  T? readOptional<T>(T Function(_$$WireReader) readValue) {
     final tag = readU8();
 
     return switch (tag) {
       0 => null,
       1 => readValue(this),
-      _ => throw FfiException(-1, "Invalid Optional tag: $tag"),
+      _ => throw _$$FFIException(-1, "Invalid Optional tag: $tag"),
     };
   }
 
-  List<T> readList<T>(T Function(WireReader) readValue) {
-    final len = readI32();
+  List<T> readList<T>(T Function(_$$WireReader) readValue) {
+    final len = readU32();
 
     return List.generate(len, (_) => readValue(this));
   }
 
   String readString() => $$convert.utf8.decode(readUint8List());
+}
+
+sealed class BoltFFIResult<Ok, Err extends Exception> {
+  const BoltFFIResult();
+
+  factory BoltFFIResult.ok({required Ok value}) = BoltFFIResult$Ok;
+
+  factory BoltFFIResult.err({required Err value}) = BoltFFIResult$Err;
+
+  Ok okOrThrow() {
+    return switch (this) {
+      BoltFFIResult$Ok<Ok, Err>(:final value) => value,
+      BoltFFIResult$Err<Ok, Err>(:final value) => throw value,
+    };
+  }
+
+  BoltFFIResult<Ok, MErr> mapError<MErr extends Exception>(
+    MErr Function(Err) m,
+  ) {
+    return switch (this) {
+      BoltFFIResult$Ok<Ok, Err>(:final value) => BoltFFIResult.ok(value: value),
+      BoltFFIResult$Err<Ok, Err>(:final value) => BoltFFIResult.err(
+        value: m(value),
+      ),
+    };
+  }
+}
+
+final class BoltFFIResult$Ok<Ok, Err extends Exception>
+    extends BoltFFIResult<Ok, Err> {
+  final Ok value;
+
+  const BoltFFIResult$Ok({required this.value});
+}
+
+final class BoltFFIResult$Err<Ok, Err extends Exception>
+    extends BoltFFIResult<Ok, Err> {
+  final Err value;
+
+  const BoltFFIResult$Err({required this.value});
 }

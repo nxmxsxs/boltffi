@@ -1,4 +1,10 @@
-use crate::ir::{AbiCall, AbiParam, AbiType, ErrorTransport, ParamRole, PrimitiveType, Transport};
+use crate::{
+    ir::{
+        AbiCall, AbiParam, AbiType, ErrorTransport, ParamRole, PrimitiveType, ReadSeq, Transport,
+        WriteSeq,
+    },
+    render::dart::NamingConvention,
+};
 
 #[derive(Clone, Debug)]
 pub enum DartNativeType {
@@ -9,6 +15,9 @@ pub enum DartNativeType {
         return_ty: Box<DartNativeType>,
     },
     Pointer(Box<DartNativeType>),
+    OwnedBuffer,
+    CallbackHandle,
+    Status,
     Custom(String),
 }
 
@@ -32,7 +41,7 @@ impl DartNativeType {
             AbiType::Pointer(primitive) => {
                 DartNativeType::Pointer(Box::new(DartNativeType::Primitive(*primitive)))
             }
-            AbiType::OwnedBuffer => DartNativeType::Custom("FfiBuf_u8".to_string()),
+            AbiType::OwnedBuffer => DartNativeType::OwnedBuffer,
             AbiType::InlineCallbackFn {
                 params,
                 return_type,
@@ -41,9 +50,9 @@ impl DartNativeType {
                 return_ty: Box::new(Self::from_abi_type(return_type)),
             },
             AbiType::Handle(_) => DartNativeType::Pointer(Box::new(DartNativeType::Void)),
-            AbiType::CallbackHandle => DartNativeType::Custom("BoltFFICallbackHandle".to_string()),
+            AbiType::CallbackHandle => DartNativeType::CallbackHandle,
             AbiType::Struct(record_id) => {
-                DartNativeType::Custom(format!("___{}", record_id.as_str()))
+                DartNativeType::Custom(NamingConvention::record_struct_name(record_id.as_str()))
             }
         }
     }
@@ -62,6 +71,9 @@ impl DartNativeType {
                 )
             ),
             DartNativeType::Pointer(inner) => format!("$$ffi.Pointer<{}>", inner.native_type()),
+            DartNativeType::OwnedBuffer => "_$$FFIBuf".to_string(),
+            DartNativeType::CallbackHandle => "_$$BoltFFICallbackHandle".to_string(),
+            DartNativeType::Status => "_$$FFIStatus".to_string(),
             DartNativeType::Custom(ty) => ty.clone(),
         }
     }
@@ -72,9 +84,10 @@ impl DartNativeType {
             DartNativeType::Primitive(primitive) => super::emit::primitive_dart_type(*primitive),
             o @ (DartNativeType::Function { .. }
             | DartNativeType::Pointer(..)
+            | DartNativeType::OwnedBuffer
+            | DartNativeType::CallbackHandle
+            | DartNativeType::Status
             | DartNativeType::Custom(..)) => o.native_type(),
-            // DartNativeType::Pointer(inner) => format!("$$ffi.Pointer<{}>", inner.native_type()),
-            // DartNativeType::Custom(ty) => ty.clone(),
         }
     }
 
@@ -94,7 +107,7 @@ impl DartNativeType {
         match &abi_call.returns.transport {
             None => {
                 if matches!(abi_call.error, ErrorTransport::StatusCode) {
-                    Self::Custom("FfiStatus".to_string())
+                    Self::Status
                 } else {
                     Self::from_abi_type(&AbiType::Void)
                 }
@@ -114,7 +127,7 @@ impl DartNativeType {
         }
 
         if let ParamRole::StatusOut = &abi_param.role {
-            return Self::Pointer(Box::new(Self::Custom("FfiStatus".to_string())));
+            return Self::Pointer(Box::new(Self::Status));
         }
 
         let native_type = Self::from_abi_type(&abi_param.abi_type);
@@ -130,6 +143,9 @@ impl DartNativeType {
             DartNativeType::Void
             | DartNativeType::Function { .. }
             | DartNativeType::Pointer(_)
+            | DartNativeType::OwnedBuffer
+            | DartNativeType::CallbackHandle
+            | DartNativeType::Status
             | DartNativeType::Custom(_) => String::new(),
             primitive @ DartNativeType::Primitive(_) => format!("@{}()", primitive.native_type()),
         }
@@ -160,12 +176,23 @@ pub struct DartRecordField {
     pub name: String,
     pub offset: usize,
     pub dart_type: String,
-    pub wire_decode_expr: String,
-    pub wire_encode_expr: String,
+    pub read_seq: ReadSeq,
+    pub write_seq: WriteSeq,
+}
+
+impl DartRecordField {
+    pub fn wire_decode_expr(&self, reader_name: &str) -> String {
+        super::emit_reader_read(&self.read_seq, reader_name)
+    }
+
+    pub fn wire_encode_expr(&self, writer_name: &str) -> String {
+        super::emit_write_expr(&self.write_seq, writer_name, &self.name)
+    }
 }
 
 #[derive(Debug, Clone)]
 pub struct DartBlittableLayout {
+    pub struct_name: String,
     pub struct_size: usize,
     pub fields: Vec<DartBlittableField>,
 }
@@ -180,11 +207,11 @@ pub struct DartBlittableField {
 }
 
 impl DartBlittableField {
-    pub fn decode_expr(&self, bytes_name: &str) -> String {
+    pub fn blittable_decode_expr(&self, bytes_name: &str) -> String {
         super::emit_read_blittable_value(&self.offset_const_name, self.primitive, bytes_name)
     }
 
-    pub fn encode_expr(&self, bytes_name: &str) -> String {
+    pub fn blittable_encode_expr(&self, bytes_name: &str) -> String {
         super::emit_write_blittable_value(
             &self.offset_const_name,
             self.primitive,

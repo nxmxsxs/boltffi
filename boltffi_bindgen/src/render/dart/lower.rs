@@ -109,11 +109,11 @@ impl<'a> DartLowerer<'a> {
         let record_field_read_seq = self.record_field_read_seq(abi_record, &field.name).unwrap();
 
         DartRecordField {
-            name: field.name.to_string(),
+            name: NamingConvention::property_name(field.name.as_str()),
             offset: 0,
             dart_type: super::emit::type_expr_dart_type(&field.type_expr),
-            wire_decode_expr: super::emit::emit_reader_read(&record_field_read_seq),
-            wire_encode_expr: super::emit::emit_write_expr(&record_field_write_seq, "writer"),
+            read_seq: record_field_read_seq,
+            write_seq: record_field_write_seq,
         }
     }
 
@@ -129,7 +129,7 @@ impl<'a> DartLowerer<'a> {
         };
         let name = NamingConvention::property_name(field.name.as_str());
         let offset_const_name =
-            NamingConvention::property_name(format!("offset_{}", field.name.as_str()).as_str());
+            NamingConvention::priv_const_name(format!("offset_{}", field.name.as_str()).as_str());
 
         DartBlittableField {
             name,
@@ -151,6 +151,7 @@ impl<'a> DartLowerer<'a> {
 
         DartBlittableLayout {
             fields,
+            struct_name: NamingConvention::record_struct_name(abi_record.id.as_str()),
             struct_size: abi_record
                 .size
                 .expect("record.is_blittable <=> size != None"),
@@ -395,7 +396,7 @@ mod test {
         assert!(
             output
                 .lib
-                .contains("final class ___Point extends $$ffi.Struct")
+                .contains("final class _$Point$Struct extends $$ffi.Struct")
         );
     }
 
