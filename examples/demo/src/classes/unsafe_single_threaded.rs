@@ -1,5 +1,4 @@
 use boltffi::*;
-use demo_bench_macros::benchmark_candidate;
 
 use crate::callbacks::sync_traits::ValueCallback;
 
@@ -87,33 +86,11 @@ impl StateHolder {
 }
 
 #[derive(Default)]
-#[benchmark_candidate(object, wasm_bindgen)]
 pub struct CounterSingleThreaded {
     value: i32,
 }
 
-#[cfg(not(feature = "wasm-bench"))]
 #[export(single_threaded)]
-impl CounterSingleThreaded {
-    pub fn new() -> Self {
-        Self { value: 0 }
-    }
-
-    pub fn set(&mut self, value: i32) {
-        self.value = value;
-    }
-
-    pub fn increment(&mut self) {
-        self.value += 1;
-    }
-
-    pub fn get(&self) -> i32 {
-        self.value
-    }
-}
-
-#[cfg(feature = "wasm-bench")]
-#[benchmark_candidate(impl, wasm_bindgen, constructor = "new")]
 impl CounterSingleThreaded {
     pub fn new() -> Self {
         Self { value: 0 }
@@ -133,33 +110,11 @@ impl CounterSingleThreaded {
 }
 
 #[derive(Default)]
-#[benchmark_candidate(object, wasm_bindgen)]
 pub struct AccumulatorSingleThreaded {
     value: i64,
 }
 
-#[cfg(not(feature = "wasm-bench"))]
 #[export(single_threaded)]
-impl AccumulatorSingleThreaded {
-    pub fn new() -> Self {
-        Self { value: 0 }
-    }
-
-    pub fn add(&mut self, amount: i64) {
-        self.value += amount;
-    }
-
-    pub fn get(&self) -> i64 {
-        self.value
-    }
-
-    pub fn reset(&mut self) {
-        self.value = 0;
-    }
-}
-
-#[cfg(feature = "wasm-bench")]
-#[benchmark_candidate(impl, wasm_bindgen, constructor = "new")]
 impl AccumulatorSingleThreaded {
     pub fn new() -> Self {
         Self { value: 0 }

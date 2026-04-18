@@ -4,7 +4,13 @@ use wasm_bindgen::prelude::{JsValue, wasm_bindgen};
 use wasm_bindgen::JsCast;
 
 use crate::callbacks::sync_traits::{DataConsumer as DemoDataConsumer, DataProvider};
+use crate::classes::methods::Counter as DemoCounter;
+use crate::classes::thread_safe::Accumulator as DemoAccumulator;
 use crate::classes::thread_safe::DataStore as DemoDataStore;
+use crate::classes::unsafe_single_threaded::{
+    AccumulatorSingleThreaded as DemoAccumulatorSingleThreaded,
+    CounterSingleThreaded as DemoCounterSingleThreaded,
+};
 use crate::enums::data_enum::TaskStatus;
 use crate::records::blittable::{DataPoint, Location};
 use crate::records::with_collections::BenchmarkUserProfile;
@@ -182,6 +188,114 @@ impl DataStore {
 
     pub fn sum(&self) -> f64 {
         self.inner.sum()
+    }
+}
+
+#[wasm_bindgen(js_name = Counter)]
+pub struct WasmBenchCounter {
+    inner: DemoCounter,
+}
+
+#[wasm_bindgen(js_class = Counter)]
+impl WasmBenchCounter {
+    #[wasm_bindgen(constructor)]
+    pub fn new(initial: i32) -> Self {
+        Self {
+            inner: DemoCounter::new(initial),
+        }
+    }
+
+    pub fn get(&self) -> i32 {
+        self.inner.get()
+    }
+
+    pub fn increment(&self) {
+        self.inner.increment();
+    }
+
+    pub fn add(&self, amount: i32) {
+        self.inner.add(amount);
+    }
+
+    pub fn reset(&self) {
+        self.inner.reset();
+    }
+}
+
+#[wasm_bindgen(js_name = Accumulator)]
+pub struct WasmBenchAccumulator {
+    inner: DemoAccumulator,
+}
+
+#[wasm_bindgen(js_class = Accumulator)]
+impl WasmBenchAccumulator {
+    #[wasm_bindgen(constructor)]
+    pub fn new() -> Self {
+        Self {
+            inner: DemoAccumulator::new(),
+        }
+    }
+
+    pub fn add(&self, amount: i64) {
+        self.inner.add(amount);
+    }
+
+    pub fn get(&self) -> i64 {
+        self.inner.get()
+    }
+
+    pub fn reset(&self) {
+        self.inner.reset();
+    }
+}
+
+#[wasm_bindgen(js_name = CounterSingleThreaded)]
+pub struct WasmBenchCounterSingleThreaded {
+    inner: DemoCounterSingleThreaded,
+}
+
+#[wasm_bindgen(js_class = CounterSingleThreaded)]
+impl WasmBenchCounterSingleThreaded {
+    #[wasm_bindgen(constructor)]
+    pub fn new() -> Self {
+        Self {
+            inner: DemoCounterSingleThreaded::new(),
+        }
+    }
+
+    pub fn increment(&mut self) {
+        self.inner.increment();
+    }
+
+    pub fn get(&self) -> i32 {
+        self.inner.get()
+    }
+}
+
+#[wasm_bindgen(js_name = AccumulatorSingleThreaded)]
+pub struct WasmBenchAccumulatorSingleThreaded {
+    inner: DemoAccumulatorSingleThreaded,
+}
+
+#[wasm_bindgen(js_class = AccumulatorSingleThreaded)]
+impl WasmBenchAccumulatorSingleThreaded {
+    #[wasm_bindgen(constructor)]
+    pub fn new() -> Self {
+        Self {
+            inner: DemoAccumulatorSingleThreaded::new(),
+        }
+    }
+
+    pub fn add(&mut self, amount: i64) {
+        self.inner.add(amount);
+    }
+
+    pub fn get(&self) -> i64 {
+        self.inner.get()
+    }
+
+    pub fn reset(&mut self) {
+        self.inner.reset();
     }
 }
 

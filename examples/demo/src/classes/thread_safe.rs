@@ -216,7 +216,7 @@ impl DataStore {
     }
 }
 
-#[benchmark_candidate(object, uniffi, wasm_bindgen)]
+#[benchmark_candidate(object, uniffi)]
 pub struct Accumulator {
     value: Mutex<i64>,
 }
@@ -227,30 +227,8 @@ impl Default for Accumulator {
     }
 }
 
-#[cfg(all(not(feature = "uniffi"), not(feature = "wasm-bench")))]
 #[export]
-impl Accumulator {
-    pub fn new() -> Self {
-        Self {
-            value: Mutex::new(0),
-        }
-    }
-
-    pub fn add(&self, amount: i64) {
-        *self.value.lock().unwrap() += amount;
-    }
-
-    pub fn get(&self) -> i64 {
-        *self.value.lock().unwrap()
-    }
-
-    pub fn reset(&self) {
-        *self.value.lock().unwrap() = 0;
-    }
-}
-
-#[cfg(any(feature = "uniffi", feature = "wasm-bench"))]
-#[benchmark_candidate(impl, uniffi, wasm_bindgen, constructor = "new")]
+#[benchmark_candidate(impl, uniffi, constructor = "new")]
 impl Accumulator {
     pub fn new() -> Self {
         Self {
