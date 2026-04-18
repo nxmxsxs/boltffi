@@ -1,4 +1,5 @@
 use boltffi::*;
+use demo_bench_macros::benchmark_candidate;
 
 /// Lifecycle status of an entity.
 #[data]
@@ -34,8 +35,8 @@ pub fn echo_vec_status(values: Vec<Status>) -> Vec<Status> {
     values
 }
 
+#[benchmark_candidate(enum, uniffi, wasm_bindgen)]
 #[data]
-#[cfg_attr(feature = "uniffi", derive(uniffi::Enum))]
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Default)]
 pub enum Direction {
     #[default]
@@ -101,14 +102,12 @@ impl Direction {
     }
 }
 
-#[cfg_attr(feature = "uniffi", uniffi::export)]
-#[export]
+#[benchmark_candidate(function, uniffi, wasm_bindgen)]
 pub fn echo_direction(d: Direction) -> Direction {
     d
 }
 
-#[cfg_attr(feature = "uniffi", uniffi::export)]
-#[export]
+#[benchmark_candidate(function, uniffi, wasm_bindgen)]
 pub fn opposite_direction(d: Direction) -> Direction {
     match d {
         Direction::North => Direction::South,
@@ -118,8 +117,7 @@ pub fn opposite_direction(d: Direction) -> Direction {
     }
 }
 
-#[cfg_attr(feature = "uniffi", uniffi::export)]
-#[export]
+#[benchmark_candidate(function, uniffi, wasm_bindgen)]
 pub fn direction_to_degrees(direction: Direction) -> i32 {
     match direction {
         Direction::North => 0,
@@ -129,8 +127,7 @@ pub fn direction_to_degrees(direction: Direction) -> i32 {
     }
 }
 
-#[cfg_attr(feature = "uniffi", uniffi::export)]
-#[export]
+#[benchmark_candidate(function, uniffi, wasm_bindgen)]
 pub fn generate_directions(count: i32) -> Vec<Direction> {
     let directions = [
         Direction::North,
@@ -143,8 +140,7 @@ pub fn generate_directions(count: i32) -> Vec<Direction> {
         .collect()
 }
 
-#[cfg_attr(feature = "uniffi", uniffi::export)]
-#[export]
+#[benchmark_candidate(function, uniffi, wasm_bindgen)]
 pub fn count_north(directions: Vec<Direction>) -> i32 {
     directions
         .iter()
@@ -152,8 +148,7 @@ pub fn count_north(directions: Vec<Direction>) -> i32 {
         .count() as i32
 }
 
-#[cfg_attr(feature = "uniffi", uniffi::export)]
-#[export]
+#[benchmark_candidate(function, uniffi, wasm_bindgen)]
 pub fn find_direction(id: i32) -> Option<Direction> {
     match id {
         0 => Some(Direction::North),
@@ -164,8 +159,7 @@ pub fn find_direction(id: i32) -> Option<Direction> {
     }
 }
 
-#[cfg_attr(feature = "uniffi", uniffi::export)]
-#[export]
+#[benchmark_candidate(function, uniffi)]
 pub fn find_directions(count: i32) -> Option<Vec<Direction>> {
     if count > 0 {
         Some(generate_directions(count))

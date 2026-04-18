@@ -1,10 +1,10 @@
 use boltffi::*;
+use demo_bench_macros::benchmark_candidate;
 
 use crate::results::ComputeError;
 
 /// Adds two numbers asynchronously.
-#[cfg_attr(feature = "uniffi", uniffi::export)]
-#[export]
+#[benchmark_candidate(function, uniffi, wasm_bindgen)]
 pub async fn async_add(a: i32, b: i32) -> i32 {
     a + b
 }
@@ -43,8 +43,7 @@ pub async fn fetch_data(id: i32) -> Result<i32, String> {
     }
 }
 
-#[cfg_attr(feature = "uniffi", uniffi::export)]
-#[export]
+#[benchmark_candidate(function, uniffi)]
 pub async fn async_get_numbers(count: i32) -> Vec<i32> {
     (0..count).collect()
 }

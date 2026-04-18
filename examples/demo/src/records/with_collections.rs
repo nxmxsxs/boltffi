@@ -1,4 +1,5 @@
 use boltffi::*;
+use demo_bench_macros::benchmark_candidate;
 
 use crate::records::blittable::Point;
 use crate::records::with_strings::Person;
@@ -98,7 +99,7 @@ pub fn average_score(ts: TaggedScores) -> f64 {
 }
 
 /// A heavier benchmark profile with heap-owned collections.
-#[cfg_attr(feature = "uniffi", derive(uniffi::Record))]
+#[benchmark_candidate(record, uniffi)]
 #[data]
 #[derive(Clone, Debug, PartialEq, Default)]
 pub struct BenchmarkUserProfile {
@@ -113,8 +114,7 @@ pub struct BenchmarkUserProfile {
     pub is_active: bool,
 }
 
-#[cfg_attr(feature = "uniffi", uniffi::export)]
-#[export]
+#[benchmark_candidate(function, uniffi)]
 pub fn generate_user_profiles(count: i32) -> Vec<BenchmarkUserProfile> {
     (0..count as i64)
         .map(|index| BenchmarkUserProfile {
@@ -141,14 +141,12 @@ pub fn generate_user_profiles(count: i32) -> Vec<BenchmarkUserProfile> {
         .collect()
 }
 
-#[cfg_attr(feature = "uniffi", uniffi::export)]
-#[export]
+#[benchmark_candidate(function, uniffi)]
 pub fn sum_user_scores(users: Vec<BenchmarkUserProfile>) -> f64 {
     users.iter().map(|user| user.score).sum()
 }
 
-#[cfg_attr(feature = "uniffi", uniffi::export)]
-#[export]
+#[benchmark_candidate(function, uniffi)]
 pub fn count_active_users(users: Vec<BenchmarkUserProfile>) -> i32 {
     users.iter().filter(|user| user.is_active).count() as i32
 }

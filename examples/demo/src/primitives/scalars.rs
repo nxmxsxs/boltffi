@@ -1,13 +1,12 @@
 use boltffi::*;
+use demo_bench_macros::benchmark_candidate;
 
-#[cfg_attr(feature = "uniffi", uniffi::export)]
-#[export]
+#[benchmark_candidate(function, uniffi, wasm_bindgen)]
 pub fn echo_bool(v: bool) -> bool {
     v
 }
 
-#[cfg_attr(feature = "uniffi", uniffi::export)]
-#[export]
+#[benchmark_candidate(function, uniffi, wasm_bindgen)]
 pub fn negate_bool(v: bool) -> bool {
     !v
 }
@@ -32,15 +31,13 @@ pub fn echo_u16(v: u16) -> u16 {
     v
 }
 
-#[cfg_attr(feature = "uniffi", uniffi::export)]
-#[export]
+#[benchmark_candidate(function, uniffi, wasm_bindgen)]
 pub fn echo_i32(v: i32) -> i32 {
     v
 }
 
 /// Adds two 32-bit signed integers and returns the result.
-#[cfg_attr(feature = "uniffi", uniffi::export)]
-#[export]
+#[benchmark_candidate(function, uniffi)]
 pub fn add_i32(a: i32, b: i32) -> i32 {
     a + b
 }
@@ -70,14 +67,12 @@ pub fn add_f32(a: f32, b: f32) -> f32 {
     a + b
 }
 
-#[cfg_attr(feature = "uniffi", uniffi::export)]
-#[export]
+#[benchmark_candidate(function, uniffi, wasm_bindgen)]
 pub fn echo_f64(v: f64) -> f64 {
     v
 }
 
-#[cfg_attr(feature = "uniffi", uniffi::export)]
-#[export]
+#[benchmark_candidate(function, uniffi, wasm_bindgen)]
 pub fn add_f64(a: f64, b: f64) -> f64 {
     a + b
 }
@@ -93,20 +88,15 @@ pub fn echo_isize(v: isize) -> isize {
 }
 
 /// A no-op call used to measure raw FFI overhead.
-#[cfg_attr(feature = "uniffi", uniffi::export)]
-#[export]
+#[benchmark_candidate(function, uniffi, wasm_bindgen)]
 pub fn noop() {}
 
-/// Benchmark alias that matches the existing benchmark harness naming.
-#[cfg_attr(feature = "uniffi", uniffi::export)]
-#[export]
+#[benchmark_candidate(function, uniffi, wasm_bindgen)]
 pub fn add(a: i32, b: i32) -> i32 {
     add_i32(a, b)
 }
 
-/// Multiplies two double-precision numbers.
-#[cfg_attr(feature = "uniffi", uniffi::export)]
-#[export]
+#[benchmark_candidate(function, uniffi, wasm_bindgen)]
 pub fn multiply(a: f64, b: f64) -> f64 {
     a * b
 }

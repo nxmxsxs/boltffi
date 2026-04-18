@@ -1,4 +1,5 @@
 use boltffi::*;
+use demo_bench_macros::benchmark_candidate;
 
 use crate::records::blittable::Point;
 
@@ -141,7 +142,7 @@ pub fn animal_name(a: Animal) -> String {
     }
 }
 
-#[cfg_attr(feature = "uniffi", derive(uniffi::Enum))]
+#[benchmark_candidate(enum, uniffi)]
 #[data]
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub enum TaskStatus {
@@ -151,8 +152,7 @@ pub enum TaskStatus {
     Failed { error_code: i32, retry_count: i32 },
 }
 
-#[cfg_attr(feature = "uniffi", uniffi::export)]
-#[export]
+#[benchmark_candidate(function, uniffi)]
 pub fn get_status_progress(status: TaskStatus) -> i32 {
     match status {
         TaskStatus::Pending => 0,
@@ -162,8 +162,7 @@ pub fn get_status_progress(status: TaskStatus) -> i32 {
     }
 }
 
-#[cfg_attr(feature = "uniffi", uniffi::export)]
-#[export]
+#[benchmark_candidate(function, uniffi)]
 pub fn is_status_complete(status: TaskStatus) -> bool {
     matches!(status, TaskStatus::Completed { .. })
 }

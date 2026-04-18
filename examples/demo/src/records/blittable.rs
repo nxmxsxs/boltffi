@@ -1,8 +1,9 @@
 use boltffi::*;
+use demo_bench_macros::benchmark_candidate;
 
 /// A 2D point with double-precision coordinates.
 #[data]
-#[cfg_attr(feature = "uniffi", derive(uniffi::Record))]
+#[benchmark_candidate(record, uniffi)]
 #[derive(Clone, Copy, Debug, PartialEq, Default)]
 pub struct Point {
     /// Horizontal position.
@@ -120,7 +121,7 @@ pub fn make_color(r: u8, g: u8, b: u8, a: u8) -> Color {
 }
 
 /// A benchmark-friendly location record containing only primitive fields.
-#[cfg_attr(feature = "uniffi", derive(uniffi::Record))]
+#[benchmark_candidate(record, uniffi, wasm_bindgen)]
 #[data]
 #[derive(Clone, Copy, Debug, PartialEq, Default)]
 pub struct Location {
@@ -133,7 +134,7 @@ pub struct Location {
 }
 
 /// A benchmark-friendly trade record with dense numeric fields.
-#[cfg_attr(feature = "uniffi", derive(uniffi::Record))]
+#[benchmark_candidate(record, uniffi, wasm_bindgen)]
 #[data]
 #[derive(Clone, Copy, Debug, PartialEq, Default)]
 pub struct Trade {
@@ -149,7 +150,7 @@ pub struct Trade {
 }
 
 /// A densely packed physics particle used for payload-heavy benchmarks.
-#[cfg_attr(feature = "uniffi", derive(uniffi::Record))]
+#[benchmark_candidate(record, uniffi, wasm_bindgen)]
 #[data]
 #[derive(Clone, Copy, Debug, PartialEq, Default)]
 pub struct Particle {
@@ -166,7 +167,7 @@ pub struct Particle {
 }
 
 /// A dense sensor record used for structured benchmark payloads.
-#[cfg_attr(feature = "uniffi", derive(uniffi::Record))]
+#[benchmark_candidate(record, uniffi, wasm_bindgen)]
 #[data]
 #[derive(Clone, Copy, Debug, PartialEq, Default)]
 pub struct SensorReading {
@@ -182,7 +183,7 @@ pub struct SensorReading {
 }
 
 /// A timestamped data point used by callback and object benchmarks.
-#[cfg_attr(feature = "uniffi", derive(uniffi::Record))]
+#[benchmark_candidate(record, uniffi, wasm_bindgen)]
 #[data]
 #[derive(Clone, Copy, Debug, PartialEq, Default)]
 pub struct DataPoint {
@@ -191,8 +192,111 @@ pub struct DataPoint {
     pub timestamp: i64,
 }
 
-#[cfg_attr(feature = "uniffi", uniffi::export)]
-#[export]
+#[benchmark_candidate(impl, wasm_bindgen, constructor = "new")]
+impl Location {
+    pub fn new(id: i64, lat: f64, lng: f64, rating: f64, review_count: i32, is_open: bool) -> Self {
+        Self {
+            id,
+            lat,
+            lng,
+            rating,
+            review_count,
+            is_open,
+        }
+    }
+}
+
+#[benchmark_candidate(impl, wasm_bindgen, constructor = "new")]
+impl Trade {
+    pub fn new(
+        id: i64,
+        symbol_id: i32,
+        price: f64,
+        quantity: i64,
+        bid: f64,
+        ask: f64,
+        volume: i64,
+        timestamp: i64,
+        is_buy: bool,
+    ) -> Self {
+        Self {
+            id,
+            symbol_id,
+            price,
+            quantity,
+            bid,
+            ask,
+            volume,
+            timestamp,
+            is_buy,
+        }
+    }
+}
+
+#[benchmark_candidate(impl, wasm_bindgen, constructor = "new")]
+impl Particle {
+    pub fn new(
+        id: i64,
+        x: f64,
+        y: f64,
+        z: f64,
+        vx: f64,
+        vy: f64,
+        vz: f64,
+        mass: f64,
+        charge: f64,
+        active: bool,
+    ) -> Self {
+        Self {
+            id,
+            x,
+            y,
+            z,
+            vx,
+            vy,
+            vz,
+            mass,
+            charge,
+            active,
+        }
+    }
+}
+
+#[benchmark_candidate(impl, wasm_bindgen, constructor = "new")]
+impl SensorReading {
+    pub fn new(
+        sensor_id: i64,
+        timestamp: i64,
+        temperature: f64,
+        humidity: f64,
+        pressure: f64,
+        light: f64,
+        battery: f64,
+        signal_strength: i32,
+        is_valid: bool,
+    ) -> Self {
+        Self {
+            sensor_id,
+            timestamp,
+            temperature,
+            humidity,
+            pressure,
+            light,
+            battery,
+            signal_strength,
+            is_valid,
+        }
+    }
+}
+
+#[benchmark_candidate(impl, wasm_bindgen, constructor = "new")]
+impl DataPoint {
+    pub fn new(x: f64, y: f64, timestamp: i64) -> Self {
+        Self { x, y, timestamp }
+    }
+}
+
+#[benchmark_candidate(function, uniffi, wasm_bindgen)]
 pub fn generate_locations(count: i32) -> Vec<Location> {
     (0..count)
         .map(|index| Location {
@@ -206,20 +310,17 @@ pub fn generate_locations(count: i32) -> Vec<Location> {
         .collect()
 }
 
-#[cfg_attr(feature = "uniffi", uniffi::export)]
-#[export]
+#[benchmark_candidate(function, uniffi, wasm_bindgen)]
 pub fn process_locations(locations: Vec<Location>) -> i32 {
     locations.len() as i32
 }
 
-#[cfg_attr(feature = "uniffi", uniffi::export)]
-#[export]
+#[benchmark_candidate(function, uniffi, wasm_bindgen)]
 pub fn sum_ratings(locations: Vec<Location>) -> f64 {
     locations.iter().map(|location| location.rating).sum()
 }
 
-#[cfg_attr(feature = "uniffi", uniffi::export)]
-#[export]
+#[benchmark_candidate(function, uniffi, wasm_bindgen)]
 pub fn generate_trades(count: i32) -> Vec<Trade> {
     (0..count)
         .map(|index| Trade {
@@ -236,14 +337,12 @@ pub fn generate_trades(count: i32) -> Vec<Trade> {
         .collect()
 }
 
-#[cfg_attr(feature = "uniffi", uniffi::export)]
-#[export]
+#[benchmark_candidate(function, uniffi, wasm_bindgen)]
 pub fn sum_trade_volumes(trades: Vec<Trade>) -> i64 {
     trades.iter().map(|trade| trade.volume).sum()
 }
 
-#[cfg_attr(feature = "uniffi", uniffi::export)]
-#[export]
+#[benchmark_candidate(function, uniffi, wasm_bindgen)]
 pub fn generate_particles(count: i32) -> Vec<Particle> {
     (0..count)
         .map(|index| Particle {
@@ -261,14 +360,12 @@ pub fn generate_particles(count: i32) -> Vec<Particle> {
         .collect()
 }
 
-#[cfg_attr(feature = "uniffi", uniffi::export)]
-#[export]
+#[benchmark_candidate(function, uniffi, wasm_bindgen)]
 pub fn sum_particle_masses(particles: Vec<Particle>) -> f64 {
     particles.iter().map(|particle| particle.mass).sum()
 }
 
-#[cfg_attr(feature = "uniffi", uniffi::export)]
-#[export]
+#[benchmark_candidate(function, uniffi, wasm_bindgen)]
 pub fn generate_sensor_readings(count: i32) -> Vec<SensorReading> {
     (0..count)
         .map(|index| SensorReading {
@@ -285,8 +382,7 @@ pub fn generate_sensor_readings(count: i32) -> Vec<SensorReading> {
         .collect()
 }
 
-#[cfg_attr(feature = "uniffi", uniffi::export)]
-#[export]
+#[benchmark_candidate(function, uniffi, wasm_bindgen)]
 pub fn avg_sensor_temperature(readings: Vec<SensorReading>) -> f64 {
     let count = readings.len();
     if count == 0 {
@@ -300,8 +396,7 @@ pub fn avg_sensor_temperature(readings: Vec<SensorReading>) -> f64 {
     }
 }
 
-#[cfg_attr(feature = "uniffi", uniffi::export)]
-#[export]
+#[benchmark_candidate(function, uniffi)]
 pub fn find_location(id: i32) -> Option<Location> {
     if id > 0 {
         Some(Location {
@@ -317,8 +412,7 @@ pub fn find_location(id: i32) -> Option<Location> {
     }
 }
 
-#[cfg_attr(feature = "uniffi", uniffi::export)]
-#[export]
+#[benchmark_candidate(function, uniffi)]
 pub fn find_locations(count: i32) -> Option<Vec<Location>> {
     if count > 0 {
         Some(generate_locations(count))

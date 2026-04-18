@@ -45,9 +45,8 @@ jobs:
           key: benchmark-release-macos
           workspaces: |
             .
-            benchmarks/rust-boltffi
-            benchmarks/rust-uniffi
-            benchmarks/rust-wasm-bindgen
+            examples/demo
+            benchmarks/adapters/uniffi
 
       - uses: actions/setup-java@v5
         with:
@@ -58,28 +57,36 @@ jobs:
         with:
           node-version: '24'
 
+      - uses: actions/setup-dotnet@v5
+        with:
+          dotnet-version: '10.0.x'
+
       - name: Install wasm-bindgen CLI
         run: cargo install wasm-bindgen-cli --version 0.2.100 --locked
 
       - name: Run Swift benchmarks
-        run: ./benchmarks/swift-macos-bench/run-bench.sh
+        run: ./benchmarks/harnesses/swift-macos-bench/run-bench.sh
 
       - name: Run Kotlin JMH benchmarks
-        run: ./benchmarks/kotlin-jvm-bench/run-jmh.sh
+        run: ./benchmarks/harnesses/kotlin-jvm-bench/run-jmh.sh
 
       - name: Run Java JMH benchmarks
-        run: ./benchmarks/java-jvm-bench/run-jmh.sh
+        run: ./benchmarks/harnesses/java-jvm-bench/run-jmh.sh
 
       - name: Run WASM benchmarks
-        run: ./benchmarks/wasm-bench/run-bench.sh
+        run: ./benchmarks/harnesses/wasm-bench/run-bench.sh
+
+      - name: Run C# benchmarks
+        run: ./benchmarks/harnesses/dotnet-bench/run-bench.sh
 
       - name: Collect benchmark run documents
         run: |
           mkdir -p benchmark-artifacts
-          cp benchmarks/swift-macos-bench/build/results/swift-benchmark/benchmark_run.json benchmark-artifacts/swift-macos-benchmark_run.json
-          cp benchmarks/kotlin-jvm-bench/build/results/jmh/benchmark_run.json benchmark-artifacts/kotlin-jvm-jmh_benchmark_run.json
-          cp benchmarks/java-jvm-bench/build/results/jmh/benchmark_run.json benchmark-artifacts/java-jvm-jmh_benchmark_run.json
-          cp benchmarks/wasm-bench/build/results/benchmarkjs/benchmark_run.json benchmark-artifacts/wasm-node-benchmarkjs_benchmark_run.json
+          cp benchmarks/harnesses/swift-macos-bench/build/results/swift-benchmark/benchmark_run.json benchmark-artifacts/swift-macos-benchmark_run.json
+          cp benchmarks/harnesses/kotlin-jvm-bench/build/results/jmh/benchmark_run.json benchmark-artifacts/kotlin-jvm-jmh_benchmark_run.json
+          cp benchmarks/harnesses/java-jvm-bench/build/results/jmh/benchmark_run.json benchmark-artifacts/java-jvm-jmh_benchmark_run.json
+          cp benchmarks/harnesses/wasm-bench/build/results/benchmarkjs/benchmark_run.json benchmark-artifacts/wasm-node-benchmarkjs_benchmark_run.json
+          cp benchmarks/harnesses/dotnet-bench/build/results/dotnet/benchmark_run.json benchmark-artifacts/csharp-dotnet-benchmarkdotnet_benchmark_run.json
 
       - uses: actions/upload-artifact@v4
         with:

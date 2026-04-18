@@ -298,7 +298,7 @@ def dependency_version(cargo_toml: Path, dependency_name: str) -> str | None:
     return match.group(1)
 
 
-WASM_BINDGEN_VERSION = dependency_version(REPO_ROOT / "benchmarks/rust-wasm-bindgen/Cargo.toml", "wasm-bindgen")
+WASM_BINDGEN_VERSION = dependency_version(REPO_ROOT / "examples/demo/Cargo.toml", "wasm-bindgen")
 
 
 def optional_float(value: Any) -> float | None:

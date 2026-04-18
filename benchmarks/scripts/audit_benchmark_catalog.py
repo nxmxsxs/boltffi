@@ -8,6 +8,7 @@ from dataclasses import dataclass
 from pathlib import Path
 
 from benchmark_catalog import lookup_case_spec
+from dotnet_benchmark_names import method_name_to_case_id
 
 
 REPO_ROOT = Path(__file__).resolve().parents[2]
@@ -25,44 +26,49 @@ HARNESS_SOURCES: tuple[HarnessSource, ...] = (
     HarnessSource(
         name="swift_macos",
         path=(
-            REPO_ROOT / "benchmarks/swift-macos-bench/Sources/BoltFFI/main.swift",
-            REPO_ROOT / "benchmarks/swift-macos-bench/Sources/Uniffi/main.swift",
-            REPO_ROOT / "benchmarks/swift-macos-bench/Sources/AsyncRunner/main.swift",
+            REPO_ROOT / "benchmarks/harnesses/swift-macos-bench/Sources/BoltFFI/main.swift",
+            REPO_ROOT / "benchmarks/harnesses/swift-macos-bench/Sources/Uniffi/main.swift",
+            REPO_ROOT / "benchmarks/harnesses/swift-macos-bench/Sources/AsyncRunner/main.swift",
         ),
         pattern=re.compile(r'benchmark\("([^"]+)"\)|name:\s*"([^"]+)"'),
         strip_tool_prefix=True,
     ),
     HarnessSource(
         name="kotlin_jmh",
-        path=REPO_ROOT / "benchmarks/kotlin-jvm-bench/src/jmh/kotlin/com/example/bench_compare/JmhBenchmarks.kt",
+        path=REPO_ROOT / "benchmarks/harnesses/kotlin-jvm-bench/src/jmh/kotlin/com/example/bench_compare/JmhBenchmarks.kt",
         pattern=re.compile(r"open fun ([A-Za-z0-9_]+)\("),
         strip_tool_prefix=True,
     ),
     HarnessSource(
         name="java_jmh",
-        path=REPO_ROOT / "benchmarks/java-jvm-bench/src/jmh/java/com/example/bench_compare/UniffiJavaBench.java",
+        path=REPO_ROOT / "benchmarks/harnesses/java-jvm-bench/src/jmh/java/com/example/bench_compare/UniffiJavaBench.java",
         pattern=re.compile(r"public void ([A-Za-z0-9_]+)\("),
         strip_tool_prefix=True,
     ),
     HarnessSource(
         name="kotlin_cli",
-        path=REPO_ROOT / "benchmarks/kotlin-jvm-bench/src/main/kotlin/com/example/bench_compare/CompareMain.kt",
+        path=REPO_ROOT / "benchmarks/harnesses/kotlin-jvm-bench/src/main/kotlin/com/example/bench_compare/CompareMain.kt",
         pattern=re.compile(r'(?:pairedBenchmark|singleBenchmark)\(\s*"([^"]+)"'),
     ),
     HarnessSource(
         name="android_app",
-        path=REPO_ROOT / "benchmarks/android-app/app/src/main/java/com/boltffi/bench/Benchmarks.kt",
+        path=REPO_ROOT / "benchmarks/harnesses/android-app/app/src/main/java/com/boltffi/bench/Benchmarks.kt",
         pattern=re.compile(r'bench(?:BoltffiOnly)?\("([^"]+)"'),
     ),
     HarnessSource(
         name="ios_app",
-        path=REPO_ROOT / "benchmarks/ios-app/App/ContentView.swift",
+        path=REPO_ROOT / "benchmarks/harnesses/ios-app/App/ContentView.swift",
         pattern=re.compile(r'Bench\(name: "([^"]+)"'),
     ),
     HarnessSource(
         name="wasm_benchmarkjs",
-        path=REPO_ROOT / "benchmarks/wasm-bench/bench.mjs",
+        path=REPO_ROOT / "benchmarks/harnesses/wasm-bench/bench.mjs",
         pattern=re.compile(r"(?:runSuite\(|name:\s*)'([^']+)'"),
+    ),
+    HarnessSource(
+        name="dotnet_benchmarkdotnet",
+        path=REPO_ROOT / "benchmarks/harnesses/dotnet-bench/WireReaderBenchmarks.cs",
+        pattern=re.compile(r"\[Benchmark\]\s+public\s+[^\n(]+?\s+([A-Za-z0-9_]+)\(", re.MULTILINE),
     ),
 )
 
@@ -114,6 +120,8 @@ def extract_names(harness: HarnessSource) -> list[str]:
                 names.append(match)
     if harness.name in {"kotlin_jmh", "java_jmh"}:
         names = [name for name in names if name.startswith(("boltffi_", "uniffi_", "ffm_"))]
+    if harness.name == "dotnet_benchmarkdotnet":
+        names = [method_name_to_case_id(name) for name in names if name != "Setup"]
     return names
 
 

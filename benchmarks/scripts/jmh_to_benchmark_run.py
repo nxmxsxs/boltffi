@@ -35,7 +35,7 @@ SUITES = {
         "toolchains": lambda entry, rust_details: {
             "rust": rust_details,
             "swift": None,
-            "kotlin": kotlin_toolchain(REPO_ROOT / "benchmarks/kotlin-jvm-bench/build.gradle.kts"),
+            "kotlin": kotlin_toolchain(REPO_ROOT / "benchmarks/harnesses/kotlin-jvm-bench/build.gradle.kts"),
             "java": java_toolchain_from_jmh(entry.get("jvm"), entry.get("jdkVersion"), entry.get("vmName")),
             "node": None,
             "wasm": None,

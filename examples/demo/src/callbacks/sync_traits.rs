@@ -1,4 +1,5 @@
 use boltffi::*;
+use demo_bench_macros::benchmark_candidate;
 
 use crate::enums::c_style::Status;
 use crate::records::blittable::{DataPoint, Point};
@@ -254,21 +255,13 @@ pub fn invoke_boxed_offset_callback(
     callback.offset(value, delta)
 }
 
-#[cfg(feature = "uniffi")]
-#[uniffi::export(callback_interface)]
+#[benchmark_candidate(callback_interface, uniffi)]
 pub trait DataProvider: Send + Sync {
     fn get_count(&self) -> u32;
     fn get_item(&self, index: u32) -> DataPoint;
 }
 
-#[cfg(not(feature = "uniffi"))]
-#[export]
-pub trait DataProvider: Send + Sync {
-    fn get_count(&self) -> u32;
-    fn get_item(&self, index: u32) -> DataPoint;
-}
-
-#[cfg_attr(feature = "uniffi", derive(uniffi::Object))]
+#[benchmark_candidate(object, uniffi)]
 pub struct DataConsumer {
     provider: std::sync::Mutex<Option<Box<dyn DataProvider>>>,
 }
@@ -279,38 +272,8 @@ impl Default for DataConsumer {
     }
 }
 
-#[cfg(not(feature = "uniffi"))]
-#[export]
+#[benchmark_candidate(impl, uniffi, constructor = "new")]
 impl DataConsumer {
-    pub fn new() -> Self {
-        Self {
-            provider: std::sync::Mutex::new(None),
-        }
-    }
-
-    pub fn set_provider(&self, provider: Box<dyn DataProvider>) {
-        *self.provider.lock().unwrap() = Some(provider);
-    }
-
-    pub fn compute_sum(&self) -> u64 {
-        let provider_guard = self.provider.lock().unwrap();
-        let Some(provider) = provider_guard.as_ref() else {
-            return 0;
-        };
-
-        (0..provider.get_count())
-            .map(|index| {
-                let point = provider.get_item(index);
-                (point.x + point.y) as u64
-            })
-            .sum()
-    }
-}
-
-#[cfg(feature = "uniffi")]
-#[uniffi::export]
-impl DataConsumer {
-    #[uniffi::constructor]
     pub fn new() -> Self {
         Self {
             provider: std::sync::Mutex::new(None),

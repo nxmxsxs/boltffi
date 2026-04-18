@@ -1,6 +1,7 @@
 use std::sync::Mutex;
 
 use boltffi::*;
+use demo_bench_macros::benchmark_candidate;
 
 use crate::records::blittable::DataPoint;
 
@@ -53,7 +54,7 @@ impl SharedCounter {
     }
 }
 
-#[cfg_attr(feature = "uniffi", derive(uniffi::Object))]
+#[benchmark_candidate(object, uniffi)]
 pub struct DataStore {
     items: Mutex<Vec<DataPoint>>,
 }
@@ -185,9 +186,8 @@ impl DataStore {
 }
 
 #[cfg(feature = "uniffi")]
-#[cfg_attr(feature = "uniffi", uniffi::export)]
+#[benchmark_candidate(impl, uniffi, constructor = "new")]
 impl DataStore {
-    #[uniffi::constructor]
     pub fn new() -> Self {
         Self {
             items: Mutex::new(Vec::new()),
@@ -216,7 +216,7 @@ impl DataStore {
     }
 }
 
-#[cfg_attr(feature = "uniffi", derive(uniffi::Object))]
+#[benchmark_candidate(object, uniffi, wasm_bindgen)]
 pub struct Accumulator {
     value: Mutex<i64>,
 }
@@ -227,10 +227,8 @@ impl Default for Accumulator {
     }
 }
 
-#[cfg_attr(feature = "uniffi", uniffi::export)]
-#[export]
+#[benchmark_candidate(impl, uniffi, wasm_bindgen, constructor = "new")]
 impl Accumulator {
-    #[cfg_attr(feature = "uniffi", uniffi::constructor)]
     pub fn new() -> Self {
         Self {
             value: Mutex::new(0),

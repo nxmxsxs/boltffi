@@ -1,7 +1,7 @@
 use boltffi::*;
+use demo_bench_macros::benchmark_candidate;
 
-#[cfg_attr(feature = "uniffi", uniffi::export)]
-#[export]
+#[benchmark_candidate(function, uniffi, wasm_bindgen)]
 pub fn echo_string(v: String) -> String {
     v
 }
@@ -27,9 +27,7 @@ pub fn repeat_string(v: String, count: u32) -> String {
     v.repeat(count as usize)
 }
 
-/// Generates a string filled with `x` characters.
-#[cfg_attr(feature = "uniffi", uniffi::export)]
-#[export]
+#[benchmark_candidate(function, uniffi, wasm_bindgen)]
 pub fn generate_string(size: i32) -> String {
     "x".repeat(size.max(0) as usize)
 }

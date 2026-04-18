@@ -1,21 +1,25 @@
 use std::sync::Mutex;
 
+use demo_bench_macros::benchmark_candidate;
+
 #[cfg(not(feature = "uniffi"))]
+#[cfg(not(feature = "wasm-bench"))]
 use boltffi::*;
 
 #[cfg(not(feature = "uniffi"))]
+#[cfg(not(feature = "wasm-bench"))]
 use crate::records::blittable::Point;
 
 /// A simple thread-safe counter that demonstrates various
 /// method return types: plain values, Option, Result, and
 /// records.
-#[cfg_attr(feature = "uniffi", derive(uniffi::Object))]
+#[benchmark_candidate(object, uniffi, wasm_bindgen)]
 pub struct Counter {
     count: Mutex<i32>,
 }
 
 #[cfg(not(feature = "uniffi"))]
-#[export]
+#[benchmark_candidate(impl, wasm_bindgen, constructor = "new")]
 impl Counter {
     pub fn new(initial: i32) -> Counter {
         Counter {
@@ -54,6 +58,7 @@ impl Counter {
         if val != 0 { Some(val * 2) } else { None }
     }
 
+    #[cfg(not(feature = "wasm-bench"))]
     pub fn as_point(&self) -> Point {
         Point {
             x: *self.count.lock().unwrap() as f64,
@@ -63,9 +68,8 @@ impl Counter {
 }
 
 #[cfg(feature = "uniffi")]
-#[cfg_attr(feature = "uniffi", uniffi::export)]
+#[benchmark_candidate(impl, uniffi, constructor = "new")]
 impl Counter {
-    #[uniffi::constructor]
     pub fn new(initial: i32) -> Counter {
         Counter {
             count: Mutex::new(initial),

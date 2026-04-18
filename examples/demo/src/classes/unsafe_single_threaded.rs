@@ -1,4 +1,5 @@
 use boltffi::*;
+use demo_bench_macros::benchmark_candidate;
 
 use crate::callbacks::sync_traits::ValueCallback;
 
@@ -86,11 +87,12 @@ impl StateHolder {
 }
 
 #[derive(Default)]
+#[benchmark_candidate(object, wasm_bindgen)]
 pub struct CounterSingleThreaded {
     value: i32,
 }
 
-#[export(single_threaded)]
+#[benchmark_candidate(impl, wasm_bindgen, boltffi = "single_threaded", constructor = "new")]
 impl CounterSingleThreaded {
     pub fn new() -> Self {
         Self { value: 0 }
@@ -110,11 +112,12 @@ impl CounterSingleThreaded {
 }
 
 #[derive(Default)]
+#[benchmark_candidate(object, wasm_bindgen)]
 pub struct AccumulatorSingleThreaded {
     value: i64,
 }
 
-#[export(single_threaded)]
+#[benchmark_candidate(impl, wasm_bindgen, boltffi = "single_threaded", constructor = "new")]
 impl AccumulatorSingleThreaded {
     pub fn new() -> Self {
         Self { value: 0 }

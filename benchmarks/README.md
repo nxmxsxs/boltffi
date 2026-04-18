@@ -4,6 +4,7 @@ Performance comparison across platforms:
 - **Swift/Kotlin**: BoltFFI vs UniFFI
 - **Java (JVM)**: BoltFFI vs [uniffi-bindgen-java](https://github.com/IronCoreLabs/uniffi-bindgen-java) (FFM) vs UniFFI (Kotlin/JNA)
 - **WASM**: BoltFFI vs wasm-bindgen
+- **C# (.NET)**: BoltFFI vs UniFFI on the demo-driven BenchmarkDotNet lane for primitives, strings, and supported record shapes
 
 All libraries wrap the exact same Rust code with identical public APIs, so the only variable is FFI overhead.
 
@@ -11,6 +12,13 @@ The Rust source of truth is [`examples/demo`](/Users/alihilal/Documents/Per/mobi
 - `just bench-audit` to check harness names against the shared case catalog
 - `just bench-demo-audit` to check how much of the demo export surface is actually benchmarked
 - `just bench-demo-plan` to render the machine-readable benchmark family policy from [`benchmarks/scripts/demo_benchmark_policy.py`](/Users/alihilal/Documents/Per/mobiFFI/benchmarks/scripts/demo_benchmark_policy.py)
+
+## Layout
+
+- `benchmarks/harnesses/`: runnable benchmark suites
+- `benchmarks/generated/`: disposable BoltFFI and wasm-bindgen outputs
+- `benchmarks/adapters/`: downstream-specific build glue
+- `benchmarks/scripts/`: normalization, auditing, and archive publishing tools
 
 ## Prerequisites
 
@@ -153,7 +161,7 @@ just bench-swift
 just bench-kotlin
 ```
 
-Report: `kotlin-jvm-bench/build/results/jmh/report.txt`
+Report: `benchmarks/harnesses/kotlin-jvm-bench/build/results/jmh/report.txt`
 
 ### Java FFM (JVM via JMH)
 
@@ -163,20 +171,20 @@ Requires JDK 22+ and `uniffi-bindgen-java` on PATH (or set `UNIFFI_BINDGEN_JAVA`
 just bench-java
 ```
 
-Report: `java-jvm-bench/build/results/jmh/results.json`
+Report: `benchmarks/harnesses/java-jvm-bench/build/results/jmh/results.json`
 
 ### iOS
 
 ```bash
 just bench-build-ios
-# Then open ios-app/ in Xcode
+# Then open benchmarks/harnesses/ios-app/ in Xcode
 ```
 
 ### Android
 
 ```bash
 just bench-build-android
-# Then open android-app/ in Android Studio
+# Then open benchmarks/harnesses/android-app/ in Android Studio
 ```
 
 ### WASM (Node.js)
@@ -184,6 +192,16 @@ just bench-build-android
 ```bash
 just bench-wasm
 ```
+
+### C# (.NET via BenchmarkDotNet)
+
+Requires a `dotnet` SDK that supports `net10.0`.
+
+```bash
+just bench-csharp
+```
+
+Report: `benchmarks/harnesses/dotnet-bench/build/results/dotnet/results.json`
 
 ## Results
 
