@@ -15,11 +15,16 @@ typedef struct FfiBuf_u8 { uint8_t* ptr; size_t len; size_t cap; size_t align; }
 typedef void (*boltffi_python_free_buf_fn)(FfiBuf_u8);
 static boltffi_python_free_buf_fn boltffi_python_free_buf_symbol = NULL;
 {% endif %}
-{% for function in module.functions %}
-typedef {{ function.return_type.c_type_name() }} (*{{ function.function_pointer_typedef_name() }})({% if function.takes_no_parameters() %}void{% else %}{% for ffi_argument in function.ffi_arguments() %}{{ ffi_argument.c_type_name }}{% if !loop.last %}, {% endif %}{% endfor %}{% endif %});
-static {{ function.function_pointer_typedef_name() }} {{ function.function_pointer_name() }} = NULL;
+{% if module.uses_c_style_enums() %}
+{% for enumeration in module.enums %}
+static PyObject *{{ enumeration.type_ref.type_object_name() }} = NULL;
 {% endfor %}
-{% if !module.functions.is_empty() %}
+{% endif %}
+{% for binding in module.native_callables() %}
+typedef {{ binding.callable.return_type.c_type_name() }} (*{{ binding.callable.function_pointer_typedef_name() }})({% if binding.callable.takes_no_parameters() %}void{% else %}{% for ffi_argument in binding.callable.ffi_arguments() %}{{ ffi_argument.c_type_name }}{% if !loop.last %}, {% endif %}{% endfor %}{% endif %});
+static {{ binding.callable.function_pointer_typedef_name() }} {{ binding.callable.function_pointer_name() }} = NULL;
+{% endfor %}
+{% if module.has_native_callables() %}
 #ifdef _WIN32
 static HMODULE boltffi_python_library_handle = NULL;
 #else
@@ -27,8 +32,8 @@ static void *boltffi_python_library_handle = NULL;
 #endif
 
 static void boltffi_python_unload_library(void) {
-{% for function in module.functions %}
-    {{ function.function_pointer_name() }} = NULL;
+{% for binding in module.native_callables() %}
+    {{ binding.callable.function_pointer_name() }} = NULL;
 {% endfor %}
 {% if module.uses_owned_buffer_returns() %}
     boltffi_python_free_buf_symbol = NULL;
@@ -99,15 +104,15 @@ static int boltffi_python_bind_symbols(void) {
         return 0;
     }
 {% endif %}
-{% for function in module.functions %}
+{% for binding in module.native_callables() %}
 #ifdef _WIN32
-    {{ function.function_pointer_name() }} = ({{ function.function_pointer_typedef_name() }})GetProcAddress(boltffi_python_library_handle, "{{ function.ffi_symbol }}");
+    {{ binding.callable.function_pointer_name() }} = ({{ binding.callable.function_pointer_typedef_name() }})GetProcAddress(boltffi_python_library_handle, "{{ binding.callable.ffi_symbol }}");
 #else
-    {{ function.function_pointer_name() }} = ({{ function.function_pointer_typedef_name() }})dlsym(boltffi_python_library_handle, "{{ function.ffi_symbol }}");
+    {{ binding.callable.function_pointer_name() }} = ({{ binding.callable.function_pointer_typedef_name() }})dlsym(boltffi_python_library_handle, "{{ binding.callable.ffi_symbol }}");
 #endif
-    if ({{ function.function_pointer_name() }} == NULL) {
+    if ({{ binding.callable.function_pointer_name() }} == NULL) {
         boltffi_python_unload_library();
-        PyErr_SetString(PyExc_ImportError, "failed to resolve native symbol {{ function.ffi_symbol }}");
+        PyErr_SetString(PyExc_ImportError, "failed to resolve native symbol {{ binding.callable.ffi_symbol }}");
         return 0;
     }
 {% endfor %}
@@ -151,7 +156,7 @@ static int boltffi_python_parse_string(PyObject *value, boltffi_python_utf8_inpu
     return 1;
 }
 {% endif %}
-{% if module.uses_buffer_parameters() %}
+{% if module.uses_buffer_input_parameters() %}
 
 typedef struct boltffi_python_buffer_input {
     const void *ptr;
@@ -517,6 +522,188 @@ static int {{ primitive.vector_parser_name() }}(PyObject *value, boltffi_python_
 
 {% endfor %}
 {% endif %}
+{% if module.uses_c_style_enums() %}
+
+static int boltffi_python_store_c_style_enum_registration(
+    PyObject **type_slot,
+    PyObject *type_object,
+    const char *enum_name
+) {
+    if (!PyType_Check(type_object)) {
+        PyErr_Format(PyExc_TypeError, "expected type for enum %s", enum_name);
+        return 0;
+    }
+    Py_INCREF(type_object);
+    Py_XDECREF(*type_slot);
+    *type_slot = type_object;
+    return 1;
+}
+
+static int boltffi_python_expect_registered_enum(PyObject *type_object, const char *enum_name) {
+    if (type_object != NULL) {
+        return 1;
+    }
+    PyErr_Format(PyExc_ImportError, "native enum %s is not registered", enum_name);
+    return 0;
+}
+
+static int boltffi_python_expect_enum_instance(
+    PyObject *value,
+    PyObject *type_object,
+    const char *enum_name
+) {
+    int is_instance = 0;
+    if (!boltffi_python_expect_registered_enum(type_object, enum_name)) {
+        return 0;
+    }
+    is_instance = PyObject_IsInstance(value, type_object);
+    if (is_instance < 0) {
+        return 0;
+    }
+    if (is_instance == 0) {
+        PyErr_Format(PyExc_TypeError, "expected %s", enum_name);
+        return 0;
+    }
+    return 1;
+}
+
+static PyObject *boltffi_python_box_registered_enum(
+    PyObject *type_object,
+    PyObject *boxed_value,
+    const char *enum_name
+) {
+    PyObject *enum_value = NULL;
+    if (!boltffi_python_expect_registered_enum(type_object, enum_name)) {
+        Py_DECREF(boxed_value);
+        return NULL;
+    }
+    enum_value = PyObject_CallOneArg(type_object, boxed_value);
+    Py_DECREF(boxed_value);
+    return enum_value;
+}
+
+{% for enumeration in module.enums %}
+static PyObject *{{ enumeration.type_ref.registration_wrapper_name() }}(PyObject *self, PyObject *const *args, Py_ssize_t nargs) {
+    (void)self;
+    if (nargs != 1) {
+        PyErr_Format(PyExc_TypeError, "{{ enumeration.type_ref.registration_function_name() }}() takes 1 positional argument but %zd were given", nargs);
+        return NULL;
+    }
+    if (!boltffi_python_store_c_style_enum_registration(
+        &{{ enumeration.type_ref.type_object_name() }},
+        args[0],
+        "{{ enumeration.class_name() }}"
+    )) {
+        return NULL;
+    }
+    Py_RETURN_NONE;
+}
+
+static int {{ enumeration.type_ref.parser_name() }}(PyObject *value, {{ enumeration.type_ref.tag_type.c_type_name() }} *out) {
+    if (!boltffi_python_expect_enum_instance(value, {{ enumeration.type_ref.type_object_name() }}, "{{ enumeration.class_name() }}")) {
+        return 0;
+    }
+    return {{ enumeration.type_ref.tag_type.parser_name() }}(value, out);
+}
+
+static PyObject *{{ enumeration.type_ref.boxer_name() }}({{ enumeration.type_ref.tag_type.c_type_name() }} value) {
+    return boltffi_python_box_registered_enum(
+        {{ enumeration.type_ref.type_object_name() }},
+        {{ enumeration.type_ref.tag_type.boxer_name() }}(value),
+        "{{ enumeration.class_name() }}"
+    );
+}
+
+static int {{ enumeration.type_ref.native_to_wire_tag_name() }}({{ enumeration.type_ref.tag_type.c_type_name() }} value, int32_t *out) {
+    switch (value) {
+{% for variant in enumeration.variants %}
+        case {{ variant.native_c_literal }}:
+            *out = {{ variant.wire_c_literal }};
+            return 1;
+{% endfor %}
+        default:
+            PyErr_SetString(PyExc_ValueError, "invalid {{ enumeration.class_name() }} value");
+            return 0;
+    }
+}
+
+static PyObject *{{ enumeration.type_ref.box_from_wire_tag_name() }}(int32_t wire_tag) {
+    switch (wire_tag) {
+{% for variant in enumeration.variants %}
+        case {{ variant.wire_c_literal }}:
+            return {{ enumeration.type_ref.boxer_name() }}({{ variant.native_c_literal }});
+{% endfor %}
+        default:
+            PyErr_SetString(PyExc_RuntimeError, "native enum wire tag is invalid");
+            return NULL;
+    }
+}
+
+{% endfor %}
+{% endif %}
+{% if !module.used_enum_vector_parameter_types().is_empty() %}
+
+{% for enumeration in module.used_enum_vector_parameter_types() %}
+static int {{ enumeration.vector_parser_name() }}(PyObject *value, boltffi_python_buffer_input *out) {
+    PyObject *sequence = NULL;
+    Py_ssize_t sequence_length = 0;
+    Py_ssize_t index = 0;
+    uint8_t *encoded_values = NULL;
+    {{ enumeration.tag_type.c_type_name() }} native_value = 0;
+    int32_t encoded_length = 0;
+    int32_t wire_tag = 0;
+    size_t encoded_size = 0;
+    boltffi_python_init_buffer_input(out);
+    sequence = PySequence_Fast(value, "expected sequence");
+    if (sequence == NULL) {
+        return 0;
+    }
+    sequence_length = PySequence_Fast_GET_SIZE(sequence);
+    if (sequence_length > (Py_ssize_t)INT32_MAX) {
+        Py_DECREF(sequence);
+        PyErr_SetString(PyExc_OverflowError, "sequence is too large for Rust");
+        return 0;
+    }
+    if ((size_t)sequence_length > ((size_t)UINTPTR_MAX - sizeof(int32_t)) / sizeof(int32_t)) {
+        Py_DECREF(sequence);
+        PyErr_SetString(PyExc_OverflowError, "sequence is too large for Rust");
+        return 0;
+    }
+    encoded_size = sizeof(int32_t) + ((size_t)sequence_length * sizeof(int32_t));
+    encoded_values = PyMem_Malloc(encoded_size);
+    if (encoded_values == NULL) {
+        Py_DECREF(sequence);
+        PyErr_NoMemory();
+        return 0;
+    }
+    encoded_length = (int32_t)sequence_length;
+    memcpy(encoded_values, &encoded_length, sizeof(int32_t));
+    for (index = 0; index < sequence_length; index += 1) {
+        if (!{{ enumeration.parser_name() }}(PySequence_Fast_GET_ITEM(sequence, index), &native_value)) {
+            PyMem_Free(encoded_values);
+            Py_DECREF(sequence);
+            return 0;
+        }
+        if (!{{ enumeration.native_to_wire_tag_name() }}(native_value, &wire_tag)) {
+            PyMem_Free(encoded_values);
+            Py_DECREF(sequence);
+            return 0;
+        }
+        memcpy(
+            encoded_values + sizeof(int32_t) + ((size_t)index * sizeof(int32_t)),
+            &wire_tag,
+            sizeof(int32_t)
+        );
+    }
+    Py_DECREF(sequence);
+    out->ptr = encoded_values;
+    out->len = (uintptr_t)encoded_size;
+    out->owned_copy = encoded_values;
+    return 1;
+}
+
+{% endfor %}
+{% endif %}
 {% if module.uses_owned_buffer_returns() %}
 
 static int boltffi_python_validate_owned_buffer(FfiBuf_u8 buffer) {
@@ -622,68 +809,136 @@ static PyObject *boltffi_python_decode_owned_vec_{{ primitive.rust_name() }}(Ffi
     return decoded;
 }
 {% endfor %}
-{% if !module.functions.is_empty() %}
-{% for function in module.functions %}
-static PyObject *{{ function.wrapper_name() }}(PyObject *self, PyObject *const *args, Py_ssize_t nargs) {
-{% for parameter in function.parameters %}
-{% for binding in parameter.local_bindings() %}
-    {{ binding.c_type_name }} {{ binding.name }};
+{% for enumeration in module.used_enum_vector_return_types() %}
+static PyObject *{{ enumeration.vector_decoder_name() }}(FfiBuf_u8 buffer) {
+    PyObject *decoded = NULL;
+    PyObject *item = NULL;
+    Py_ssize_t item_count = 0;
+    Py_ssize_t index = 0;
+    const uint8_t *encoded_values = NULL;
+    int32_t encoded_length = 0;
+    int32_t wire_tag = 0;
+    size_t expected_size = 0;
+    if (!boltffi_python_validate_owned_buffer(buffer)) {
+        boltffi_python_free_buf_symbol(buffer);
+        return NULL;
+    }
+    if (buffer.len < sizeof(int32_t)) {
+        boltffi_python_free_buf_symbol(buffer);
+        PyErr_SetString(PyExc_RuntimeError, "native vector buffer is invalid");
+        return NULL;
+    }
+    memcpy(&encoded_length, buffer.ptr, sizeof(int32_t));
+    if (encoded_length < 0) {
+        boltffi_python_free_buf_symbol(buffer);
+        PyErr_SetString(PyExc_RuntimeError, "native vector buffer is invalid");
+        return NULL;
+    }
+    if ((size_t)encoded_length > ((size_t)SIZE_MAX - sizeof(int32_t)) / sizeof(int32_t)) {
+        boltffi_python_free_buf_symbol(buffer);
+        PyErr_SetString(PyExc_RuntimeError, "native vector buffer is invalid");
+        return NULL;
+    }
+    expected_size = sizeof(int32_t) + ((size_t)encoded_length * sizeof(int32_t));
+    if (buffer.len != expected_size) {
+        boltffi_python_free_buf_symbol(buffer);
+        PyErr_SetString(PyExc_RuntimeError, "native vector buffer is invalid");
+        return NULL;
+    }
+    item_count = (Py_ssize_t)encoded_length;
+    decoded = PyList_New(item_count);
+    if (decoded == NULL) {
+        boltffi_python_free_buf_symbol(buffer);
+        return NULL;
+    }
+    encoded_values = buffer.ptr;
+    for (index = 0; index < item_count; index += 1) {
+        memcpy(
+            &wire_tag,
+            encoded_values + sizeof(int32_t) + ((size_t)index * sizeof(int32_t)),
+            sizeof(int32_t)
+        );
+        item = {{ enumeration.box_from_wire_tag_name() }}(wire_tag);
+        if (item == NULL) {
+            Py_DECREF(decoded);
+            boltffi_python_free_buf_symbol(buffer);
+            return NULL;
+        }
+        PyList_SET_ITEM(decoded, index, item);
+    }
+    boltffi_python_free_buf_symbol(buffer);
+    return decoded;
+}
+{% endfor %}
+{% for binding in module.native_callables() %}
+static PyObject *{{ binding.callable.wrapper_name() }}(PyObject *self, PyObject *const *args, Py_ssize_t nargs) {
+{% for parameter in binding.callable.parameters %}
+{% for local_binding in parameter.local_bindings() %}
+    {{ local_binding.c_type_name }} {{ local_binding.name }};
 {% endfor %}
 {% endfor %}
-{% if !function.returns_void() %}
-    {{ function.return_type.c_type_name() }} result;
+{% if !binding.callable.returns_void() %}
+    {{ binding.callable.return_type.c_type_name() }} result;
 {% endif %}
     PyObject *python_result = NULL;
     (void)self;
-    if (nargs != {{ function.parameter_count() }}) {
-        PyErr_Format(PyExc_TypeError, "{{ function.python_name }}() takes {{ function.parameter_count() }} positional arguments but %zd were given", nargs);
+    if (nargs != {{ binding.callable.parameter_count() }}) {
+        PyErr_Format(PyExc_TypeError, "{{ binding.module_attribute_name }}() takes {{ binding.callable.parameter_count() }} positional arguments but %zd were given", nargs);
         return NULL;
     }
-    if ({{ function.function_pointer_name() }} == NULL) {
+    if ({{ binding.callable.function_pointer_name() }} == NULL) {
         PyErr_SetString(PyExc_ImportError, "native library is not initialized");
         return NULL;
     }
-{% for parameter in function.parameters %}
-{% if parameter.is_buffer_input() %}
+{% for parameter in binding.callable.parameters %}
+{% if parameter.uses_buffer_input() %}
     boltffi_python_init_buffer_input(&{{ parameter.parser_state_name() }});
 {% endif %}
     if (!{{ parameter.parser_name() }}(args[{{ loop.index0 }}], {% for parser_output in parameter.parser_output_arguments() %}{{ parser_output }}{% if !loop.last %}, {% endif %}{% endfor %})) {
         goto cleanup;
     }
 {% endfor %}
-{% if function.returns_void() %}
-    {{ function.function_pointer_name() }}({% for ffi_argument in function.call_argument_expressions() %}{{ ffi_argument }}{% if !loop.last %}, {% endif %}{% endfor %});
+{% if binding.callable.returns_void() %}
+    {{ binding.callable.function_pointer_name() }}({% for ffi_argument in binding.callable.call_argument_expressions() %}{{ ffi_argument }}{% if !loop.last %}, {% endif %}{% endfor %});
     Py_INCREF(Py_None);
     python_result = Py_None;
 {% else %}
-    result = {{ function.function_pointer_name() }}({% for ffi_argument in function.call_argument_expressions() %}{{ ffi_argument }}{% if !loop.last %}, {% endif %}{% endfor %});
-{% if function.returns_string() %}
+    result = {{ binding.callable.function_pointer_name() }}({% for ffi_argument in binding.callable.call_argument_expressions() %}{{ ffi_argument }}{% if !loop.last %}, {% endif %}{% endfor %});
+{% if binding.callable.returns_string() %}
     python_result = boltffi_python_decode_owned_utf8(result);
-{% elif function.returns_bytes() %}
+{% elif binding.callable.returns_c_style_enum() %}
+{% let return_enum = binding.callable.return_c_style_enum().unwrap() %}
+    python_result = {{ return_enum.boxer_name() }}(result);
+{% elif binding.callable.returns_bytes() %}
     python_result = boltffi_python_decode_owned_bytes(result);
-{% elif function.returns_primitive_vector() %}
-{% let return_primitive = function.return_vector_primitive().unwrap() %}
+{% elif binding.callable.returns_primitive_vector() %}
+{% let return_primitive = binding.callable.return_vector_primitive().unwrap() %}
     python_result = boltffi_python_decode_owned_vec_{{ return_primitive.rust_name() }}(result);
+{% elif binding.callable.returns_c_style_enum_vector() %}
+{% let return_enum = binding.callable.return_vector_c_style_enum().unwrap() %}
+    python_result = {{ return_enum.vector_decoder_name() }}(result);
 {% else %}
-{% let return_primitive = function.return_primitive().unwrap() %}
+{% let return_primitive = binding.callable.return_primitive().unwrap() %}
     python_result = {{ return_primitive.boxer_name() }}(result);
 {% endif %}
 {% endif %}
 cleanup:
-{% for cleanup_statement in function.cleanup_statements() %}
+{% for cleanup_statement in binding.callable.cleanup_statements() %}
     {{ cleanup_statement }}
 {% endfor %}
     return python_result;
 }
 
 {% endfor %}
-{% endif %}
 static PyMethodDef boltffi_python_methods[] = {
-{% if !module.functions.is_empty() %}
+{% if module.has_native_callables() %}
     {"_initialize_loader", (PyCFunction)boltffi_python_initialize_loader, METH_O, NULL},
 {% endif %}
-{% for function in module.functions %}
-    {"{{ function.python_name }}", (PyCFunction){{ function.wrapper_name() }}, METH_FASTCALL, NULL},
+{% for enumeration in module.enums %}
+    {"{{ enumeration.type_ref.registration_function_name() }}", (PyCFunction){{ enumeration.type_ref.registration_wrapper_name() }}, METH_FASTCALL, NULL},
+{% endfor %}
+{% for binding in module.native_callables() %}
+    {"{{ binding.module_attribute_name }}", (PyCFunction){{ binding.callable.wrapper_name() }}, METH_FASTCALL, NULL},
 {% endfor %}
     {NULL, NULL, 0, NULL}
 };

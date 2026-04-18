@@ -3,7 +3,7 @@ use askama::Template;
 use crate::ir::types::PrimitiveType;
 use crate::render::python::PythonModule;
 use crate::render::python::primitives::{
-    CPythonFunctionExt as _, CPythonParameterExt as _, CPythonPrimitiveTypeExt as _,
+    CPythonCallableExt as _, CPythonParameterExt as _, CPythonPrimitiveTypeExt as _,
     CPythonTypeExt as _,
 };
 

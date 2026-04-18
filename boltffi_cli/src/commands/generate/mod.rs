@@ -178,7 +178,7 @@ enabled = true
         assert!(generated_pyproject.contains("setuptools.build_meta"));
         assert!(generated_setup.contains("Extension("));
         assert!(generated_setup.contains("\"demo._native\""));
-        assert!(generated_native.contains("boltffi_python_echo_i32_symbol_fn"));
+        assert!(generated_native.contains("boltffi_python_symbol_echo_i32_fn"));
         assert!(generated_native.contains("boltffi_python_initialize_loader"));
         assert!(generated_native.contains("PyInit__native"));
 

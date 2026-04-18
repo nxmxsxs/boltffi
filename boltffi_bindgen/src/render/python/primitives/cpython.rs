@@ -1,5 +1,5 @@
 use crate::ir::types::PrimitiveType;
-use crate::render::python::{PythonFunction, PythonParameter, PythonSequenceType, PythonType};
+use crate::render::python::{PythonCallable, PythonParameter, PythonSequenceType, PythonType};
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub(crate) struct CPythonCBinding {
@@ -256,15 +256,16 @@ impl CPythonPrimitiveTypeExt for PrimitiveType {
 }
 
 pub(crate) trait CPythonTypeExt {
-    fn c_type_name(&self) -> &'static str;
+    fn c_type_name(&self) -> String;
 }
 
 impl CPythonTypeExt for PythonType {
-    fn c_type_name(&self) -> &'static str {
+    fn c_type_name(&self) -> String {
         match self {
-            PythonType::Void => "void",
-            PythonType::Primitive(primitive) => primitive.c_type_name(),
-            PythonType::String | PythonType::Sequence(_) => "FfiBuf_u8",
+            PythonType::Void => "void".to_string(),
+            PythonType::Primitive(primitive) => primitive.c_type_name().to_string(),
+            PythonType::CStyleEnum(enum_type) => enum_type.tag_type.c_type_name().to_string(),
+            PythonType::String | PythonType::Sequence(_) => "FfiBuf_u8".to_string(),
         }
     }
 }
@@ -272,7 +273,7 @@ impl CPythonTypeExt for PythonType {
 pub(crate) trait CPythonParameterExt {
     fn ffi_bindings(&self) -> Vec<CPythonCBinding>;
     fn local_bindings(&self) -> Vec<CPythonCBinding>;
-    fn parser_name(&self) -> &'static str;
+    fn parser_name(&self) -> String;
     fn parser_output_arguments(&self) -> Vec<String>;
     fn ffi_argument_expressions(&self) -> Vec<String>;
     fn cleanup_statement(&self) -> Option<String>;
@@ -284,7 +285,11 @@ impl CPythonParameterExt for PythonParameter {
             PythonType::Void => unreachable!("python parameters cannot be void"),
             PythonType::Primitive(primitive) => vec![CPythonCBinding {
                 c_type_name: primitive.c_type_name().to_string(),
-                name: self.name.clone(),
+                name: self.value_binding_name(),
+            }],
+            PythonType::CStyleEnum(enum_type) => vec![CPythonCBinding {
+                c_type_name: enum_type.tag_type.c_type_name().to_string(),
+                name: self.value_binding_name(),
             }],
             PythonType::String => vec![
                 CPythonCBinding {
@@ -316,6 +321,16 @@ impl CPythonParameterExt for PythonParameter {
                     name: format!("{}.len", self.parser_state_name()),
                 },
             ],
+            PythonType::Sequence(PythonSequenceType::CStyleEnumVec(_)) => vec![
+                CPythonCBinding {
+                    c_type_name: "const uint8_t *".to_string(),
+                    name: format!("{}.ptr", self.parser_state_name()),
+                },
+                CPythonCBinding {
+                    c_type_name: "uintptr_t".to_string(),
+                    name: format!("{}.len", self.parser_state_name()),
+                },
+            ],
         }
     }
 
@@ -324,27 +339,41 @@ impl CPythonParameterExt for PythonParameter {
             PythonType::Void => unreachable!("python parameters cannot be void"),
             PythonType::Primitive(primitive) => vec![CPythonCBinding {
                 c_type_name: primitive.c_type_name().to_string(),
-                name: self.name.clone(),
+                name: self.value_binding_name(),
+            }],
+            PythonType::CStyleEnum(enum_type) => vec![CPythonCBinding {
+                c_type_name: enum_type.tag_type.c_type_name().to_string(),
+                name: self.value_binding_name(),
             }],
             PythonType::String => vec![CPythonCBinding {
                 c_type_name: "boltffi_python_utf8_input".to_string(),
                 name: self.parser_state_name(),
             }],
-            PythonType::Sequence(_) => vec![CPythonCBinding {
-                c_type_name: "boltffi_python_buffer_input".to_string(),
-                name: self.parser_state_name(),
-            }],
+            PythonType::Sequence(PythonSequenceType::Bytes)
+            | PythonType::Sequence(PythonSequenceType::PrimitiveVec(_))
+            | PythonType::Sequence(PythonSequenceType::CStyleEnumVec(_)) => {
+                vec![CPythonCBinding {
+                    c_type_name: "boltffi_python_buffer_input".to_string(),
+                    name: self.parser_state_name(),
+                }]
+            }
         }
     }
 
-    fn parser_name(&self) -> &'static str {
+    fn parser_name(&self) -> String {
         match &self.type_ref {
             PythonType::Void => unreachable!("python parameters cannot be void"),
-            PythonType::Primitive(primitive) => primitive.parser_name(),
-            PythonType::String => "boltffi_python_parse_string",
-            PythonType::Sequence(PythonSequenceType::Bytes) => "boltffi_python_parse_bytes",
+            PythonType::Primitive(primitive) => primitive.parser_name().to_string(),
+            PythonType::CStyleEnum(enum_type) => enum_type.parser_name(),
+            PythonType::String => "boltffi_python_parse_string".to_string(),
+            PythonType::Sequence(PythonSequenceType::Bytes) => {
+                "boltffi_python_parse_bytes".to_string()
+            }
             PythonType::Sequence(PythonSequenceType::PrimitiveVec(primitive)) => {
-                primitive.vector_parser_name()
+                primitive.vector_parser_name().to_string()
+            }
+            PythonType::Sequence(PythonSequenceType::CStyleEnumVec(enum_type)) => {
+                enum_type.vector_parser_name()
             }
         }
     }
@@ -352,7 +381,9 @@ impl CPythonParameterExt for PythonParameter {
     fn parser_output_arguments(&self) -> Vec<String> {
         match &self.type_ref {
             PythonType::Void => unreachable!("python parameters cannot be void"),
-            PythonType::Primitive(_) => vec![format!("&{}", self.name)],
+            PythonType::Primitive(_) | PythonType::CStyleEnum(_) => {
+                vec![format!("&{}", self.value_binding_name())]
+            }
             PythonType::String | PythonType::Sequence(_) => {
                 vec![format!("&{}", self.parser_state_name())]
             }
@@ -362,7 +393,7 @@ impl CPythonParameterExt for PythonParameter {
     fn ffi_argument_expressions(&self) -> Vec<String> {
         match &self.type_ref {
             PythonType::Void => unreachable!("python parameters cannot be void"),
-            PythonType::Primitive(_) => vec![self.name.clone()],
+            PythonType::Primitive(_) | PythonType::CStyleEnum(_) => vec![self.value_binding_name()],
             PythonType::String => vec![
                 format!("{}.ptr", self.parser_state_name()),
                 format!("{}.len", self.parser_state_name()),
@@ -379,12 +410,21 @@ impl CPythonParameterExt for PythonParameter {
                 ),
                 format!("{}.len", self.parser_state_name()),
             ],
+            PythonType::Sequence(PythonSequenceType::CStyleEnumVec(_)) => vec![
+                format!("(const uint8_t *){}.ptr", self.parser_state_name()),
+                format!("{}.len", self.parser_state_name()),
+            ],
         }
     }
 
     fn cleanup_statement(&self) -> Option<String> {
         match &self.type_ref {
-            PythonType::Sequence(_) => Some(format!(
+            PythonType::Sequence(PythonSequenceType::Bytes)
+            | PythonType::Sequence(PythonSequenceType::PrimitiveVec(_)) => Some(format!(
+                "boltffi_python_release_buffer_input(&{});",
+                self.parser_state_name()
+            )),
+            PythonType::Sequence(PythonSequenceType::CStyleEnumVec(_)) => Some(format!(
                 "boltffi_python_release_buffer_input(&{});",
                 self.parser_state_name()
             )),
@@ -393,7 +433,8 @@ impl CPythonParameterExt for PythonParameter {
     }
 }
 
-pub(crate) trait CPythonFunctionExt {
+pub(crate) trait CPythonCallableExt {
+    fn binding_stem(&self) -> &str;
     fn wrapper_name(&self) -> String;
     fn function_pointer_typedef_name(&self) -> String;
     fn function_pointer_name(&self) -> String;
@@ -402,37 +443,64 @@ pub(crate) trait CPythonFunctionExt {
     fn cleanup_statements(&self) -> Vec<String>;
 }
 
-impl CPythonFunctionExt for PythonFunction {
+impl CPythonCallableExt for PythonCallable {
+    fn binding_stem(&self) -> &str {
+        self.native_name.trim_start_matches('_')
+    }
+
     fn wrapper_name(&self) -> String {
-        format!("boltffi_python_{}", self.python_name)
+        format!("boltffi_python_callable_wrapper_{}", self.binding_stem())
     }
 
     fn function_pointer_typedef_name(&self) -> String {
-        format!("boltffi_python_{}_symbol_fn", self.python_name)
+        format!("boltffi_python_symbol_{}_fn", self.binding_stem())
     }
 
     fn function_pointer_name(&self) -> String {
-        format!("boltffi_python_{}_symbol", self.python_name)
+        format!("boltffi_python_symbol_{}", self.binding_stem())
     }
 
     fn ffi_arguments(&self) -> Vec<CPythonCBinding> {
         self.parameters
             .iter()
-            .flat_map(|parameter| parameter.ffi_bindings())
+            .flat_map(<PythonParameter as CPythonParameterExt>::ffi_bindings)
             .collect()
     }
 
     fn call_argument_expressions(&self) -> Vec<String> {
         self.parameters
             .iter()
-            .flat_map(|parameter| parameter.ffi_argument_expressions())
+            .flat_map(<PythonParameter as CPythonParameterExt>::ffi_argument_expressions)
             .collect()
     }
 
     fn cleanup_statements(&self) -> Vec<String> {
         self.parameters
             .iter()
-            .filter_map(|parameter| parameter.cleanup_statement())
+            .filter_map(<PythonParameter as CPythonParameterExt>::cleanup_statement)
             .collect()
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use crate::ir::types::PrimitiveType;
+    use crate::render::python::{PythonCallable, PythonType};
+
+    use super::CPythonCallableExt;
+
+    #[test]
+    fn callable_wrappers_use_callable_only_namespace() {
+        let callable = PythonCallable {
+            native_name: "register_status".to_string(),
+            ffi_symbol: "boltffi_register_status".to_string(),
+            parameters: vec![],
+            return_type: PythonType::Primitive(PrimitiveType::Bool),
+        };
+
+        assert_eq!(
+            callable.wrapper_name(),
+            "boltffi_python_callable_wrapper_register_status"
+        );
     }
 }
