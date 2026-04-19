@@ -74,6 +74,8 @@ pub enum JvmBindingStyle {
     Kotlin,
 }
 
+// Tuned in PR #165 from 128 down to 8. Keep this small unless fresh
+// benchmarks show a larger stack copy beats the extra stack traffic.
 const UTF8_STACK_COPY_MAX_LEN: usize = 8;
 
 pub struct JniLowerer<'a> {

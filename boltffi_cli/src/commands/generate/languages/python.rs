@@ -1,14 +1,13 @@
-use boltffi_bindgen::render::python::{PythonEmitter, PythonLowerer};
+use boltffi_bindgen::render::python::{PythonEmitter, PythonLowerError, PythonLowerer};
 
+use crate::cli::{CliError, Result};
 use crate::commands::generate::generator::{GenerateRequest, LanguageGenerator, ScanPointerWidth};
 use crate::config::Target;
-use crate::error::{CliError, Result};
 
 pub struct PythonGenerator;
 
 impl PythonGenerator {
-    #[cfg(test)]
-    pub fn generate_from_source_directory(
+    pub(crate) fn generate_from_source_directory(
         config: &crate::config::Config,
         output_override: Option<std::path::PathBuf>,
         source_directory: &std::path::Path,
@@ -48,11 +47,31 @@ impl LanguageGenerator for PythonGenerator {
             &lowered_crate.ffi_contract,
             &lowered_crate.abi_contract,
             &module_name,
+            &request.config().package.name,
+            request.config().package_version(),
+            &request.config().crate_artifact_name(),
         )
-        .lower();
-        let python_source = PythonEmitter::emit(&python_module);
-        let output_path = output_directory.join(format!("{module_name}.py"));
+        .lower()
+        .map_err(|error| match error {
+            PythonLowerError::TopLevelNameCollision { .. }
+            | PythonLowerError::ParameterNameCollision { .. }
+            | PythonLowerError::EnumMemberNameCollision { .. }
+            | PythonLowerError::EnumCallableNameCollision { .. }
+            | PythonLowerError::NativeModuleNameCollision { .. } => CliError::CommandFailed {
+                command: format!("generate python: {error}"),
+                status: None,
+            },
+        })?;
+        let python_sources = PythonEmitter::emit(&python_module);
 
-        request.write_output(&output_path, python_source)
+        python_sources.files.iter().try_for_each(|output_file| {
+            let output_path = output_directory.join(&output_file.relative_path);
+
+            if let Some(parent_directory) = output_path.parent() {
+                request.ensure_output_directory(parent_directory)?;
+            }
+
+            request.write_output(&output_path, &output_file.contents)
+        })
     }
 }

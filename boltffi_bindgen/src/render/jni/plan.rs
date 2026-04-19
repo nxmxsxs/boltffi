@@ -327,6 +327,18 @@ impl JniArrayReleaseMode {
 }
 
 impl JniPrimitiveArrayElementsKind {
+    pub fn region_fn(&self) -> &'static str {
+        match self {
+            Self::Boolean => "GetBooleanArrayRegion",
+            Self::Byte => "GetByteArrayRegion",
+            Self::Short => "GetShortArrayRegion",
+            Self::Int => "GetIntArrayRegion",
+            Self::Long => "GetLongArrayRegion",
+            Self::Float => "GetFloatArrayRegion",
+            Self::Double => "GetDoubleArrayRegion",
+        }
+    }
+
     pub fn get_fn(&self) -> &'static str {
         match self {
             Self::Boolean => "GetBooleanArrayElements",
@@ -447,6 +459,13 @@ impl JniParam {
     pub fn array_get_elements_fn(&self) -> &str {
         match &self.kind {
             JniParamKind::PrimitiveArray { elements_kind, .. } => elements_kind.get_fn(),
+            _ => "",
+        }
+    }
+
+    pub fn array_get_region_fn(&self) -> &str {
+        match &self.kind {
+            JniParamKind::PrimitiveArray { elements_kind, .. } => elements_kind.region_fn(),
             _ => "",
         }
     }

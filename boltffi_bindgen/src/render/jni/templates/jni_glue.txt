@@ -1,6 +1,7 @@
 #include <jni.h>
 #include <stdint.h>
 #include <stdbool.h>
+#include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
 #include <limits.h>
@@ -112,7 +113,7 @@ static inline jlong boltffi_jvm_callback_handle_clone(
 static inline jbyteArray boltffi_buf_to_jbytearray(JNIEnv* env, FfiBuf_u8 buf) {
     if (buf.ptr == NULL) {
         if (buf.len != 0) {
-            boltffi_throw_out_of_memory(env, "BoltFFI buffer pointer was null");
+            boltffi_throw_runtime(env, "BoltFFI buffer pointer was null with non-zero length");
         }
         return NULL;
     }
@@ -157,7 +158,7 @@ static inline uint32_t boltffi_le_u32(const uint8_t* bytes) {
 static inline jstring boltffi_utf8_buf_to_jstring(JNIEnv* env, FfiBuf_u8 buf) {
     if (buf.ptr == NULL) {
         if (buf.len != 0) {
-            boltffi_throw_out_of_memory(env, "BoltFFI string buffer pointer was null");
+            boltffi_throw_runtime(env, "BoltFFI string buffer pointer was null with non-zero length");
         }
         return NULL;
     }
@@ -299,7 +300,14 @@ static inline jstring boltffi_utf8_buf_to_jstring(JNIEnv* env, FfiBuf_u8 buf) {
     {{ prefix }}_free_buf(buf);
 
     if (invalid_utf8) {
-        boltffi_throw_runtime(env, "BoltFFI string buffer contained invalid UTF-8");
+        char message[96];
+        snprintf(
+            message,
+            sizeof(message),
+            "BoltFFI string buffer contained invalid UTF-8 at byte offset %zu",
+            in_pos
+        );
+        boltffi_throw_runtime(env, message);
         return NULL;
     }
     return result;
@@ -523,33 +531,7 @@ JNIEXPORT {{ trampoline.proxy_sync_method.jni_return_type }} JNICALL {{ trampoli
     if ({{ param.name }} != NULL && _{{ param.name }}_c == NULL) _boltffi_input_error = true;
 {%- endif %}
 {%- if param.is_primitive_array() %}
-{%- if param.array_has_stack_copy_fast_path() %}
-    {{ param.array_elements_value_type() }} _{{ param.name }}_stack[{{ param.array_stack_copy_max_len() }}];
-    uintptr_t _{{ param.name }}_len = (uintptr_t)(*env)->GetArrayLength(env, {{ param.name }});
-    {{ param.array_c_type() }}* _{{ param.name }}_ptr = NULL;
-    bool _{{ param.name }}_needs_release = false;
-    if (_{{ param.name }}_len <= {{ param.array_stack_copy_max_len() }}) {
-        (*env)->GetByteArrayRegion(env, {{ param.name }}, 0, (jsize)_{{ param.name }}_len, _{{ param.name }}_stack);
-        if (boltffi_exception_pending(env)) {
-            _{{ param.name }}_len = 0;
-            _boltffi_input_error = true;
-        } else {
-            _{{ param.name }}_ptr = ({{ param.array_c_type() }}*)_{{ param.name }}_stack;
-        }
-    } else {
-        _{{ param.name }}_ptr = ({{ param.array_c_type() }}*)(*env)->{{ param.array_get_elements_fn() }}(env, {{ param.name }}, NULL);
-        if (_{{ param.name }}_ptr == NULL) {
-            _{{ param.name }}_len = 0;
-            _boltffi_input_error = true;
-        } else {
-            _{{ param.name }}_needs_release = true;
-        }
-    }
-{%- else %}
-    uintptr_t _{{ param.name }}_len = (uintptr_t)(*env)->GetArrayLength(env, {{ param.name }});
-    {{ param.array_c_type() }}* _{{ param.name }}_ptr = ({{ param.array_c_type() }}*)(*env)->{{ param.array_get_elements_fn() }}(env, {{ param.name }}, NULL);
-    if (_{{ param.name }}_ptr == NULL) { _{{ param.name }}_len = 0; _boltffi_input_error = true; }
-{%- endif %}
+{% include "_primitive_array_input.txt" %}
 {%- endif %}
 {%- if param.is_buffer() %}
     jlong _{{ param.name }}_size = (*env)->GetDirectBufferCapacity(env, {{ param.name }});
@@ -884,33 +866,7 @@ JNIEXPORT jlong JNICALL {{ func.jni_create_name }}(JNIEnv *env, jclass cls, jlon
     if ({{ param.name }} != NULL && _{{ param.name }}_c == NULL) _boltffi_input_error = true;
 {%- endif %}
 {%- if param.is_primitive_array() %}
-{%- if param.array_has_stack_copy_fast_path() %}
-    {{ param.array_elements_value_type() }} _{{ param.name }}_stack[{{ param.array_stack_copy_max_len() }}];
-    uintptr_t _{{ param.name }}_len = (uintptr_t)(*env)->GetArrayLength(env, {{ param.name }});
-    {{ param.array_c_type() }}* _{{ param.name }}_ptr = NULL;
-    bool _{{ param.name }}_needs_release = false;
-    if (_{{ param.name }}_len <= {{ param.array_stack_copy_max_len() }}) {
-        (*env)->GetByteArrayRegion(env, {{ param.name }}, 0, (jsize)_{{ param.name }}_len, _{{ param.name }}_stack);
-        if (boltffi_exception_pending(env)) {
-            _{{ param.name }}_len = 0;
-            _boltffi_input_error = true;
-        } else {
-            _{{ param.name }}_ptr = ({{ param.array_c_type() }}*)_{{ param.name }}_stack;
-        }
-    } else {
-        _{{ param.name }}_ptr = ({{ param.array_c_type() }}*)(*env)->{{ param.array_get_elements_fn() }}(env, {{ param.name }}, NULL);
-        if (_{{ param.name }}_ptr == NULL) {
-            _{{ param.name }}_len = 0;
-            _boltffi_input_error = true;
-        } else {
-            _{{ param.name }}_needs_release = true;
-        }
-    }
-{%- else %}
-    uintptr_t _{{ param.name }}_len = (uintptr_t)(*env)->GetArrayLength(env, {{ param.name }});
-    {{ param.array_c_type() }}* _{{ param.name }}_ptr = ({{ param.array_c_type() }}*)(*env)->{{ param.array_get_elements_fn() }}(env, {{ param.name }}, NULL);
-    if (_{{ param.name }}_ptr == NULL) { _{{ param.name }}_len = 0; _boltffi_input_error = true; }
-{%- endif %}
+{% include "_primitive_array_input.txt" %}
 {%- endif %}
 {%- if param.is_buffer() %}
     jlong _{{ param.name }}_size = (*env)->GetDirectBufferCapacity(env, {{ param.name }});
@@ -1064,33 +1020,7 @@ JNIEXPORT jlong JNICALL {{ func.jni_create_name }}(JNIEnv *env, jclass cls{{ fun
     if ({{ param.name }} != NULL && _{{ param.name }}_c == NULL) _boltffi_input_error = true;
 {%- endif %}
 {%- if param.is_primitive_array() %}
-{%- if param.array_has_stack_copy_fast_path() %}
-    {{ param.array_elements_value_type() }} _{{ param.name }}_stack[{{ param.array_stack_copy_max_len() }}];
-    uintptr_t _{{ param.name }}_len = (uintptr_t)(*env)->GetArrayLength(env, {{ param.name }});
-    {{ param.array_c_type() }}* _{{ param.name }}_ptr = NULL;
-    bool _{{ param.name }}_needs_release = false;
-    if (_{{ param.name }}_len <= {{ param.array_stack_copy_max_len() }}) {
-        (*env)->GetByteArrayRegion(env, {{ param.name }}, 0, (jsize)_{{ param.name }}_len, _{{ param.name }}_stack);
-        if (boltffi_exception_pending(env)) {
-            _{{ param.name }}_len = 0;
-            _boltffi_input_error = true;
-        } else {
-            _{{ param.name }}_ptr = ({{ param.array_c_type() }}*)_{{ param.name }}_stack;
-        }
-    } else {
-        _{{ param.name }}_ptr = ({{ param.array_c_type() }}*)(*env)->{{ param.array_get_elements_fn() }}(env, {{ param.name }}, NULL);
-        if (_{{ param.name }}_ptr == NULL) {
-            _{{ param.name }}_len = 0;
-            _boltffi_input_error = true;
-        } else {
-            _{{ param.name }}_needs_release = true;
-        }
-    }
-{%- else %}
-    uintptr_t _{{ param.name }}_len = (uintptr_t)(*env)->GetArrayLength(env, {{ param.name }});
-    {{ param.array_c_type() }}* _{{ param.name }}_ptr = ({{ param.array_c_type() }}*)(*env)->{{ param.array_get_elements_fn() }}(env, {{ param.name }}, NULL);
-    if (_{{ param.name }}_ptr == NULL) { _{{ param.name }}_len = 0; _boltffi_input_error = true; }
-{%- endif %}
+{% include "_primitive_array_input.txt" %}
 {%- endif %}
 {%- if param.is_buffer() %}
     jlong _{{ param.name }}_size = (*env)->GetDirectBufferCapacity(env, {{ param.name }});
@@ -1199,33 +1129,7 @@ JNIEXPORT {{ method.jni_return_type }} JNICALL {{ method.jni_name }}(JNIEnv *env
     if ({{ param.name }} != NULL && _{{ param.name }}_c == NULL) _boltffi_input_error = true;
 {%- endif %}
 {%- if param.is_primitive_array() %}
-{%- if param.array_has_stack_copy_fast_path() %}
-    {{ param.array_elements_value_type() }} _{{ param.name }}_stack[{{ param.array_stack_copy_max_len() }}];
-    uintptr_t _{{ param.name }}_len = (uintptr_t)(*env)->GetArrayLength(env, {{ param.name }});
-    {{ param.array_c_type() }}* _{{ param.name }}_ptr = NULL;
-    bool _{{ param.name }}_needs_release = false;
-    if (_{{ param.name }}_len <= {{ param.array_stack_copy_max_len() }}) {
-        (*env)->GetByteArrayRegion(env, {{ param.name }}, 0, (jsize)_{{ param.name }}_len, _{{ param.name }}_stack);
-        if (boltffi_exception_pending(env)) {
-            _{{ param.name }}_len = 0;
-            _boltffi_input_error = true;
-        } else {
-            _{{ param.name }}_ptr = ({{ param.array_c_type() }}*)_{{ param.name }}_stack;
-        }
-    } else {
-        _{{ param.name }}_ptr = ({{ param.array_c_type() }}*)(*env)->{{ param.array_get_elements_fn() }}(env, {{ param.name }}, NULL);
-        if (_{{ param.name }}_ptr == NULL) {
-            _{{ param.name }}_len = 0;
-            _boltffi_input_error = true;
-        } else {
-            _{{ param.name }}_needs_release = true;
-        }
-    }
-{%- else %}
-    uintptr_t _{{ param.name }}_len = (uintptr_t)(*env)->GetArrayLength(env, {{ param.name }});
-    {{ param.array_c_type() }}* _{{ param.name }}_ptr = ({{ param.array_c_type() }}*)(*env)->{{ param.array_get_elements_fn() }}(env, {{ param.name }}, NULL);
-    if (_{{ param.name }}_ptr == NULL) { _{{ param.name }}_len = 0; _boltffi_input_error = true; }
-{%- endif %}
+{% include "_primitive_array_input.txt" %}
 {%- endif %}
 {%- if param.is_buffer() %}
     jlong _{{ param.name }}_size = (*env)->GetDirectBufferCapacity(env, {{ param.name }});
@@ -1386,33 +1290,7 @@ JNIEXPORT void JNICALL {{ method.jni_name }}(JNIEnv *env, jclass cls, jlong hand
     if ({{ param.name }} != NULL && _{{ param.name }}_c == NULL) _boltffi_input_error = true;
 {%- endif %}
 {%- if param.is_primitive_array() %}
-{%- if param.array_has_stack_copy_fast_path() %}
-    {{ param.array_elements_value_type() }} _{{ param.name }}_stack[{{ param.array_stack_copy_max_len() }}];
-    uintptr_t _{{ param.name }}_len = (uintptr_t)(*env)->GetArrayLength(env, {{ param.name }});
-    {{ param.array_c_type() }}* _{{ param.name }}_ptr = NULL;
-    bool _{{ param.name }}_needs_release = false;
-    if (_{{ param.name }}_len <= {{ param.array_stack_copy_max_len() }}) {
-        (*env)->GetByteArrayRegion(env, {{ param.name }}, 0, (jsize)_{{ param.name }}_len, _{{ param.name }}_stack);
-        if (boltffi_exception_pending(env)) {
-            _{{ param.name }}_len = 0;
-            _boltffi_input_error = true;
-        } else {
-            _{{ param.name }}_ptr = ({{ param.array_c_type() }}*)_{{ param.name }}_stack;
-        }
-    } else {
-        _{{ param.name }}_ptr = ({{ param.array_c_type() }}*)(*env)->{{ param.array_get_elements_fn() }}(env, {{ param.name }}, NULL);
-        if (_{{ param.name }}_ptr == NULL) {
-            _{{ param.name }}_len = 0;
-            _boltffi_input_error = true;
-        } else {
-            _{{ param.name }}_needs_release = true;
-        }
-    }
-{%- else %}
-    uintptr_t _{{ param.name }}_len = (uintptr_t)(*env)->GetArrayLength(env, {{ param.name }});
-    {{ param.array_c_type() }}* _{{ param.name }}_ptr = ({{ param.array_c_type() }}*)(*env)->{{ param.array_get_elements_fn() }}(env, {{ param.name }}, NULL);
-    if (_{{ param.name }}_ptr == NULL) { _{{ param.name }}_len = 0; _boltffi_input_error = true; }
-{%- endif %}
+{% include "_primitive_array_input.txt" %}
 {%- endif %}
 {%- if param.is_buffer() %}
     jlong _{{ param.name }}_size = (*env)->GetDirectBufferCapacity(env, {{ param.name }});

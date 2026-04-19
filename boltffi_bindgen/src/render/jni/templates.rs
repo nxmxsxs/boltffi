@@ -162,13 +162,18 @@ impl Display for JniWireCtor {
 
 #[cfg(test)]
 mod tests {
+    use super::JniWireFunctionTemplate;
     use crate::ir;
     use crate::model::{
         CallbackTrait, Class, ClosureSignature, Constructor, ConstructorParam, Enumeration,
         Function, Method, Module, Parameter, Primitive, Receiver, Record, RecordField, ReturnType,
         TraitMethod, TraitMethodParam, Type, Variant,
     };
+    use crate::render::jni::plan::{
+        JniArrayReleaseMode, JniParam, JniParamKind, JniPrimitiveArrayElementsKind, JniWireFunction,
+    };
     use crate::render::jni::{JniEmitter, JniLowerer};
+    use askama::Template;
 
     fn build_test_module() -> Module {
         let point = Record::new("Point")
@@ -331,6 +336,45 @@ mod tests {
         assert!(
             !glue_code.contains("FfiStatus* status)"),
             "callback glue should not reuse `status` as the out status param name"
+        );
+    }
+
+    #[test]
+    fn wire_template_uses_typed_array_region_for_stack_copy_fast_path() {
+        let function = JniWireFunction {
+            ffi_name: "boltffi_sum".to_string(),
+            jni_name: "Java_com_example_Native_sum".to_string(),
+            jni_params: ", jintArray values".to_string(),
+            params: vec![JniParam {
+                name: "values".to_string(),
+                ffi_arg: "((FfiSlice_i32){ .ptr = _values_ptr, .len = _values_len })".to_string(),
+                jni_decl: ", jintArray values".to_string(),
+                kind: JniParamKind::PrimitiveArray {
+                    c_type: "int32_t".to_string(),
+                    elements_kind: JniPrimitiveArrayElementsKind::Int,
+                    release_mode: JniArrayReleaseMode::Abort,
+                    stack_copy_max_len: Some(8),
+                },
+            }],
+            return_is_unit: false,
+            return_is_direct: true,
+            return_composite_c_type: None,
+            jni_return_type: "jint".to_string(),
+            jni_c_return_type: "int32_t".to_string(),
+            jni_return_expr: "(jint)_result".to_string(),
+        };
+
+        let rendered = JniWireFunctionTemplate::new(&function)
+            .render()
+            .expect("wire function should render");
+
+        assert!(
+            rendered.contains("GetIntArrayRegion(env, values"),
+            "stack-copy fast path should use the typed JNI region accessor: {rendered}"
+        );
+        assert!(
+            !rendered.contains("GetByteArrayRegion(env, values"),
+            "stack-copy fast path should not hardcode byte-array accessors: {rendered}"
         );
     }
 }

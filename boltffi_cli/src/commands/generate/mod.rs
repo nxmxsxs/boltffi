@@ -7,12 +7,12 @@ use std::path::{Path, PathBuf};
 use generator::{GenerateRequest, run_generator};
 use header::HeaderGenerator;
 use languages::{
-    DartGenerator, JavaGenerator, KotlinGenerator, PythonGenerator, SwiftGenerator,
-    TypeScriptGenerator,
+    CSharpGenerator, DartGenerator, JavaGenerator, KotlinGenerator, PythonGenerator,
+    SwiftGenerator, TypeScriptGenerator,
 };
 
+use crate::cli::Result;
 use crate::config::{Config, Target};
-use crate::error::Result;
 
 pub enum GenerateTarget {
     Swift,
@@ -22,6 +22,7 @@ pub enum GenerateTarget {
     Typescript,
     Dart,
     Python,
+    CSharp,
     All,
 }
 
@@ -44,6 +45,7 @@ pub fn run_generate_with_output(config: &Config, options: GenerateOptions) -> Re
         }
         GenerateTarget::Dart => run_generator::<DartGenerator>(&request, options.experimental),
         GenerateTarget::Python => run_generator::<PythonGenerator>(&request, options.experimental),
+        GenerateTarget::CSharp => run_generator::<CSharpGenerator>(&request, options.experimental),
         GenerateTarget::All => {
             if config.should_process(Target::Swift, options.experimental) {
                 run_generator::<SwiftGenerator>(&request, options.experimental)?;
@@ -73,6 +75,10 @@ pub fn run_generate_with_output(config: &Config, options: GenerateOptions) -> Re
                 run_generator::<PythonGenerator>(&request, options.experimental)?;
             }
 
+            if config.should_process(Target::CSharp, options.experimental) {
+                run_generator::<CSharpGenerator>(&request, options.experimental)?;
+            }
+
             Ok(())
         }
     }
@@ -87,15 +93,23 @@ pub fn run_generate_java_with_output_from_source_dir(
     JavaGenerator::generate_from_source_directory(config, output, source_directory, crate_name)
 }
 
+pub fn run_generate_python_with_output_from_source_dir(
+    config: &Config,
+    output: Option<PathBuf>,
+    source_directory: &Path,
+    crate_name: &str,
+) -> Result<()> {
+    PythonGenerator::generate_from_source_directory(config, output, source_directory, crate_name)
+}
+
 #[cfg(test)]
 mod tests {
     use std::fs;
     use std::path::PathBuf;
     use std::time::{SystemTime, UNIX_EPOCH};
 
-    use super::{GenerateOptions, GenerateTarget, PythonGenerator, run_generate_with_output};
+    use super::languages::PythonGenerator;
     use crate::config::Config;
-    use crate::error::CliError;
 
     fn parse_config(input: &str) -> Config {
         let parsed: Config = toml::from_str(input).expect("toml parse failed");
@@ -117,68 +131,13 @@ mod tests {
     }
 
     #[test]
-    fn python_generate_requires_experimental_opt_in() {
-        let config = parse_config(
-            r#"
-[package]
-name = "demo"
-
-[targets.python]
-enabled = true
-"#,
-        );
-
-        let error = run_generate_with_output(
-            &config,
-            GenerateOptions {
-                target: GenerateTarget::Python,
-                output: None,
-                experimental: false,
-            },
-        )
-        .expect_err("python generate should require experimental opt-in");
-
-        assert!(matches!(
-            error,
-            CliError::CommandFailed { command, status: None }
-                if command
-                    == "python is experimental, use --experimental flag or add \"python\" to [experimental]"
-        ));
-    }
-
-    #[test]
-    fn python_generate_requires_enabled_target() {
-        let config = parse_config(
-            r#"
-[package]
-name = "demo"
-"#,
-        );
-
-        let error = run_generate_with_output(
-            &config,
-            GenerateOptions {
-                target: GenerateTarget::Python,
-                output: None,
-                experimental: true,
-            },
-        )
-        .expect_err("python generate should require enabled target");
-
-        assert!(matches!(
-            error,
-            CliError::CommandFailed { command, status: None }
-                if command == "targets.python.enabled = false"
-        ));
-    }
-
-    #[test]
-    fn python_generate_writes_module_file() {
+    fn python_generate_writes_python_package_sources() {
         let output_directory = unique_temp_dir("boltffi-python-generate-test");
         let config = parse_config(
             r#"
 [package]
 name = "demo"
+version = "0.1.0"
 
 [targets.python]
 enabled = true
@@ -193,13 +152,35 @@ enabled = true
         )
         .expect("python generate should succeed");
 
-        let generated_module_path = output_directory.join("demo.py");
-        let generated_module = fs::read_to_string(&generated_module_path)
-            .expect("generated python module should be readable");
+        let generated_init_path = output_directory.join("demo/__init__.py");
+        let generated_stub_path = output_directory.join("demo/__init__.pyi");
+        let generated_native_path = output_directory.join("demo/_native.c");
+        let generated_pyproject_path = output_directory.join("pyproject.toml");
+        let generated_setup_path = output_directory.join("setup.py");
+        let generated_init = fs::read_to_string(&generated_init_path)
+            .expect("generated python init should be readable");
+        let generated_stub = fs::read_to_string(&generated_stub_path)
+            .expect("generated python typing stub should be readable");
+        let generated_native = fs::read_to_string(&generated_native_path)
+            .expect("generated native bridge should be readable");
+        let generated_pyproject = fs::read_to_string(&generated_pyproject_path)
+            .expect("generated pyproject should be readable");
+        let generated_setup = fs::read_to_string(&generated_setup_path)
+            .expect("generated setup.py should be readable");
 
-        assert!(generated_module.contains("MODULE_NAME = \"demo\""));
-        assert!(generated_module.contains("PACKAGE_NAME = \"demo\""));
-        assert!(generated_module.contains("EXPORTED_API = {"));
+        assert!(generated_init.contains("from pathlib import Path"));
+        assert!(generated_init.contains("from . import _native"));
+        assert!(generated_init.contains("_native._initialize_loader"));
+        assert!(generated_init.contains("__all__ = ["));
+        assert!(generated_init.contains("PACKAGE_NAME = \"demo\""));
+        assert!(generated_stub.contains("MODULE_NAME: str"));
+        assert!(generated_stub.contains("def echo_i32"));
+        assert!(generated_pyproject.contains("setuptools.build_meta"));
+        assert!(generated_setup.contains("Extension("));
+        assert!(generated_setup.contains("\"demo._native\""));
+        assert!(generated_native.contains("boltffi_python_symbol_echo_i32_fn"));
+        assert!(generated_native.contains("boltffi_python_initialize_loader"));
+        assert!(generated_native.contains("PyInit__native"));
 
         fs::remove_dir_all(output_directory).expect("cleanup generated output");
     }
