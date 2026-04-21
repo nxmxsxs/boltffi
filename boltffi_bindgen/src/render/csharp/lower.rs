@@ -6,7 +6,7 @@ use crate::ir::abi::{
     AbiCall, AbiEnum, AbiEnumField, AbiEnumPayload, AbiEnumVariant, AbiParam, AbiRecord, CallId,
     ParamRole,
 };
-use crate::ir::codec::EnumLayout;
+use crate::ir::codec::{EnumLayout, VecLayout};
 use crate::ir::definitions::{
     ConstructorDef, EnumDef, EnumRepr, FieldDef, FunctionDef, MethodDef, ParamDef, ParamPassing,
     Receiver, RecordDef, ReturnDef, VariantPayload,
@@ -144,6 +144,10 @@ impl<'a> CSharpLowerer<'a> {
             TypeExpr::Primitive(_) | TypeExpr::String | TypeExpr::Void => true,
             TypeExpr::Record(id) => records.contains(id.as_str()),
             TypeExpr::Enum(id) => enums.contains(id.as_str()),
+            // Vec as a field walks its inner type through the same
+            // admission rules: any field-admissible type is also a valid
+            // Vec element, and vice versa.
+            TypeExpr::Vec(inner) => Self::is_field_type_supported(inner, records, enums),
             _ => false,
         }
     }
@@ -208,7 +212,12 @@ impl<'a> CSharpLowerer<'a> {
         }
 
         let return_type = self.lower_return(&function.returns)?;
-        let return_kind = self.return_kind(&function.returns, &return_type);
+        let call = self.abi_call_for_function(function)?;
+        let return_kind = self.return_kind(
+            &function.returns,
+            &return_type,
+            call.returns.decode_ops.as_ref(),
+        );
 
         let wire_writers = self.wire_writers_for_params(function)?;
 
@@ -228,7 +237,12 @@ impl<'a> CSharpLowerer<'a> {
         })
     }
 
-    fn return_kind(&self, return_def: &ReturnDef, return_type: &CSharpType) -> CSharpReturnKind {
+    fn return_kind(
+        &self,
+        return_def: &ReturnDef,
+        return_type: &CSharpType,
+        decode_ops: Option<&ReadSeq>,
+    ) -> CSharpReturnKind {
         if return_type.is_void() {
             return CSharpReturnKind::Void;
         }
@@ -244,10 +258,37 @@ impl<'a> CSharpLowerer<'a> {
                     class_name: NamingConvention::class_name(id.as_str()),
                 }
             }
+            ReturnDef::Value(TypeExpr::Vec(inner)) => {
+                let reader_call = match inner.as_ref() {
+                    TypeExpr::Primitive(p) => emit::primitive_vec_reader_call(*p),
+                    TypeExpr::Record(id) if self.is_blittable_record(id) => format!(
+                        "ReadBlittableArray<{}>()",
+                        NamingConvention::class_name(id.as_str())
+                    ),
+                    _ => {
+                        let element_seq = Self::vec_element_read_seq(decode_ops)
+                            .expect("encoded Vec return must carry decode_ops with a Vec ReadOp");
+                        emit::vec_return_reader_call(inner, &element_seq)
+                    }
+                };
+                CSharpReturnKind::WireDecodeArray { reader_call }
+            }
             // Primitives, bools, blittable records, and C-style enums
             // are all direct: the CLR marshals them across P/Invoke
             // without any wrapper help.
             _ => CSharpReturnKind::Direct,
+        }
+    }
+
+    /// Extract the per-element [`ReadSeq`] from a `ReadSeq` whose top op is
+    /// a `Vec`. Used to render the inner decode expression that gets wrapped
+    /// in `ReadEncodedArray<T>(r => ...)`. Primitive-element Vec returns
+    /// never call into this; they short-circuit on the no-prefix fast path.
+    fn vec_element_read_seq(decode_ops: Option<&ReadSeq>) -> Option<ReadSeq> {
+        let decode = decode_ops?;
+        match decode.ops.first()? {
+            ReadOp::Vec { element, .. } => Some((**element).clone()),
+            _ => None,
         }
     }
 
@@ -281,6 +322,44 @@ impl<'a> CSharpLowerer<'a> {
             TypeExpr::Primitive(_) | TypeExpr::String | TypeExpr::Void => true,
             TypeExpr::Record(id) => self.supported_records.contains(id.as_str()),
             TypeExpr::Enum(id) => self.supported_enums.contains(id.as_str()),
+            TypeExpr::Vec(inner) => self.is_supported_vec_element(inner),
+            _ => false,
+        }
+    }
+
+    /// Which element types the C# backend currently admits inside a
+    /// top-level `Vec<_>` param or return. This is only the admission
+    /// gate: primitives and blittable records can use the blittable
+    /// path; strings, enums, non-blittable records, and nested vecs
+    /// travel through the encoded wire form.
+    fn is_supported_vec_element(&self, ty: &TypeExpr) -> bool {
+        match ty {
+            TypeExpr::Primitive(_) | TypeExpr::String => true,
+            TypeExpr::Record(id) => self.supported_records.contains(id.as_str()),
+            TypeExpr::Enum(id) => self.supported_enums.contains(id.as_str()),
+            TypeExpr::Vec(inner) => self.is_supported_vec_element(inner),
+            _ => false,
+        }
+    }
+
+    /// Vec element types whose param form is a pinned `T[]` passed
+    /// directly across P/Invoke. Primitives qualify because their C#
+    /// mapping is a blittable value type; blittable records qualify
+    /// because `[StructLayout(Sequential)]` guarantees the same byte
+    /// layout as Rust's `#[repr(C)]`, so the CLR can hand the native
+    /// side a pointer straight into the element buffer. C-style enums
+    /// do NOT qualify even though their C# projection is a fixed-width
+    /// value type: the Rust `#[export]` macro classifies them as
+    /// `DataTypeCategory::Scalar` and routes `Vec<CStyleEnum>` through
+    /// the wire-encoded path (only `Blittable` survives the macro's
+    /// `supports_direct_vec` gate). Admitting them here would hand the
+    /// native side a raw enum byte array where it expects a
+    /// length-prefixed encoded array of I32 tags. Everything not
+    /// listed rides the wire-encoded path. Tracked: issue #196.
+    fn is_blittable_vec_element(&self, ty: &TypeExpr) -> bool {
+        match ty {
+            TypeExpr::Primitive(_) => true,
+            TypeExpr::Record(id) => self.is_blittable_record(id),
             _ => false,
         }
     }
@@ -313,8 +392,38 @@ impl<'a> CSharpLowerer<'a> {
                     binding_name: writer.bytes_binding_name.clone(),
                 }
             }
+            TypeExpr::Vec(inner) if matches!(inner.as_ref(), TypeExpr::Primitive(_)) => {
+                CSharpParamKind::DirectArray
+            }
+            TypeExpr::Vec(inner) if self.is_blittable_vec_element(inner) => {
+                // Primitive arrays can use the CLR's built-in direct-array
+                // path. Record arrays are less predictable once the element
+                // type stops being blittable to the marshaller, e.g. because
+                // it contains `bool` or `char`: P/Invoke may marshal through
+                // a temporary native buffer rather than exposing the managed
+                // array in place. `fixed` keeps this path zero-copy and
+                // makes the ABI contract explicit: Rust reads the actual
+                // managed element buffer, not a marshaled surrogate.
+                let element_type = match inner.as_ref() {
+                    TypeExpr::Record(id) => NamingConvention::class_name(id.as_str()),
+                    other => todo!(
+                        "C# backend pinned-array param support not yet implemented for {other:?}"
+                    ),
+                };
+                CSharpParamKind::PinnedArray { element_type }
+            }
+            TypeExpr::Vec(inner) if self.is_supported_vec_element(inner) => {
+                // Vec<String> and Vec<Vec<_>> carry variable-width elements, so
+                // the param travels wire-encoded rather than as a pinned T[].
+                let writer = wire_writers
+                    .iter()
+                    .find(|w| w.param_name == param.name.as_str())?;
+                CSharpParamKind::WireEncoded {
+                    binding_name: writer.bytes_binding_name.clone(),
+                }
+            }
             // Primitives, bools, blittable records, and C-style enums
-            // pass directly — the CLR marshals them across P/Invoke with
+            // pass directly. The CLR marshals them across P/Invoke with
             // no extra setup.
             _ => CSharpParamKind::Direct,
         };
@@ -345,6 +454,10 @@ impl<'a> CSharpLowerer<'a> {
             TypeExpr::Enum(id) if self.supported_enums.contains(id.as_str()) => {
                 let enum_def = self.ffi.catalog.resolve_enum(id)?;
                 Some(mappings::csharp_enum_type(enum_def))
+            }
+            TypeExpr::Vec(inner) if self.is_supported_vec_element(inner) => {
+                let inner_type = self.lower_type(inner)?;
+                Some(CSharpType::Array(Box::new(inner_type)))
             }
             _ => None,
         }
@@ -606,7 +719,11 @@ impl<'a> CSharpLowerer<'a> {
             ReturnDef::Value(type_expr) => self.lower_type(type_expr)?,
             ReturnDef::Result { .. } => return None,
         };
-        let return_kind = self.return_kind(&method_def.returns, &return_type);
+        let return_kind = self.return_kind(
+            &method_def.returns,
+            &return_type,
+            call.returns.decode_ops.as_ref(),
+        );
 
         let receiver = match method_def.receiver {
             Receiver::Static => CSharpReceiver::Static,
@@ -740,18 +857,36 @@ impl<'a> CSharpLowerer<'a> {
     }
 
     /// Whether a param's encode op requires a `WireWriter` setup block
-    /// before the native call. Strings keep their direct-byte[] path.
-    /// Blittable record and C-style enum params pass through P/Invoke as
-    /// value types. Non-blittable records and data enums need the
-    /// buffer because their payloads are variable-width.
+    /// before the native call.
+    ///
+    /// Primitives pass as value types, strings go through the UTF-8 byte
+    /// path, raw bytes ride as `byte[]` directly. Blittable records and
+    /// C-style enums also pass by value. Variable-width payloads
+    /// (non-blittable records, data enums, vecs) need a length-prefixed
+    /// buffer serialized up front.
     fn param_needs_wire_buffer(&self, op: &WriteOp) -> bool {
         match op {
+            WriteOp::Primitive { .. } | WriteOp::String { .. } | WriteOp::Bytes { .. } => false,
             WriteOp::Record { id, .. } => !self.is_blittable_record(id),
             WriteOp::Enum {
                 layout: EnumLayout::Data { .. },
                 ..
             } => true,
-            _ => false,
+            WriteOp::Enum { .. } => false,
+            WriteOp::Vec {
+                layout: VecLayout::Blittable { .. },
+                ..
+            } => false,
+            WriteOp::Vec {
+                layout: VecLayout::Encoded,
+                ..
+            } => true,
+            WriteOp::Option { .. }
+            | WriteOp::Result { .. }
+            | WriteOp::Builtin { .. }
+            | WriteOp::Custom { .. } => {
+                todo!("C# backend has not yet implemented param support for {op:?}")
+            }
         }
     }
 
@@ -808,6 +943,22 @@ impl<'a> CSharpLowerer<'a> {
                 value: Self::prefix_value(value, binding),
                 layout: layout.clone(),
             },
+            WriteOp::Vec {
+                value,
+                element_type,
+                element,
+                layout,
+            } => WriteOp::Vec {
+                value: Self::prefix_value(value, binding),
+                element_type: element_type.clone(),
+                // `element` references the per-iteration loop binding
+                // (`item`), which belongs to the foreach the Vec writer
+                // emits around the enclosing variant scope. Rewriting it
+                // to `_v.item` would break the generated loop; leave the
+                // element seq untouched.
+                element: element.clone(),
+                layout: layout.clone(),
+            },
             other => panic!(
                 "prefix_write_op: unsupported op for C# variant fields: {:?}",
                 other
@@ -845,6 +996,18 @@ impl<'a> CSharpLowerer<'a> {
                     .map(|p| Self::prefix_size_expr(p, binding))
                     .collect(),
             ),
+            SizeExpr::VecSize {
+                value,
+                inner,
+                layout,
+            } => SizeExpr::VecSize {
+                value: Self::prefix_value(value, binding),
+                // `inner` uses the per-element loop variable (`item`) the
+                // encoded-array size lambda binds. The `_v` rewrite only
+                // applies to the enclosing variant field reference.
+                inner: inner.clone(),
+                layout: layout.clone(),
+            },
             other => panic!(
                 "prefix_size_expr: unsupported expr for C# variant fields: {:?}",
                 other

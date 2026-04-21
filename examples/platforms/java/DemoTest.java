@@ -27,6 +27,8 @@ public final class DemoTest {
         testBytesVecs();
         testPrimitiveVecs();
         testVecStrings();
+        testNestedVecs();
+        testBlittableRecordVecs();
         testOptions();
         testRecordsWithVecs();
         testConstructorCoverageMatrix();
@@ -309,6 +311,16 @@ public final class DemoTest {
         assert logEntry.code() == (short) 42 : "LogEntry.code";
         assert Demo.echoLogEntry(logEntry).equals(logEntry) : "echoLogEntry round-trip";
 
+        Filter groupFilter = new Filter.ByGroups(
+            Arrays.asList(
+                Arrays.asList("café", "🌍"),
+                Collections.emptyList(),
+                Arrays.asList("common")
+            )
+        );
+        assert Demo.echoFilter(groupFilter).equals(groupFilter) : "echoFilter(ByGroups)";
+        assert Demo.describeFilter(groupFilter).equals("filter by 3 groups") : "describeFilter(ByGroups)";
+
         Shape circle = Demo.makeCircle(5.0);
         assert circle instanceof Shape.Circle : "makeCircle returns Circle";
         assert ((Shape.Circle) circle).radius == 5.0 : "makeCircle.radius";
@@ -523,6 +535,87 @@ public final class DemoTest {
         System.out.println("  PASS\n");
     }
 
+    private static void testNestedVecs() {
+        System.out.println("Testing nested vecs...");
+
+        List<int[]> vvi = Demo.echoVecVecI32(Arrays.asList(new int[]{1, 2, 3}, new int[]{}, new int[]{4, 5}));
+        assert vvi.size() == 3 : "echoVecVecI32 outer size";
+        assert vvi.get(0).length == 3 && vvi.get(0)[0] == 1 && vvi.get(0)[2] == 3 : "echoVecVecI32[0]";
+        assert vvi.get(1).length == 0 : "echoVecVecI32[1] empty";
+        assert vvi.get(2).length == 2 && vvi.get(2)[0] == 4 && vvi.get(2)[1] == 5 : "echoVecVecI32[2]";
+
+        List<int[]> vviEmpty = Demo.echoVecVecI32(Collections.emptyList());
+        assert vviEmpty.isEmpty() : "echoVecVecI32 empty outer";
+
+        List<boolean[]> vvb = Demo.echoVecVecBool(Arrays.asList(
+                new boolean[]{true, false, true},
+                new boolean[]{},
+                new boolean[]{false}));
+        assert vvb.size() == 3 : "echoVecVecBool outer size";
+        assert vvb.get(0).length == 3 && vvb.get(0)[0] && !vvb.get(0)[1] && vvb.get(0)[2] : "echoVecVecBool[0]";
+        assert vvb.get(1).length == 0 : "echoVecVecBool[1] empty";
+        assert vvb.get(2).length == 1 && !vvb.get(2)[0] : "echoVecVecBool[2]";
+
+        List<long[]> vvisize = Demo.echoVecVecIsize(Arrays.asList(
+                new long[]{-2L, 0L, 5L},
+                new long[]{},
+                new long[]{9L}));
+        assert vvisize.size() == 3 : "echoVecVecIsize outer size";
+        assert vvisize.get(0).length == 3 && vvisize.get(0)[0] == -2L && vvisize.get(0)[2] == 5L : "echoVecVecIsize[0]";
+        assert vvisize.get(1).length == 0 : "echoVecVecIsize[1] empty";
+        assert vvisize.get(2).length == 1 && vvisize.get(2)[0] == 9L : "echoVecVecIsize[2]";
+
+        List<long[]> vvusize = Demo.echoVecVecUsize(Arrays.asList(
+                new long[]{0L, 2L, 4L},
+                new long[]{},
+                new long[]{8L}));
+        assert vvusize.size() == 3 : "echoVecVecUsize outer size";
+        assert vvusize.get(0).length == 3 && vvusize.get(0)[0] == 0L && vvusize.get(0)[2] == 4L : "echoVecVecUsize[0]";
+        assert vvusize.get(1).length == 0 : "echoVecVecUsize[1] empty";
+        assert vvusize.get(2).length == 1 && vvusize.get(2)[0] == 8L : "echoVecVecUsize[2]";
+
+        List<List<String>> vvs = Demo.echoVecVecString(Arrays.asList(
+                Arrays.asList("hello", "world"),
+                Collections.emptyList(),
+                Arrays.asList("café", "🌍")));
+        assert vvs.size() == 3 : "echoVecVecString outer size";
+        assert vvs.get(0).equals(Arrays.asList("hello", "world")) : "echoVecVecString[0]";
+        assert vvs.get(1).isEmpty() : "echoVecVecString[1] empty";
+        assert vvs.get(2).equals(Arrays.asList("café", "🌍")) : "echoVecVecString[2]";
+
+        int[] flat = Demo.flattenVecVecI32(Arrays.asList(new int[]{1, 2}, new int[]{3}, new int[]{}, new int[]{4, 5}));
+        assert flat.length == 5 : "flattenVecVecI32 length";
+        assert flat[0] == 1 && flat[1] == 2 && flat[2] == 3 && flat[3] == 4 && flat[4] == 5 : "flattenVecVecI32 values";
+
+        assert Demo.flattenVecVecI32(Collections.emptyList()).length == 0 : "flattenVecVecI32 empty";
+
+        System.out.println("  PASS\n");
+    }
+
+    private static void testBlittableRecordVecs() {
+        System.out.println("Testing blittable record vecs...");
+
+        List<Location> locations = Demo.generateLocations(3);
+        assert locations.size() == 3 : "generateLocations size";
+        assert Demo.processLocations(locations) == 3 : "processLocations";
+        assert Math.abs(Demo.sumRatings(locations) - 9.3) < 0.0001 : "sumRatings";
+
+        List<Trade> trades = Demo.generateTrades(3);
+        assert trades.size() == 3 : "generateTrades size";
+        assert Demo.sumTradeVolumes(trades) == 3000L : "sumTradeVolumes";
+        assert Demo.aggregateLocationTradeStats(locations, trades) == 3002L : "aggregateLocationTradeStats";
+
+        List<Particle> particles = Demo.generateParticles(3);
+        assert particles.size() == 3 : "generateParticles size";
+        assert Math.abs(Demo.sumParticleMasses(particles) - 3.003) < 0.0001 : "sumParticleMasses";
+
+        List<SensorReading> readings = Demo.generateSensorReadings(3);
+        assert readings.size() == 3 : "generateSensorReadings size";
+        assert Math.abs(Demo.avgSensorTemperature(readings) - 21.0) < 0.0001 : "avgSensorTemperature";
+
+        System.out.println("  PASS\n");
+    }
+
     private static void testOptions() {
         System.out.println("Testing options...");
 
@@ -715,13 +808,17 @@ public final class DemoTest {
         }
 
         try (ConstructorCoverageMatrix enumMix = new ConstructorCoverageMatrix(
-            new Filter.ByTags(Arrays.asList("ffi", "jni")),
+            new Filter.ByGroups(Arrays.asList(
+                Arrays.asList("café", "🌍"),
+                Collections.emptyList(),
+                Arrays.asList("common")
+            )),
             new Message.Image("https://example.com/image.png", 640, 480),
             new Task("ship", Priority.CRITICAL, false)
         )) {
             assert enumMix.constructorVariant().equals("with_enum_mix") : "with_enum_mix variant";
             assert enumMix.summary().equals(
-                "filter=tags:ffi|jni;message=image:https://example.com/image.png#640x480;task=ship#critical"
+                "filter=groups:3;message=image:https://example.com/image.png#640x480;task=ship#critical"
             ) : "with_enum_mix summary";
             assert enumMix.payloadChecksum() == 0 : "with_enum_mix checksum";
             assert enumMix.vectorCount() == 1 : "with_enum_mix vectorCount";
