@@ -10,8 +10,23 @@ pub struct PythonEnumType {
 }
 
 impl PythonEnumType {
+    pub fn registration_name(&self) -> String {
+        format!("boltffi_python_{}_registration", self.native_name_stem)
+    }
+
     pub fn type_object_name(&self) -> String {
         format!("boltffi_python_{}_type", self.native_name_stem)
+    }
+
+    pub fn member_cache_name(&self) -> String {
+        format!(
+            "boltffi_python_{}_members_by_wire_tag",
+            self.native_name_stem
+        )
+    }
+
+    pub fn member_name_table_name(&self) -> String {
+        format!("boltffi_python_{}_member_names", self.native_name_stem)
     }
 
     pub fn parser_name(&self) -> String {
