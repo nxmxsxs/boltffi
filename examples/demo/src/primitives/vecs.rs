@@ -132,3 +132,33 @@ pub fn inc_u64(values: &mut [u64]) {
 pub fn inc_u64_value(value: u64) -> u64 {
     value + 1
 }
+
+#[export]
+pub fn echo_vec_vec_i32(v: Vec<Vec<i32>>) -> Vec<Vec<i32>> {
+    v
+}
+
+#[export]
+pub fn echo_vec_vec_bool(v: Vec<Vec<bool>>) -> Vec<Vec<bool>> {
+    v
+}
+
+#[export]
+pub fn echo_vec_vec_isize(v: Vec<Vec<isize>>) -> Vec<Vec<isize>> {
+    v
+}
+
+#[export]
+pub fn echo_vec_vec_usize(v: Vec<Vec<usize>>) -> Vec<Vec<usize>> {
+    v
+}
+
+#[export]
+pub fn echo_vec_vec_string(v: Vec<Vec<String>>) -> Vec<Vec<String>> {
+    v
+}
+
+#[export]
+pub fn flatten_vec_vec_i32(v: Vec<Vec<i32>>) -> Vec<i32> {
+    v.into_iter().flatten().collect()
+}

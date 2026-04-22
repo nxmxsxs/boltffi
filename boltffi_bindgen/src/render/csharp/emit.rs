@@ -12,9 +12,9 @@ use std::collections::HashSet;
 
 use askama::Template as _;
 
-use crate::ir::codec::EnumLayout;
+use crate::ir::codec::{EnumLayout, VecLayout};
 use crate::ir::ops::{ReadOp, ReadSeq, SizeExpr, ValueExpr, WriteOp, WriteSeq};
-use crate::ir::types::PrimitiveType;
+use crate::ir::types::{PrimitiveType, TypeExpr};
 use crate::ir::{AbiContract, FfiContract};
 
 use super::{
@@ -198,6 +198,165 @@ pub fn primitive_write_method(primitive: PrimitiveType) -> &'static str {
     }
 }
 
+/// The WireReader method invocation for a top-level blittable primitive
+/// `Vec<T>` return, without the receiver. Top-level vec returns carry no
+/// length prefix: the count comes from `FfiBuf.len`. Bool, isize, and
+/// usize have dedicated methods because C# `bool` is not `unmanaged`-cast-
+/// safe against the 1-byte wire form, and the wire form of isize/usize is
+/// a fixed 8 bytes while C# `nint`/`nuint` are pointer-sized. Every other
+/// primitive flows through a generic `ReadBlittableArray<T>()` that bulk-
+/// casts via `MemoryMarshal`.
+pub fn primitive_vec_reader_call(primitive: PrimitiveType) -> String {
+    match primitive {
+        PrimitiveType::Bool => "ReadBoolArray()".to_string(),
+        PrimitiveType::ISize => "ReadNIntArray()".to_string(),
+        PrimitiveType::USize => "ReadNUIntArray()".to_string(),
+        other => format!(
+            "ReadBlittableArray<{}>()",
+            super::mappings::csharp_type(other)
+        ),
+    }
+}
+
+/// The WireReader method invocation for a nested blittable primitive
+/// `Vec<T>`, without the receiver. Nested reads carry a 4-byte length
+/// prefix because the outer encoded container needs to know how far to
+/// advance the cursor before decoding the next element.
+fn primitive_vec_nested_reader_call(primitive: PrimitiveType) -> String {
+    match primitive {
+        PrimitiveType::Bool => "ReadLengthPrefixedBoolArray()".to_string(),
+        PrimitiveType::ISize => "ReadLengthPrefixedNIntArray()".to_string(),
+        PrimitiveType::USize => "ReadLengthPrefixedNUIntArray()".to_string(),
+        other => format!(
+            "ReadLengthPrefixedBlittableArray<{}>()",
+            super::mappings::csharp_type(other)
+        ),
+    }
+}
+
+/// The WireWriter method invocation for a blittable primitive `Vec<T>`,
+/// formatted as `"{method}({value})"` without the receiver. The writer
+/// always prepends a 4-byte length prefix, which serves the nested
+/// position (inside an encoded outer vec) and the future record-field
+/// position. Top-level vec params go through `DirectArray` and never
+/// touch this code path.
+pub fn primitive_vec_writer_call(primitive: PrimitiveType, value: &str) -> String {
+    match primitive {
+        PrimitiveType::Bool => format!("WriteBoolArray({value})"),
+        PrimitiveType::ISize => format!("WriteNIntArray({value})"),
+        PrimitiveType::USize => format!("WriteNUIntArray({value})"),
+        _ => format!("WriteBlittableArray({value})"),
+    }
+}
+
+/// Per-function rendering scratchpad. Hands out unique loop-variable and
+/// closure-argument names so nested `Vec<Vec<_>>` expressions don't
+/// shadow each other. One instance per top-level emit call; counters are
+/// consumed in the order read / write / size helpers encounter nested
+/// vecs, which is stable across renders of the same seq.
+#[derive(Default)]
+pub struct CSharpEmitContext {
+    write_loop_index: usize,
+    read_closure_index: usize,
+    size_loop_index: usize,
+}
+
+impl CSharpEmitContext {
+    fn next_write_loop_var(&mut self) -> String {
+        let i = self.write_loop_index;
+        self.write_loop_index += 1;
+        format!("item{}", i)
+    }
+
+    fn next_read_closure_var(&mut self) -> String {
+        let i = self.read_closure_index;
+        self.read_closure_index += 1;
+        format!("r{}", i)
+    }
+
+    fn next_size_loop_var(&mut self) -> String {
+        let i = self.size_loop_index;
+        self.size_loop_index += 1;
+        format!("sizeItem{}", i)
+    }
+}
+
+/// Replace every word-boundary occurrence of `identifier` in `expression`
+/// with `replacement`. A token inside another identifier (e.g. `item`
+/// inside `item0`) is left alone. Used to rename the ABI-provided loop
+/// variable `"item"` and closure receiver `"reader"` to per-nesting-level
+/// unique names without running a real parser.
+fn replace_identifier_occurrences(expression: &str, identifier: &str, replacement: &str) -> String {
+    if identifier.is_empty() {
+        return expression.to_string();
+    }
+    let mut result = String::with_capacity(expression.len());
+    let mut cursor = 0;
+    while let Some(rel) = expression[cursor..].find(identifier) {
+        let start = cursor + rel;
+        let end = start + identifier.len();
+        let prev = expression[..start].chars().next_back();
+        let next = expression[end..].chars().next();
+        let prev_is_id = prev.map(is_identifier_char).unwrap_or(false);
+        let next_is_id = next.map(is_identifier_char).unwrap_or(false);
+        if prev_is_id || next_is_id {
+            result.push_str(&expression[cursor..end]);
+        } else {
+            result.push_str(&expression[cursor..start]);
+            result.push_str(replacement);
+        }
+        cursor = end;
+    }
+    result.push_str(&expression[cursor..]);
+    result
+}
+
+fn is_identifier_char(c: char) -> bool {
+    c.is_ascii_alphanumeric() || c == '_'
+}
+
+/// Render the `reader_call` portion (without the leading `new WireReader
+/// (_buf).` receiver) for a top-level `Vec<inner>` return. Primitive
+/// element vecs use the no-prefix fast path keyed off `FfiBuf.len`;
+/// encoded element vecs (strings, nested vecs) wrap `ReadEncodedArray<T>`
+/// around a closure that decodes one element.
+pub fn vec_return_reader_call(inner: &TypeExpr, element_seq: &ReadSeq) -> String {
+    match inner {
+        TypeExpr::Primitive(p) => primitive_vec_reader_call(*p),
+        _ => {
+            let mut ctx = CSharpEmitContext::default();
+            let inner_reader = emit_reader_read_with_context(element_seq, None, &mut ctx);
+            let closure_var = ctx.next_read_closure_var();
+            let remapped = replace_identifier_occurrences(&inner_reader, "reader", &closure_var);
+            let element_type = csharp_type_for_inner(inner);
+            format!(
+                "ReadEncodedArray<{}>({} => {})",
+                element_type, closure_var, remapped
+            )
+        }
+    }
+}
+
+/// C# type literal for a `Vec<_>` element. Used when stamping the generic
+/// parameter on `ReadEncodedArray<T>` at emit time. Records and enums
+/// render as their PascalCase class name. Vec elements are only typed at
+/// the function-level wrapper, never inside a nested enum body, so the
+/// shadowing machinery that qualifies record decodes inside data-enum
+/// variants does not apply here.
+fn csharp_type_for_inner(ty: &TypeExpr) -> String {
+    match ty {
+        TypeExpr::Primitive(p) => super::mappings::csharp_type(*p).to_string(),
+        TypeExpr::String => "string".to_string(),
+        TypeExpr::Record(id) => NamingConvention::class_name(id.as_str()),
+        TypeExpr::Enum(id) => NamingConvention::class_name(id.as_str()),
+        TypeExpr::Vec(inner) => format!("{}[]", csharp_type_for_inner(inner)),
+        other => todo!(
+            "csharp_type_for_inner: Vec element {:?} is not yet supported by the C# backend",
+            other
+        ),
+    }
+}
+
 /// Names shadowed by a nested scope in the rendering site. Passed to
 /// [`emit_reader_read`] when emitting decode expressions inside a data
 /// enum body, where nested `sealed record Foo() : E` variants shadow
@@ -220,6 +379,15 @@ pub struct ShadowScope<'a> {
 /// a primitive, a string, or a nested record/enum. Container ops (Option,
 /// Vec, Result) will land in follow-up PRs.
 pub fn emit_reader_read(seq: &ReadSeq, scope: Option<&ShadowScope>) -> String {
+    let mut ctx = CSharpEmitContext::default();
+    emit_reader_read_with_context(seq, scope, &mut ctx)
+}
+
+fn emit_reader_read_with_context(
+    seq: &ReadSeq,
+    scope: Option<&ShadowScope>,
+    ctx: &mut CSharpEmitContext,
+) -> String {
     let op = seq.ops.first().expect("read ops");
     match op {
         ReadOp::Primitive { primitive, .. } => {
@@ -238,7 +406,7 @@ pub fn emit_reader_read(seq: &ReadSeq, scope: Option<&ShadowScope>) -> String {
         } => {
             // The generated helper is `{Name}Wire`, not `{Name}`, so the
             // `Wire` suffix is already unambiguous against variant names
-            // that match `{Name}` alone — no shadowing fix needed here.
+            // that match `{Name}` alone; no shadowing fix needed here.
             format!(
                 "{}Wire.Decode(reader)",
                 NamingConvention::class_name(id.as_str())
@@ -252,7 +420,50 @@ pub fn emit_reader_read(seq: &ReadSeq, scope: Option<&ShadowScope>) -> String {
             let class_name = NamingConvention::class_name(id.as_str());
             format!("{}.Decode(reader)", qualify_if_shadowed(&class_name, scope))
         }
-        other => panic!("unsupported C# read op: {:?}", other),
+        ReadOp::Vec {
+            element_type: TypeExpr::Primitive(p),
+            layout: VecLayout::Blittable { .. },
+            ..
+        } => {
+            // A Vec op reached through emit_reader_read is always nested
+            // (top-level vec returns go through vec_return_reader_call).
+            // Nested position means the wire shape is length-prefixed.
+            format!("reader.{}", primitive_vec_nested_reader_call(*p))
+        }
+        ReadOp::Vec {
+            element_type,
+            layout: VecLayout::Blittable { .. },
+            ..
+        } => {
+            // Reached when a record field or enum-variant field carries
+            // a `Vec<BlittableRecord>`. Nested position so the wire shape
+            // is length-prefixed, same as nested primitive vecs. The C#
+            // struct generated for a blittable record is `unmanaged`, so
+            // it satisfies the generic helper's constraint.
+            format!(
+                "reader.ReadLengthPrefixedBlittableArray<{}>()",
+                csharp_type_for_inner(element_type)
+            )
+        }
+        ReadOp::Vec {
+            element_type,
+            element,
+            layout: VecLayout::Encoded,
+            ..
+        } => {
+            let inner_reader = emit_reader_read_with_context(element, scope, ctx);
+            let closure_var = ctx.next_read_closure_var();
+            let remapped = replace_identifier_occurrences(&inner_reader, "reader", &closure_var);
+            let element_type_str = csharp_type_for_inner(element_type);
+            format!(
+                "reader.ReadEncodedArray<{}>({} => {})",
+                element_type_str, closure_var, remapped
+            )
+        }
+        other => todo!(
+            "C# backend has not yet implemented read support for {:?}",
+            other
+        ),
     }
 }
 
@@ -275,6 +486,15 @@ fn qualify_if_shadowed(class_name: &str, scope: Option<&ShadowScope>) -> String 
 /// Render the first op of a [`WriteSeq`] as a statement that writes its
 /// value into the `WireWriter` named by `writer_name`.
 pub fn emit_write_expr(seq: &WriteSeq, writer_name: &str) -> String {
+    let mut ctx = CSharpEmitContext::default();
+    emit_write_expr_with_context(seq, writer_name, &mut ctx)
+}
+
+fn emit_write_expr_with_context(
+    seq: &WriteSeq,
+    writer_name: &str,
+    ctx: &mut CSharpEmitContext,
+) -> String {
     let op = seq.ops.first().expect("write ops");
     match op {
         WriteOp::Primitive { primitive, value } => {
@@ -299,7 +519,56 @@ pub fn emit_write_expr(seq: &WriteSeq, writer_name: &str) -> String {
             layout: EnumLayout::CStyle { .. } | EnumLayout::Data { .. },
             ..
         } => format!("{}.WireEncodeTo({})", render_value(value), writer_name),
-        other => panic!("unsupported C# write op: {:?}", other),
+        WriteOp::Vec {
+            value,
+            element_type: TypeExpr::Primitive(p),
+            layout: VecLayout::Blittable { .. },
+            ..
+        } => format!(
+            "{}.{}",
+            writer_name,
+            primitive_vec_writer_call(*p, &render_value(value))
+        ),
+        WriteOp::Vec {
+            value,
+            layout: VecLayout::Blittable { .. },
+            ..
+        } => {
+            // Reached when a record field or enum-variant field carries
+            // a `Vec<BlittableRecord>`. `WriteBlittableArray<T>` already
+            // emits the 4-byte length prefix followed by the raw element
+            // bytes, which is the nested wire shape Rust expects. The
+            // unmanaged constraint is satisfied by the generated struct.
+            format!(
+                "{}.WriteBlittableArray({})",
+                writer_name,
+                render_value(value),
+            )
+        }
+        WriteOp::Vec {
+            value,
+            element_type,
+            element,
+            layout: VecLayout::Encoded,
+        } => {
+            let inner_write = emit_write_expr_with_context(element, writer_name, ctx);
+            let loop_var = ctx.next_write_loop_var();
+            let remapped = replace_identifier_occurrences(&inner_write, "item", &loop_var);
+            let iter_type = csharp_type_for_inner(element_type);
+            format!(
+                "{}.WriteI32({}.Length); foreach ({} {} in {}) {{ {}; }}",
+                writer_name,
+                render_value(value),
+                iter_type,
+                loop_var,
+                render_value(value),
+                remapped,
+            )
+        }
+        other => todo!(
+            "C# backend has not yet implemented write support for {:?}",
+            other
+        ),
     }
 }
 
@@ -313,6 +582,11 @@ pub fn emit_write_expr(seq: &WriteSeq, writer_name: &str) -> String {
 /// count. Doubling up (e.g. rendering `StringLen` as `4 + byte_count`)
 /// would over-count by 4 bytes per string.
 pub fn emit_size_expr(size: &SizeExpr) -> String {
+    let mut ctx = CSharpEmitContext::default();
+    emit_size_expr_with_context(size, &mut ctx)
+}
+
+fn emit_size_expr_with_context(size: &SizeExpr, ctx: &mut CSharpEmitContext) -> String {
     match size {
         SizeExpr::Fixed(value) => value.to_string(),
         SizeExpr::StringLen(value) => {
@@ -325,12 +599,35 @@ pub fn emit_size_expr(size: &SizeExpr) -> String {
         SizeExpr::Sum(parts) => {
             let rendered = parts
                 .iter()
-                .map(emit_size_expr)
+                .map(|p| emit_size_expr_with_context(p, ctx))
                 .collect::<Vec<_>>()
                 .join(" + ");
             format!("({})", rendered)
         }
-        other => panic!("unsupported C# size expr: {:?}", other),
+        SizeExpr::VecSize {
+            value,
+            layout: VecLayout::Blittable { element_size },
+            ..
+        } => format!("(4 + {}.Length * {})", render_value(value), element_size),
+        SizeExpr::VecSize {
+            value,
+            inner,
+            layout: VecLayout::Encoded,
+        } => {
+            let inner_expr = emit_size_expr_with_context(inner, ctx);
+            let loop_var = ctx.next_size_loop_var();
+            let remapped = replace_identifier_occurrences(&inner_expr, "item", &loop_var);
+            format!(
+                "WireWriter.EncodedArraySize({}, {} => {})",
+                render_value(value),
+                loop_var,
+                remapped,
+            )
+        }
+        other => todo!(
+            "C# backend has not yet implemented size expression support for {:?}",
+            other
+        ),
     }
 }
 
@@ -711,6 +1008,42 @@ mod tests {
         );
     }
 
+    /// Regression: `Vec<String>` params now encode through `WireWriter`
+    /// using `Encoding.UTF8`, even when the contract has no direct string
+    /// params or string-bearing records. The main file still needs
+    /// `System.Text` for that generated path to compile.
+    #[test]
+    fn emit_vec_string_param_imports_system_text_in_main_file() {
+        let mut contract = empty_contract();
+        contract.functions.push(function_with_types(
+            "vec_string_lengths",
+            vec![("v", TypeExpr::Vec(Box::new(TypeExpr::String)))],
+            ReturnDef::Value(TypeExpr::Vec(Box::new(TypeExpr::Primitive(
+                PrimitiveType::U32,
+            )))),
+        ));
+
+        let output = emit_contract(&contract);
+        let main_source = output
+            .files
+            .iter()
+            .find(|f| f.file_name == "DemoLib.cs")
+            .expect("DemoLib.cs")
+            .source
+            .as_str();
+
+        assert_source_contains(
+            main_source,
+            "using System.Text;",
+            "the main file needs System.Text when Vec<String> params make WireWriter size/write code call Encoding.UTF8",
+        );
+        assert_source_contains(
+            main_source,
+            "WireWriter.EncodedArraySize(v, sizeItem0 => (4 + Encoding.UTF8.GetByteCount(sizeItem0)))",
+            "the encoded Vec<String> param path uses Encoding.UTF8 inside the shared main-file helpers",
+        );
+    }
+
     /// The shared bounds check avoids `_pos + n` overflow on malformed
     /// large lengths and still routes failures through the backend's
     /// "corrupt wire" exception path.
@@ -954,6 +1287,75 @@ mod tests {
             &src,
             "WireWriter(p.WireEncodedSize())",
             "no WireWriter setup for a blittable param — that would defeat the zero-copy win",
+        );
+    }
+
+    /// Each pinned record-array param needs its own `fixed` statement.
+    /// C# rejects comma-joined declarations here, so the wrapper must
+    /// nest the blocks when a function takes multiple
+    /// `Vec<BlittableRecord>` params.
+    #[test]
+    fn emit_blittable_record_vec_params_use_nested_fixed_blocks() {
+        let mut contract = empty_contract();
+        contract.catalog.insert_record(record_with_fields(
+            "point",
+            true,
+            vec![
+                ("x", TypeExpr::Primitive(PrimitiveType::F64)),
+                ("y", TypeExpr::Primitive(PrimitiveType::F64)),
+            ],
+        ));
+        contract.catalog.insert_record(record_with_fields(
+            "color",
+            true,
+            vec![
+                ("r", TypeExpr::Primitive(PrimitiveType::U8)),
+                ("g", TypeExpr::Primitive(PrimitiveType::U8)),
+                ("b", TypeExpr::Primitive(PrimitiveType::U8)),
+                ("a", TypeExpr::Primitive(PrimitiveType::U8)),
+            ],
+        ));
+        contract.functions.push(function_with_types(
+            "score_batches",
+            vec![
+                (
+                    "points",
+                    TypeExpr::Vec(Box::new(TypeExpr::Record(RecordId::new("point")))),
+                ),
+                (
+                    "colors",
+                    TypeExpr::Vec(Box::new(TypeExpr::Record(RecordId::new("color")))),
+                ),
+            ],
+            ReturnDef::Value(TypeExpr::Primitive(PrimitiveType::I32)),
+        ));
+
+        let src = emit_contract(&contract).combined_source();
+
+        assert_source_contains(
+            &src,
+            "fixed (Point* _pointsPtr = points)",
+            "the first pinned record vec param to get its own fixed statement",
+        );
+        assert_source_contains(
+            &src,
+            "fixed (Color* _colorsPtr = colors)",
+            "the second pinned record vec param to get a nested fixed statement instead of a comma-joined declaration",
+        );
+        assert_source_lacks(
+            &src,
+            "fixed (Point* _pointsPtr = points, Color* _colorsPtr = colors)",
+            "C# does not accept comma-joined fixed declarations across pinned params",
+        );
+        assert_source_contains(
+            &src,
+            "return NativeMethods.ScoreBatches((IntPtr)_pointsPtr, (UIntPtr)(points.Length * Unsafe.SizeOf<Point>()), (IntPtr)_colorsPtr, (UIntPtr)(colors.Length * Unsafe.SizeOf<Color>()));",
+            "the native call to use both pointer locals and byte lengths from the nested fixed blocks",
+        );
+        assert_source_contains(
+            &src,
+            "internal static extern int ScoreBatches(IntPtr points, UIntPtr pointsLen, IntPtr colors, UIntPtr colorsLen);",
+            "the DllImport signature to expose both pinned arrays as raw pointers plus byte lengths",
         );
     }
 
@@ -1382,6 +1784,63 @@ mod tests {
         );
     }
 
+    /// Enum methods share the same value-type method template as enum
+    /// constructors. A blittable record vec param therefore needs the
+    /// same `unsafe { fixed (...) { ... } }` wrapper as a top-level
+    /// function so the generated pointer local exists at the native call
+    /// site and the array stays pinned for the duration of the call.
+    #[test]
+    fn emit_enum_method_with_blittable_record_vec_param_uses_fixed_block() {
+        let mut contract = empty_contract();
+        contract.catalog.insert_record(record_with_fields(
+            "point",
+            true,
+            vec![
+                ("x", TypeExpr::Primitive(PrimitiveType::F64)),
+                ("y", TypeExpr::Primitive(PrimitiveType::F64)),
+            ],
+        ));
+        let mut enum_def = c_style_enum("direction", vec!["North", "South"]);
+        enum_def.methods.push(MethodDef {
+            id: MethodId::new("from_points"),
+            receiver: Receiver::Static,
+            params: vec![ParamDef {
+                name: ParamName::new("points"),
+                type_expr: TypeExpr::Vec(Box::new(TypeExpr::Record(RecordId::new("point")))),
+                passing: ParamPassing::Value,
+                doc: None,
+            }],
+            returns: ReturnDef::Value(TypeExpr::Enum(EnumId::new("direction"))),
+            execution_kind: ExecutionKind::Sync,
+            doc: None,
+            deprecated: None,
+        });
+        contract.catalog.insert_enum(enum_def);
+
+        let src = emit_contract(&contract).combined_source();
+
+        assert_source_contains(
+            &src,
+            "public static Direction FromPoints(Point[] points)",
+            "the enum companion method to expose the blittable record vec as Point[]",
+        );
+        assert_source_contains(
+            &src,
+            "fixed (Point* _pointsPtr = points)",
+            "the method body to pin the managed Point[] before the native call",
+        );
+        assert_source_contains(
+            &src,
+            "return NativeMethods.DirectionFromPoints((IntPtr)_pointsPtr, (UIntPtr)(points.Length * Unsafe.SizeOf<Point>()));",
+            "the native call to use the pointer local introduced by the fixed block",
+        );
+        assert_source_contains(
+            &src,
+            "internal static extern Direction DirectionFromPoints(IntPtr points, UIntPtr pointsLen);",
+            "the DllImport signature to take a raw pointer and byte length for the pinned array param",
+        );
+    }
+
     /// A function that takes and returns a C-style enum marshals through
     /// P/Invoke with zero ceremony — the DllImport signature names the
     /// enum type directly, and the public wrapper is a one-line pass-
@@ -1496,6 +1955,431 @@ mod tests {
             &log_level_cs.1,
             "wire.WriteI32(value switch",
             "the encode helper to write a 4-byte i32 after mapping the variant to its ordinal",
+        );
+    }
+
+    // ----- Encoded Vec tests (Vec<String>, Vec<Vec<_>>) -----
+
+    /// `Vec<String>` as a param travels wire-encoded: a `WireWriter` sized
+    /// via `EncodedArraySize` writes a length-prefixed array of
+    /// length-prefixed UTF-8 strings. As a return it comes back through
+    /// `ReadEncodedArray<string>` wrapping `ReadString`.
+    #[test]
+    fn emit_vec_string_round_trips_through_encoded_array_helpers() {
+        let mut contract = empty_contract();
+        contract.functions.push(function_with_types(
+            "echo_vec_string",
+            vec![("v", TypeExpr::Vec(Box::new(TypeExpr::String)))],
+            ReturnDef::Value(TypeExpr::Vec(Box::new(TypeExpr::String))),
+        ));
+
+        let src = emit_contract(&contract).combined_source();
+
+        assert_source_contains(
+            &src,
+            "public static string[] EchoVecString(string[] v)",
+            "the public wrapper exposes Vec<String> on both sides as string[]",
+        );
+        assert_source_contains(
+            &src,
+            "internal static extern FfiBuf EchoVecString(byte[] v, UIntPtr vLen);",
+            "the DllImport carries the wire-encoded buffer, not a raw string[]",
+        );
+        assert_source_contains(
+            &src,
+            "WireWriter.EncodedArraySize(v, sizeItem0 => (4 + Encoding.UTF8.GetByteCount(sizeItem0)))",
+            "the WireWriter size hint uses EncodedArraySize with a per-element UTF-8 byte-count lambda",
+        );
+        assert_source_contains(
+            &src,
+            "_wire_v.WriteI32(v.Length); foreach (string item0 in v) { _wire_v.WriteString(item0); }",
+            "the encode body writes the 4-byte count then loops WriteString over each element",
+        );
+        assert_source_contains(
+            &src,
+            "return new WireReader(_buf).ReadEncodedArray<string>(r0 => r0.ReadString());",
+            "the return decodes through ReadEncodedArray with a ReadString closure per element",
+        );
+    }
+
+    /// `Vec<Vec<i32>>` exercises the nested-encoded-over-blittable path:
+    /// outer layer is wire-encoded (count prefix + per-element bytes),
+    /// inner layer is length-prefixed blittable. Loop variables must be
+    /// unique across nesting (`item0` for the inner write, `item1` for the
+    /// outer) so inner references don't shadow the outer.
+    #[test]
+    fn emit_vec_vec_i32_nests_blittable_inside_encoded() {
+        let mut contract = empty_contract();
+        contract.functions.push(function_with_types(
+            "echo_vec_vec_i32",
+            vec![(
+                "v",
+                TypeExpr::Vec(Box::new(TypeExpr::Vec(Box::new(TypeExpr::Primitive(
+                    PrimitiveType::I32,
+                ))))),
+            )],
+            ReturnDef::Value(TypeExpr::Vec(Box::new(TypeExpr::Vec(Box::new(
+                TypeExpr::Primitive(PrimitiveType::I32),
+            ))))),
+        ));
+
+        let src = emit_contract(&contract).combined_source();
+
+        assert_source_contains(
+            &src,
+            "public static int[][] EchoVecVecI32(int[][] v)",
+            "the public wrapper exposes Vec<Vec<i32>> as a jagged int[][]",
+        );
+        assert_source_contains(
+            &src,
+            "_wire_v.WriteI32(v.Length); foreach (int[] item0 in v) { _wire_v.WriteBlittableArray(item0); }",
+            "the outer write emits the count then loops WriteBlittableArray (which writes its own length prefix) over each inner array",
+        );
+        assert_source_contains(
+            &src,
+            "return new WireReader(_buf).ReadEncodedArray<int[]>(r0 => r0.ReadLengthPrefixedBlittableArray<int>());",
+            "the return decodes through ReadEncodedArray wrapping a nested ReadLengthPrefixedBlittableArray",
+        );
+    }
+
+    /// `Vec<Vec<String>>` doubles up the encoded path: both layers carry a
+    /// 4-byte count prefix, and the inner element is itself variable-width.
+    /// The decode closure name (`r1`) and inner closure (`r0`) must differ
+    /// so scopes don't shadow; the same property holds for write loop vars
+    /// (`item0` innermost, `item1` outer).
+    #[test]
+    fn emit_vec_vec_string_doubles_the_encoded_array_path() {
+        let mut contract = empty_contract();
+        contract.functions.push(function_with_types(
+            "echo_vec_vec_string",
+            vec![(
+                "v",
+                TypeExpr::Vec(Box::new(TypeExpr::Vec(Box::new(TypeExpr::String)))),
+            )],
+            ReturnDef::Value(TypeExpr::Vec(Box::new(TypeExpr::Vec(Box::new(
+                TypeExpr::String,
+            ))))),
+        ));
+
+        let src = emit_contract(&contract).combined_source();
+
+        assert_source_contains(
+            &src,
+            "public static string[][] EchoVecVecString(string[][] v)",
+            "the public wrapper exposes Vec<Vec<String>> as a jagged string[][]",
+        );
+        assert_source_contains(
+            &src,
+            "return new WireReader(_buf).ReadEncodedArray<string[]>(r1 => r1.ReadEncodedArray<string>(r0 => r0.ReadString()));",
+            "the return decodes through two nested ReadEncodedArray closures with distinct receiver names",
+        );
+        assert_source_contains(
+            &src,
+            "_wire_v.WriteI32(v.Length); foreach (string[] item1 in v) { _wire_v.WriteI32(item1.Length); foreach (string item0 in item1) { _wire_v.WriteString(item0); }; }",
+            "the encode body nests two foreach loops with distinct loop variables",
+        );
+    }
+
+    /// Regression: when a data-enum variant field is `Vec<Vec<String>>`,
+    /// the `_v` prefix rewrite must apply only to the outer field access
+    /// (`_v.Groups`) and must leave the nested loop / lambda bindings
+    /// alone. Rewriting the inner references to `_v.item1` or `_v.item0`
+    /// would break both the size expression and the encode loop.
+    #[test]
+    fn emit_data_enum_variant_nested_vec_string_prefixes_only_outer_field_access() {
+        let mut contract = empty_contract();
+        contract.catalog.insert_enum(data_enum_single_variant(
+            "filter",
+            "ByGroups",
+            (
+                "groups",
+                TypeExpr::Vec(Box::new(TypeExpr::Vec(Box::new(TypeExpr::String)))),
+            ),
+        ));
+        contract.functions.push(function_with_types(
+            "echo_filter",
+            vec![("f", TypeExpr::Enum(EnumId::new("filter")))],
+            ReturnDef::Value(TypeExpr::Enum(EnumId::new("filter"))),
+        ));
+
+        let files = emit_files_for(&contract);
+        let enum_src = files
+            .iter()
+            .find(|(name, _)| name == "Filter.cs")
+            .expect("Filter.cs")
+            .1
+            .as_str();
+
+        assert_source_contains(
+            enum_src,
+            "ByGroups _v => WireWriter.EncodedArraySize(_v.Groups, sizeItem1 => WireWriter.EncodedArraySize(sizeItem1, sizeItem0 => (4 + Encoding.UTF8.GetByteCount(sizeItem0))))",
+            "the size expression to prefix only the outer field access and keep distinct nested lambda variables",
+        );
+        assert_source_contains(
+            enum_src,
+            "wire.WriteI32(_v.Groups.Length); foreach (string[] item1 in _v.Groups) { wire.WriteI32(item1.Length); foreach (string item0 in item1) { wire.WriteString(item0); }; }",
+            "the encode body to prefix only the outer field access and keep the nested foreach bindings untouched",
+        );
+        assert_source_lacks(
+            enum_src,
+            "_v.item1",
+            "the outer `_v` prefix must not leak into the nested foreach binding",
+        );
+        assert_source_lacks(
+            enum_src,
+            "_v.item0",
+            "the outer `_v` prefix must not leak into the innermost foreach binding",
+        );
+        assert_source_lacks(
+            enum_src,
+            "_v.sizeItem1",
+            "the outer `_v` prefix must not leak into the nested size lambda binding",
+        );
+        assert_source_lacks(
+            enum_src,
+            "_v.sizeItem0",
+            "the outer `_v` prefix must not leak into the innermost size lambda binding",
+        );
+    }
+
+    /// A function that returns `Vec<i32>` by flattening a `Vec<Vec<i32>>`
+    /// param keeps the top-level return on the no-prefix blittable fast
+    /// path: the outer count comes from `FfiBuf.len`. This guards against
+    /// regressions that would route the return through
+    /// `ReadEncodedArray` or add a spurious length-prefixed helper.
+    #[test]
+    fn emit_flatten_vec_vec_i32_keeps_top_level_return_on_blittable_fast_path() {
+        let mut contract = empty_contract();
+        contract.functions.push(function_with_types(
+            "flatten_vec_vec_i32",
+            vec![(
+                "v",
+                TypeExpr::Vec(Box::new(TypeExpr::Vec(Box::new(TypeExpr::Primitive(
+                    PrimitiveType::I32,
+                ))))),
+            )],
+            ReturnDef::Value(TypeExpr::Vec(Box::new(TypeExpr::Primitive(
+                PrimitiveType::I32,
+            )))),
+        ));
+
+        let src = emit_contract(&contract).combined_source();
+
+        assert_source_contains(
+            &src,
+            "return new WireReader(_buf).ReadBlittableArray<int>();",
+            "the top-level Vec<i32> return stays on the no-prefix fast path, count taken from FfiBuf.len",
+        );
+    }
+
+    // ----- Encoded Vec tests (Vec<Enum>, Vec<non-blittable Record>) -----
+
+    /// `Vec<CStyleEnum>` rides the wire-encoded path on both sides because
+    /// the Rust `#[export]` macro classifies C-style enums as `Scalar`
+    /// and its `supports_direct_vec` gate only admits `Blittable`. A
+    /// bulk-copy fast path would hand Rust raw enum bytes where it
+    /// expects a length-prefixed array of I32 tags. The generated
+    /// wrapper should encode via `{Name}Wire.WireEncodeTo` per element
+    /// and decode via `ReadEncodedArray<{Name}>(r => {Name}Wire.Decode(r))`.
+    #[test]
+    fn emit_vec_c_style_enum_round_trips_through_encoded_array_helpers() {
+        let mut contract = empty_contract();
+        contract.catalog.insert_enum(c_style_enum(
+            "status",
+            vec!["Active", "Inactive", "Pending"],
+        ));
+        contract.functions.push(function_with_types(
+            "echo_vec_status",
+            vec![(
+                "values",
+                TypeExpr::Vec(Box::new(TypeExpr::Enum(EnumId::new("status")))),
+            )],
+            ReturnDef::Value(TypeExpr::Vec(Box::new(TypeExpr::Enum(EnumId::new(
+                "status",
+            ))))),
+        ));
+
+        let src = emit_contract(&contract).combined_source();
+
+        assert_source_contains(
+            &src,
+            "public static Status[] EchoVecStatus(Status[] values)",
+            "the public wrapper exposes Vec<Status> on both sides as Status[]",
+        );
+        assert_source_contains(
+            &src,
+            "internal static extern FfiBuf EchoVecStatus(byte[] values, UIntPtr valuesLen);",
+            "the DllImport carries the wire-encoded buffer, matching the macro's WireEncoded classification for Vec<Scalar>",
+        );
+        assert_source_contains(
+            &src,
+            "_wire_values.WriteI32(values.Length); foreach (Status item0 in values) { item0.WireEncodeTo(_wire_values); }",
+            "the encode body writes the 4-byte count then loops WireEncodeTo over each enum value",
+        );
+        assert_source_contains(
+            &src,
+            "return new WireReader(_buf).ReadEncodedArray<Status>(r0 => StatusWire.Decode(r0));",
+            "the return decodes through ReadEncodedArray with the StatusWire.Decode helper per element",
+        );
+    }
+
+    /// `Vec<DataEnum>` rides the wire-encoded path. Each element carries
+    /// its own variant tag + payload, so the encode loop delegates to
+    /// the enum's own `WireEncodeTo` and decode delegates to its
+    /// `Decode` static. Same call shape as `Vec<CStyleEnum>` but the
+    /// inner decode is the data-enum entry point (`Shape.Decode`) rather
+    /// than the `Wire` helper.
+    #[test]
+    fn emit_vec_data_enum_round_trips_through_encoded_array_helpers() {
+        let mut contract = empty_contract();
+        contract.catalog.insert_enum(data_enum_single_variant(
+            "shape",
+            "Circle",
+            ("radius", TypeExpr::Primitive(PrimitiveType::F64)),
+        ));
+        contract.functions.push(function_with_types(
+            "echo_vec_shape",
+            vec![(
+                "values",
+                TypeExpr::Vec(Box::new(TypeExpr::Enum(EnumId::new("shape")))),
+            )],
+            ReturnDef::Value(TypeExpr::Vec(Box::new(TypeExpr::Enum(EnumId::new(
+                "shape",
+            ))))),
+        ));
+
+        let src = emit_contract(&contract).combined_source();
+
+        assert_source_contains(
+            &src,
+            "public static Shape[] EchoVecShape(Shape[] values)",
+            "the public wrapper exposes Vec<Shape> on both sides as Shape[]",
+        );
+        assert_source_contains(
+            &src,
+            "internal static extern FfiBuf EchoVecShape(byte[] values, UIntPtr valuesLen);",
+            "the DllImport takes a wire-encoded buffer and returns an FfiBuf",
+        );
+        assert_source_contains(
+            &src,
+            "_wire_values.WriteI32(values.Length); foreach (Shape item0 in values) { item0.WireEncodeTo(_wire_values); }",
+            "the encode body writes the count and loops the data enum's WireEncodeTo over each element",
+        );
+        assert_source_contains(
+            &src,
+            "return new WireReader(_buf).ReadEncodedArray<Shape>(r0 => Shape.Decode(r0));",
+            "the return decodes through ReadEncodedArray with Shape.Decode per element",
+        );
+    }
+
+    /// `Vec<NonBlittableRecord>` rides the wire-encoded path: the record
+    /// carries a string field, so each element is a variable-width
+    /// payload that serialises via the record's own `WireEncodeTo` and
+    /// deserialises via its `Decode` static. Guards against regressions
+    /// that would route non-blittable record vecs onto the pinned
+    /// fast path (which only works for blittable records).
+    #[test]
+    fn emit_vec_non_blittable_record_round_trips_through_encoded_array_helpers() {
+        let mut contract = empty_contract();
+        contract.catalog.insert_record(record_with_fields(
+            "person",
+            false,
+            vec![
+                ("name", TypeExpr::String),
+                ("age", TypeExpr::Primitive(PrimitiveType::U32)),
+            ],
+        ));
+        contract.functions.push(function_with_types(
+            "echo_vec_person",
+            vec![(
+                "people",
+                TypeExpr::Vec(Box::new(TypeExpr::Record(RecordId::new("person")))),
+            )],
+            ReturnDef::Value(TypeExpr::Vec(Box::new(TypeExpr::Record(RecordId::new(
+                "person",
+            ))))),
+        ));
+
+        let src = emit_contract(&contract).combined_source();
+
+        assert_source_contains(
+            &src,
+            "public static Person[] EchoVecPerson(Person[] people)",
+            "the public wrapper exposes Vec<Person> on both sides as Person[]",
+        );
+        assert_source_contains(
+            &src,
+            "internal static extern FfiBuf EchoVecPerson(byte[] people, UIntPtr peopleLen);",
+            "the DllImport takes a wire-encoded buffer and returns an FfiBuf",
+        );
+        assert_source_contains(
+            &src,
+            "_wire_people.WriteI32(people.Length); foreach (Person item0 in people) { item0.WireEncodeTo(_wire_people); }",
+            "the encode body writes the count and loops the record's WireEncodeTo over each element",
+        );
+        assert_source_contains(
+            &src,
+            "return new WireReader(_buf).ReadEncodedArray<Person>(r0 => Person.Decode(r0));",
+            "the return decodes through ReadEncodedArray with Person.Decode per element",
+        );
+        assert_source_lacks(
+            &src,
+            "fixed (Person*",
+            "non-blittable record vecs should not go through the pinned fast path",
+        );
+    }
+
+    /// `Polygon { points: Vec<Point> }` is the canonical record-with-
+    /// blittable-Vec-field shape. The field rides the length-prefixed
+    /// blittable path inside the enclosing record's wire buffer: the
+    /// codec emits `wire.WriteBlittableArray(this.Points)` on write
+    /// (which produces the 4-byte count + raw element bytes) and
+    /// `reader.ReadLengthPrefixedBlittableArray<Point>()` on read. The
+    /// size contribution is `(4 + this.Points.Length * 16)` because
+    /// Point is 16 bytes wide.
+    #[test]
+    fn emit_record_with_blittable_vec_field_uses_length_prefixed_blittable_codec() {
+        let mut contract = empty_contract();
+        contract.catalog.insert_record(record_with_fields(
+            "point",
+            true,
+            vec![
+                ("x", TypeExpr::Primitive(PrimitiveType::F64)),
+                ("y", TypeExpr::Primitive(PrimitiveType::F64)),
+            ],
+        ));
+        contract.catalog.insert_record(record_with_fields(
+            "polygon",
+            false,
+            vec![(
+                "points",
+                TypeExpr::Vec(Box::new(TypeExpr::Record(RecordId::new("point")))),
+            )],
+        ));
+        contract.functions.push(function_with_types(
+            "echo_polygon",
+            vec![("p", TypeExpr::Record(RecordId::new("polygon")))],
+            ReturnDef::Value(TypeExpr::Record(RecordId::new("polygon"))),
+        ));
+
+        let src = emit_contract(&contract).combined_source();
+
+        assert_source_contains(
+            &src,
+            "wire.WriteBlittableArray(this.Points)",
+            "the record's encode body writes the Vec<Point> via WriteBlittableArray, \
+             which emits the 4-byte count and the raw element bytes",
+        );
+        assert_source_contains(
+            &src,
+            "reader.ReadLengthPrefixedBlittableArray<Point>()",
+            "the record's decode reads the Vec<Point> back through the length-prefixed blittable helper",
+        );
+        assert_source_contains(
+            &src,
+            "(4 + this.Points.Length * 16)",
+            "the size expression accounts for the 4-byte length prefix and the element stride \
+             (two f64s → 16 bytes per Point)",
         );
     }
 }

@@ -29,6 +29,11 @@ public static class DemoTest
         TestCStyleEnums();
         TestDataEnums();
         TestRecordsWithEnumFields();
+        TestPrimitiveVecs();
+        TestStringAndNestedVecs();
+        TestBlittableRecordVecs();
+        TestEnumVecs();
+        TestVecFields();
         Console.WriteLine("All tests passed!");
         return 0;
     }
@@ -534,6 +539,325 @@ public static class DemoTest
         Require(entry.Code == 42, "MakeErrorLogEntry.Code");
         LogEntry echoedEntry = EchoLogEntry(entry);
         Require(echoedEntry == entry, "EchoLogEntry round-trip");
+
+        Console.WriteLine("  PASS\n");
+    }
+
+    private static void TestPrimitiveVecs()
+    {
+        Console.WriteLine("Testing primitive vecs...");
+
+        int[] echoedI32 = EchoVecI32(new int[] { 1, 2, 3 });
+        Require(echoedI32.SequenceEqual(new[] { 1, 2, 3 }), "echoVecI32");
+        Require(EchoVecI32(Array.Empty<int>()).Length == 0, "echoVecI32 empty");
+
+        Require(EchoVecI8(new sbyte[] { -1, 0, 7 }).SequenceEqual(new sbyte[] { -1, 0, 7 }), "echoVecI8");
+        Require(EchoVecU8(new byte[] { 0, 1, 2, 3 }).SequenceEqual(new byte[] { 0, 1, 2, 3 }), "echoVecU8");
+        Require(EchoVecI16(new short[] { -3, 0, 9 }).SequenceEqual(new short[] { -3, 0, 9 }), "echoVecI16");
+        Require(EchoVecU16(new ushort[] { 0, 10, 20 }).SequenceEqual(new ushort[] { 0, 10, 20 }), "echoVecU16");
+        Require(EchoVecU32(new uint[] { 0, 10, 20 }).SequenceEqual(new uint[] { 0, 10, 20 }), "echoVecU32");
+        Require(EchoVecI64(new long[] { -5L, 0L, 8L }).SequenceEqual(new long[] { -5L, 0L, 8L }), "echoVecI64");
+        Require(EchoVecU64(new ulong[] { 0UL, 1UL, 2UL }).SequenceEqual(new ulong[] { 0UL, 1UL, 2UL }), "echoVecU64");
+        Require(EchoVecIsize(new nint[] { -2, 0, 5 }).SequenceEqual(new nint[] { -2, 0, 5 }), "echoVecIsize");
+        Require(EchoVecUsize(new nuint[] { 0, 2, 4 }).SequenceEqual(new nuint[] { 0, 2, 4 }), "echoVecUsize");
+        Require(EchoVecF32(new float[] { 1.25f, -2.5f }).SequenceEqual(new float[] { 1.25f, -2.5f }), "echoVecF32");
+        Require(EchoVecF64(new double[] { 1.5, 2.5 }).SequenceEqual(new double[] { 1.5, 2.5 }), "echoVecF64");
+        Require(EchoVecBool(new bool[] { true, false, true }).SequenceEqual(new bool[] { true, false, true }), "echoVecBool");
+
+        Require(SumVecI32(new int[] { 10, 20, 30 }) == 60L, "sumVecI32");
+        Require(SumVecI32(Array.Empty<int>()) == 0L, "sumVecI32 empty");
+
+        Require(MakeRange(0, 5).SequenceEqual(new int[] { 0, 1, 2, 3, 4 }), "makeRange");
+        Require(ReverseVecI32(new int[] { 1, 2, 3 }).SequenceEqual(new int[] { 3, 2, 1 }), "reverseVecI32");
+        Require(GenerateI32Vec(4).SequenceEqual(new int[] { 0, 1, 2, 3 }), "generateI32Vec");
+        Require(GenerateF64Vec(3).Length == 3, "generateF64Vec length");
+        Require(Math.Abs(SumF64Vec(new double[] { 0.5, 1.5, 2.0 }) - 4.0) < 1e-9, "sumF64Vec");
+
+        Console.WriteLine("  PASS\n");
+    }
+
+    /// <summary>
+    /// Vec&lt;String&gt; and Vec&lt;Vec&lt;_&gt;&gt; travel wire-encoded: the param
+    /// side builds a length-prefixed buffer via WireWriter, the return
+    /// side walks the buffer through ReadEncodedArray. Exercises the
+    /// 2-byte ("café") and 4-byte ("🌍") UTF-8 boundaries at the element
+    /// level so truncation or mis-sized length prefixes surface loudly.
+    /// </summary>
+    private static void TestStringAndNestedVecs()
+    {
+        Console.WriteLine("Testing Vec<String> and Vec<Vec<_>>...");
+
+        string[] words = new[] { "hello", "", "café", "🌍" };
+        string[] echoedWords = EchoVecString(words);
+        Require(echoedWords.SequenceEqual(words), "echoVecString round-trip");
+        Require(EchoVecString(Array.Empty<string>()).Length == 0, "echoVecString empty");
+
+        uint[] lengths = VecStringLengths(new[] { "", "a", "café", "🌍" });
+        Require(lengths.SequenceEqual(new uint[] { 0u, 1u, 5u, 4u }), "vecStringLengths UTF-8 byte counts");
+
+        int[][] nestedInts = new[]
+        {
+            new[] { 1, 2, 3 },
+            Array.Empty<int>(),
+            new[] { -1 },
+        };
+        int[][] echoedInts = EchoVecVecI32(nestedInts);
+        Require(echoedInts.Length == nestedInts.Length, "echoVecVecI32 outer length");
+        for (int i = 0; i < nestedInts.Length; i++)
+        {
+            Require(echoedInts[i].SequenceEqual(nestedInts[i]), $"echoVecVecI32 inner[{i}]");
+        }
+        Require(EchoVecVecI32(Array.Empty<int[]>()).Length == 0, "echoVecVecI32 empty outer");
+
+        bool[][] nestedBools = new[]
+        {
+            new[] { true, false, true },
+            Array.Empty<bool>(),
+            new[] { false },
+        };
+        bool[][] echoedBools = EchoVecVecBool(nestedBools);
+        Require(echoedBools.Length == nestedBools.Length, "echoVecVecBool outer length");
+        for (int i = 0; i < nestedBools.Length; i++)
+        {
+            Require(echoedBools[i].SequenceEqual(nestedBools[i]), $"echoVecVecBool inner[{i}]");
+        }
+
+        nint[][] nestedIsizes = new[]
+        {
+            new nint[] { -2, 0, 5 },
+            Array.Empty<nint>(),
+            new nint[] { 9 },
+        };
+        nint[][] echoedIsizes = EchoVecVecIsize(nestedIsizes);
+        Require(echoedIsizes.Length == nestedIsizes.Length, "echoVecVecIsize outer length");
+        for (int i = 0; i < nestedIsizes.Length; i++)
+        {
+            Require(echoedIsizes[i].SequenceEqual(nestedIsizes[i]), $"echoVecVecIsize inner[{i}]");
+        }
+
+        nuint[][] nestedUsizes = new[]
+        {
+            new nuint[] { 0, 2, 4 },
+            Array.Empty<nuint>(),
+            new nuint[] { 8 },
+        };
+        nuint[][] echoedUsizes = EchoVecVecUsize(nestedUsizes);
+        Require(echoedUsizes.Length == nestedUsizes.Length, "echoVecVecUsize outer length");
+        for (int i = 0; i < nestedUsizes.Length; i++)
+        {
+            Require(echoedUsizes[i].SequenceEqual(nestedUsizes[i]), $"echoVecVecUsize inner[{i}]");
+        }
+
+        int[] flattened = FlattenVecVecI32(nestedInts);
+        Require(flattened.SequenceEqual(new[] { 1, 2, 3, -1 }), "flattenVecVecI32");
+
+        string[][] nestedStrings = new[]
+        {
+            new[] { "café", "🌍" },
+            Array.Empty<string>(),
+            new[] { "" },
+            new[] { "one", "two", "three" },
+        };
+        string[][] echoedStrings = EchoVecVecString(nestedStrings);
+        Require(echoedStrings.Length == nestedStrings.Length, "echoVecVecString outer length");
+        for (int i = 0; i < nestedStrings.Length; i++)
+        {
+            Require(echoedStrings[i].SequenceEqual(nestedStrings[i]), $"echoVecVecString inner[{i}]");
+        }
+
+        Console.WriteLine("  PASS\n");
+    }
+
+    /// <summary>
+    /// Vec&lt;BlittableRecord&gt; rides the fast path: returns reinterpret the
+    /// FfiBuf as a T[] via ReadBlittableArray&lt;T&gt;, params pin a T[] and
+    /// hand a pointer across P/Invoke. No wire encoding on either side.
+    /// The generate_* and reduce_* demo pairs cross the boundary in both
+    /// directions with the same struct layout on each side, so any mismatch
+    /// between Rust's #[repr(C)] and C#'s [StructLayout(Sequential)] would
+    /// surface as a wrong sum or a segfault.
+    /// </summary>
+    private static void TestBlittableRecordVecs()
+    {
+        Console.WriteLine("Testing blittable record vecs (Location, Trade, Particle, SensorReading)...");
+
+        Location[] locations = GenerateLocations(3);
+        Require(locations.Length == 3, "generateLocations length");
+        Require(locations[0].Id == 0L, "locations[0].Id");
+        Require(locations[0].Rating == 3.0, "locations[0].Rating");
+        Require(locations[0].IsOpen, "locations[0].IsOpen");
+        Require(locations[1].Id == 1L, "locations[1].Id");
+        Require(!locations[1].IsOpen, "locations[1].IsOpen");
+        Require(locations[2].ReviewCount == 20, "locations[2].ReviewCount");
+
+        Require(ProcessLocations(locations) == 3, "processLocations roundtrip");
+        Require(ProcessLocations(Array.Empty<Location>()) == 0, "processLocations empty");
+        Require(Math.Abs(SumRatings(locations) - (3.0 + 3.1 + 3.2)) < 1e-9, "sumRatings roundtrip");
+
+        Trade[] trades = GenerateTrades(3);
+        Require(trades.Length == 3, "generateTrades length");
+        Require(trades[0].Volume == 0L && trades[1].Volume == 1000L && trades[2].Volume == 2000L, "trades volumes");
+        Require(SumTradeVolumes(trades) == 3000L, "sumTradeVolumes roundtrip");
+        Require(AggregateLocationTradeStats(locations, trades) == 3002L, "aggregateLocationTradeStats two pinned arrays");
+
+        Particle[] particles = GenerateParticles(3);
+        Require(particles.Length == 3, "generateParticles length");
+        Require(Math.Abs(SumParticleMasses(particles) - (1.0 + 1.001 + 1.002)) < 1e-9, "sumParticleMasses roundtrip");
+
+        SensorReading[] readings = GenerateSensorReadings(3);
+        Require(readings.Length == 3, "generateSensorReadings length");
+        Require(Math.Abs(AvgSensorTemperature(readings) - 21.0) < 1e-9, "avgSensorTemperature roundtrip");
+        Require(AvgSensorTemperature(Array.Empty<SensorReading>()) == 0.0, "avgSensorTemperature empty");
+
+        // Construct a Location[] in C# and pass it to native code. Exercises
+        // the param direction independently of the round-trip: if the CLR's
+        // struct layout drifts from Rust's, SumRatings will see garbage.
+        Location[] handmade = new[]
+        {
+            new Location(100L, 40.0, -70.0, 2.5, 5, true),
+            new Location(101L, 40.5, -70.5, 4.0, 50, false),
+        };
+        Require(ProcessLocations(handmade) == 2, "processLocations handmade");
+        Require(Math.Abs(SumRatings(handmade) - 6.5) < 1e-9, "sumRatings handmade");
+
+        Console.WriteLine("  PASS\n");
+    }
+
+    /// <summary>
+    /// Vec&lt;CStyleEnum&gt; and Vec&lt;DataEnum&gt; both ride the wire-encoded path:
+    /// the Rust macro classifies C-style enums as Scalar (not Blittable),
+    /// so Vec&lt;Status&gt; and Vec&lt;Direction&gt; cross the boundary the same
+    /// way Vec&lt;Shape&gt; does — a length-prefixed encoded buffer. The
+    /// C# side decodes with ReadEncodedArray&lt;T&gt; and per-element
+    /// {Name}Wire.Decode or {Name}.Decode.
+    /// </summary>
+    private static void TestEnumVecs()
+    {
+        Console.WriteLine("Testing Vec<CStyleEnum> and Vec<DataEnum>...");
+
+        Status[] statuses = new[] { Status.Active, Status.Inactive, Status.Pending, Status.Active };
+        Status[] echoedStatuses = EchoVecStatus(statuses);
+        Require(echoedStatuses.SequenceEqual(statuses), "echoVecStatus round-trip");
+        Require(EchoVecStatus(Array.Empty<Status>()).Length == 0, "echoVecStatus empty");
+
+        Direction[] generated = GenerateDirections(6);
+        Require(generated.Length == 6, "generateDirections length");
+        Require(generated[0] == Direction.North && generated[4] == Direction.North, "generateDirections wraps the 4-direction cycle");
+        Require(CountNorth(generated) == 2, "countNorth on generateDirections(6)");
+        Require(CountNorth(Array.Empty<Direction>()) == 0, "countNorth empty");
+
+        LogLevel[] levels = new[] { LogLevel.Trace, LogLevel.Warn, LogLevel.Error, LogLevel.Debug };
+        LogLevel[] echoedLevels = EchoVecLogLevel(levels);
+        Require(echoedLevels.SequenceEqual(levels), "echoVecLogLevel round-trip");
+        Require(EchoVecLogLevel(Array.Empty<LogLevel>()).Length == 0, "echoVecLogLevel empty");
+
+        Shape[] shapes = new Shape[]
+        {
+            new Shape.Circle(2.5),
+            new Shape.Rectangle(3.0, 4.0),
+            new Shape.Triangle(new Point(0.0, 0.0), new Point(4.0, 0.0), new Point(0.0, 3.0)),
+            new Shape.Point(),
+        };
+        Shape[] echoedShapes = EchoVecShape(shapes);
+        Require(echoedShapes.Length == shapes.Length, "echoVecShape length");
+        Require(echoedShapes.SequenceEqual(shapes), "echoVecShape round-trip preserves each variant");
+        Require(EchoVecShape(Array.Empty<Shape>()).Length == 0, "echoVecShape empty");
+
+        Console.WriteLine("  PASS\n");
+    }
+
+    /// <summary>
+    /// Vec fields inside records and data-enum variants. Polygon.Points and
+    /// Filter.ByPoints.Anchors ride the length-prefixed blittable path;
+    /// Team.Members, Classroom.Students, Filter.ByTags.Tags,
+    /// Filter.ByGroups.Groups, TaggedScores.Scores, and
+    /// BenchmarkUserProfile.Tags/Scores mix the encoded and blittable
+    /// paths inside the enclosing record's wire buffer. UTF-8 sentinels
+    /// (café, 🌍) ride through any Vec&lt;String&gt; position to exercise
+    /// 2-byte and 4-byte codepoints across the boundary.
+    /// </summary>
+    private static void TestVecFields()
+    {
+        Console.WriteLine("Testing Vec fields inside records and enum variants...");
+
+        Polygon triangle = new Polygon(new[]
+        {
+            new Point(0.0, 0.0),
+            new Point(4.0, 0.0),
+            new Point(0.0, 3.0),
+        });
+        Polygon echoedTriangle = EchoPolygon(triangle);
+        Require(echoedTriangle.Points.SequenceEqual(triangle.Points), "echoPolygon round-trip");
+        Require(PolygonVertexCount(triangle) == 3u, "polygonVertexCount");
+        Point centroid = PolygonCentroid(triangle);
+        Require(Math.Abs(centroid.X - 4.0 / 3.0) < 1e-9 && Math.Abs(centroid.Y - 1.0) < 1e-9, "polygonCentroid");
+        Polygon built = MakePolygon(triangle.Points);
+        Require(built.Points.SequenceEqual(triangle.Points), "makePolygon");
+        Require(EchoPolygon(new Polygon(Array.Empty<Point>())).Points.Length == 0, "echoPolygon empty");
+
+        Team team = new Team("Alpha", new[] { "café", "🌍", "common" });
+        Team echoedTeam = EchoTeam(team);
+        Require(echoedTeam.Name == team.Name, "echoTeam name");
+        Require(echoedTeam.Members.SequenceEqual(team.Members), "echoTeam members utf-8 round-trip");
+        Require(TeamSize(team) == 3u, "teamSize");
+        Team built2 = MakeTeam("Beta", new[] { "x", "y" });
+        Require(built2.Name == "Beta" && built2.Members.SequenceEqual(new[] { "x", "y" }), "makeTeam");
+        Require(EchoTeam(new Team("Empty", Array.Empty<string>())).Members.Length == 0, "echoTeam empty members");
+
+        Classroom classroom = new Classroom(new[]
+        {
+            new Person("café", 7u),
+            new Person("🌍", 42u),
+        });
+        Classroom echoedClass = EchoClassroom(classroom);
+        Require(echoedClass.Students.SequenceEqual(classroom.Students), "echoClassroom utf-8 round-trip");
+        Classroom built3 = MakeClassroom(classroom.Students);
+        Require(built3.Students.SequenceEqual(classroom.Students), "makeClassroom (Vec<NonBlittableRecord> param)");
+        Require(EchoClassroom(new Classroom(Array.Empty<Person>())).Students.Length == 0, "echoClassroom empty");
+
+        TaggedScores scores = new TaggedScores("quiz", new[] { 10.0, 20.0, 30.0 });
+        TaggedScores echoedScores = EchoTaggedScores(scores);
+        Require(echoedScores.Label == "quiz" && echoedScores.Scores.SequenceEqual(scores.Scores), "echoTaggedScores");
+        Require(Math.Abs(AverageScore(scores) - 20.0) < 1e-9, "averageScore");
+        Require(AverageScore(new TaggedScores("empty", Array.Empty<double>())) == 0.0, "averageScore empty");
+
+        Filter byTags = new Filter.ByTags(new[] { "café", "🌍" });
+        Filter echoedTags = EchoFilter(byTags);
+        Require(echoedTags is Filter.ByTags t && t.Tags.SequenceEqual(((Filter.ByTags)byTags).Tags), "echoFilter ByTags");
+        Require(DescribeFilter(byTags) == "filter by 2 tags", "describeFilter ByTags");
+
+        Filter byGroups = new Filter.ByGroups(
+            new[]
+            {
+                new[] { "café", "🌍" },
+                Array.Empty<string>(),
+                new[] { "common" },
+            }
+        );
+        Filter echoedGroups = EchoFilter(byGroups);
+        Require(echoedGroups is Filter.ByGroups g && g.Groups.Length == 3, "echoFilter ByGroups outer length");
+        Require(
+            echoedGroups is Filter.ByGroups g0
+                && g0.Groups[0].SequenceEqual(((Filter.ByGroups)byGroups).Groups[0])
+                && g0.Groups[1].SequenceEqual(((Filter.ByGroups)byGroups).Groups[1])
+                && g0.Groups[2].SequenceEqual(((Filter.ByGroups)byGroups).Groups[2]),
+            "echoFilter ByGroups nested strings"
+        );
+        Require(DescribeFilter(byGroups) == "filter by 3 groups", "describeFilter ByGroups");
+
+        Filter byPoints = new Filter.ByPoints(new[] { new Point(1.0, 2.0), new Point(3.0, 4.0) });
+        Filter echoedPts = EchoFilter(byPoints);
+        Require(echoedPts is Filter.ByPoints p2 && p2.Anchors.SequenceEqual(((Filter.ByPoints)byPoints).Anchors), "echoFilter ByPoints");
+        Require(DescribeFilter(byPoints) == "filter by 2 anchor points", "describeFilter ByPoints");
+
+        BenchmarkUserProfile[] profiles = GenerateUserProfiles(4);
+        Require(profiles.Length == 4, "generateUserProfiles length");
+        Require(profiles[0].Tags.Length == 3 && profiles[0].Scores.Length == 3, "generateUserProfiles inner vec shapes");
+        Require(profiles[0].IsActive && !profiles[1].IsActive, "generateUserProfiles is_active pattern");
+        double expectedSum = 0.0 + 1.5 + 3.0 + 4.5;
+        Require(Math.Abs(SumUserScores(profiles) - expectedSum) < 1e-9, "sumUserScores round-trip");
+        Require(CountActiveUsers(profiles) == 2, "countActiveUsers (even indices active)");
+        Require(SumUserScores(Array.Empty<BenchmarkUserProfile>()) == 0.0, "sumUserScores empty");
 
         Console.WriteLine("  PASS\n");
     }

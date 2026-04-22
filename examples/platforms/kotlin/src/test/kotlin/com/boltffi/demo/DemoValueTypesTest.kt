@@ -97,6 +97,68 @@ class DemoValueTypesTest {
     }
 
     @Test
+    fun nestedVecsRoundTrip() {
+        val input = listOf(intArrayOf(1, 2, 3), intArrayOf(), intArrayOf(4, 5))
+        val roundTripped = echoVecVecI32(input)
+        assertEquals(input.size, roundTripped.size)
+        for (i in input.indices) {
+            assertContentEquals(input[i], roundTripped[i])
+        }
+        assertEquals(0, echoVecVecI32(emptyList()).size)
+
+        val bools = listOf(booleanArrayOf(true, false, true), booleanArrayOf(), booleanArrayOf(false))
+        val roundTrippedBools = echoVecVecBool(bools)
+        assertEquals(bools.size, roundTrippedBools.size)
+        for (i in bools.indices) {
+            assertContentEquals(bools[i], roundTrippedBools[i])
+        }
+
+        val isizes = listOf(longArrayOf(-2L, 0L, 5L), longArrayOf(), longArrayOf(9L))
+        val roundTrippedIsizes = echoVecVecIsize(isizes)
+        assertEquals(isizes.size, roundTrippedIsizes.size)
+        for (i in isizes.indices) {
+            assertContentEquals(isizes[i], roundTrippedIsizes[i])
+        }
+
+        val usizes = listOf(longArrayOf(0L, 2L, 4L), longArrayOf(), longArrayOf(8L))
+        val roundTrippedUsizes = echoVecVecUsize(usizes)
+        assertEquals(usizes.size, roundTrippedUsizes.size)
+        for (i in usizes.indices) {
+            assertContentEquals(usizes[i], roundTrippedUsizes[i])
+        }
+
+        val strings = listOf(listOf("hello", "world"), emptyList(), listOf("café", "🌍"))
+        assertEquals(strings, echoVecVecString(strings))
+
+        assertContentEquals(
+            intArrayOf(1, 2, 3, 4, 5),
+            flattenVecVecI32(listOf(intArrayOf(1, 2), intArrayOf(3), intArrayOf(), intArrayOf(4, 5))),
+        )
+        assertContentEquals(intArrayOf(), flattenVecVecI32(emptyList()))
+    }
+
+    @Test
+    fun blittableRecordVecsRoundTrip() {
+        val locations = generateLocations(3)
+        assertEquals(3, locations.size)
+        assertEquals(3, processLocations(locations))
+        assertDoubleEquals(9.3, sumRatings(locations))
+
+        val trades = generateTrades(3)
+        assertEquals(3, trades.size)
+        assertEquals(3000L, sumTradeVolumes(trades))
+        assertEquals(3002L, aggregateLocationTradeStats(locations, trades))
+
+        val particles = generateParticles(3)
+        assertEquals(3, particles.size)
+        assertDoubleEquals(3.003, sumParticleMasses(particles))
+
+        val readings = generateSensorReadings(3)
+        assertEquals(3, readings.size)
+        assertDoubleEquals(21.0, avgSensorTemperature(readings))
+    }
+
+    @Test
     fun optionFunctionsUseCorrectKotlinSurface() {
         assertEquals(7, echoOptionalI32(7))
         assertNull(echoOptionalI32(null))
@@ -201,11 +263,14 @@ class DemoValueTypesTest {
 
         val nameFilter = Filter.ByName("ali")
         val pointFilter = Filter.ByPoints(listOf(Point(0.0, 0.0), Point(1.0, 1.0)))
+        val groupFilter = Filter.ByGroups(listOf(listOf("café", "🌍"), emptyList(), listOf("common")))
         assertEquals(Filter.None, echoFilter(Filter.None))
         assertEquals(nameFilter, echoFilter(nameFilter))
+        assertEquals(groupFilter, echoFilter(groupFilter))
         assertEquals("filter by name: ali", describeFilter(nameFilter))
         assertEquals("filter by 2 anchor points", describeFilter(pointFilter))
         assertEquals("filter by 2 tags", describeFilter(Filter.ByTags(listOf("ffi", "jni"))))
+        assertEquals("filter by 3 groups", describeFilter(groupFilter))
         assertEquals("filter by range: 1..5", describeFilter(Filter.ByRange(1.0, 5.0)))
 
         val success = ApiResponse.Success("ok")
