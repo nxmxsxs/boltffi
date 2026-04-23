@@ -30,5 +30,16 @@ final class AsyncFnsTests: XCTestCase {
         }
         let numbers = try await asyncGetNumbers(count: 4)
         XCTAssertEqual(numbers, [0, 1, 2, 3])
+        let record = MixedRecord.sample()
+        let echoedRecord = try await asyncEchoMixedRecord(record: record)
+        XCTAssertEqual(echoedRecord, record)
+        let createdRecord = try await asyncMakeMixedRecord(
+            name: record.name,
+            anchor: record.anchor,
+            priority: record.priority,
+            shape: record.shape,
+            parameters: record.parameters
+        )
+        XCTAssertEqual(createdRecord, record)
     }
 }

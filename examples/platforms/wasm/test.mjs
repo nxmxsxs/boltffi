@@ -29,6 +29,7 @@ const suiteModules = [
   "./tests/primitives/vecs.test.mjs",
   "./tests/records/blittable.test.mjs",
   "./tests/records/default_values.test.mjs",
+  "./tests/records/mixed.test.mjs",
   "./tests/records/nested.test.mjs",
   "./tests/records/with_collections.test.mjs",
   "./tests/records/with_enums.test.mjs",

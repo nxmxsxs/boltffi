@@ -21,6 +21,29 @@ export function assertArrayEqual(actual, expected) {
   assert.deepEqual(Array.from(actual), Array.from(expected));
 }
 
+export function sampleMixedRecordParameters() {
+  return {
+    tags: ["alpha", "beta"],
+    checkpoints: [
+      { x: 1, y: 2 },
+      { x: 3, y: 5 },
+    ],
+    fallbackAnchor: { x: -1, y: -2 },
+    maxRetries: 4,
+    previewOnly: true,
+  };
+}
+
+export function sampleMixedRecord() {
+  return {
+    name: "outline",
+    anchor: { x: 10, y: 20 },
+    priority: demo.Priority.Critical,
+    shape: { tag: "Rectangle", width: 3, height: 4 },
+    parameters: sampleMixedRecordParameters(),
+  };
+}
+
 export function assertThrowsWithCode(action, ErrorType, code) {
   try {
     action();

@@ -738,6 +738,16 @@ public final class DemoTest {
         assert ts.scores().length == 2 : "echoTaggedScores.scores.length";
         assert Math.abs(Demo.averageScore(new TaggedScores("x", new double[]{80.0, 100.0})) - 90.0) < 0.0001 : "averageScore";
 
+        MixedRecord record = sampleMixedRecord();
+        assert Demo.echoMixedRecord(record).equals(record) : "echoMixedRecord";
+        assert Demo.makeMixedRecord(
+            record.name(),
+            record.anchor(),
+            record.priority(),
+            record.shape(),
+            record.parameters()
+        ).equals(record) : "makeMixedRecord";
+
         System.out.println("  PASS\n");
     }
 
@@ -1216,10 +1226,40 @@ public final class DemoTest {
 
             CompletableFuture<String> concatFuture = Demo.asyncConcat(Arrays.asList("a", "b", "c"));
             assert concatFuture.get().equals("a, b, c") : "asyncConcat";
+
+            MixedRecord record = sampleMixedRecord();
+            assert Demo.asyncEchoMixedRecord(record).get().equals(record) : "asyncEchoMixedRecord";
+            assert Demo.asyncMakeMixedRecord(
+                record.name(),
+                record.anchor(),
+                record.priority(),
+                record.shape(),
+                record.parameters()
+            ).get().equals(record) : "asyncMakeMixedRecord";
         } catch (Exception e) {
             throw new RuntimeException("async function test failed", e);
         }
         System.out.println("  PASS\n");
+    }
+
+    private static MixedRecordParameters sampleMixedRecordParameters() {
+        return new MixedRecordParameters(
+            Arrays.asList("alpha", "beta"),
+            Arrays.asList(new Point(1.0, 2.0), new Point(3.0, 5.0)),
+            Optional.of(new Point(-1.0, -2.0)),
+            4,
+            true
+        );
+    }
+
+    private static MixedRecord sampleMixedRecord() {
+        return new MixedRecord(
+            "outline",
+            new Point(10.0, 20.0),
+            Priority.CRITICAL,
+            new Shape.Rectangle(3.0, 4.0),
+            sampleMixedRecordParameters()
+        );
     }
 
     private static void testAsyncClassMethods() {
@@ -1244,6 +1284,30 @@ public final class DemoTest {
             assert batch.get(1).equals("test: y") : "AsyncWorker.processBatch[1]";
 
             worker.close();
+
+            try (MixedRecordService service = new MixedRecordService("records")) {
+                MixedRecord record = sampleMixedRecord();
+                assert service.getLabel().equals("records") : "MixedRecordService.getLabel";
+                assert service.storedCount() == 0 : "MixedRecordService.storedCount.initial";
+                assert service.echoRecord(record).equals(record) : "MixedRecordService.echoRecord";
+                assert service.storeRecordParts(
+                    record.name(),
+                    record.anchor(),
+                    record.priority(),
+                    record.shape(),
+                    record.parameters()
+                ).equals(record) : "MixedRecordService.storeRecordParts";
+                assert service.storedCount() == 1 : "MixedRecordService.storedCount.sync";
+                assert service.asyncEchoRecord(record).get().equals(record) : "MixedRecordService.asyncEchoRecord";
+                assert service.asyncStoreRecordParts(
+                    record.name(),
+                    record.anchor(),
+                    record.priority(),
+                    record.shape(),
+                    record.parameters()
+                ).get().equals(record) : "MixedRecordService.asyncStoreRecordParts";
+                assert service.storedCount() == 2 : "MixedRecordService.storedCount.async";
+            }
         } catch (Exception e) {
             throw new RuntimeException("async class method test failed", e);
         }

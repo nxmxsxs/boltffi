@@ -1,4 +1,10 @@
-import { assert, assertArrayEqual, assertRejectsWithMessage, demo } from "../support/index.mjs";
+import {
+  assert,
+  assertArrayEqual,
+  assertRejectsWithMessage,
+  demo,
+  sampleMixedRecord,
+} from "../support/index.mjs";
 
 export async function run() {
   assert.equal(await demo.asyncAdd(3, 7), 10);
@@ -17,4 +23,16 @@ export async function run() {
   }
   assert.equal(await demo.fetchData(7), 70);
   await assertRejectsWithMessage(() => demo.fetchData(0), "invalid id");
+  const record = sampleMixedRecord();
+  assert.deepEqual(await demo.asyncEchoMixedRecord(record), record);
+  assert.deepEqual(
+    await demo.asyncMakeMixedRecord(
+      record.name,
+      record.anchor,
+      record.priority,
+      record.shape,
+      record.parameters,
+    ),
+    record,
+  );
 }

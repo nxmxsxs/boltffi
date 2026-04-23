@@ -1,4 +1,11 @@
 use crate::results::ComputeError;
+use crate::{
+    enums::{data_enum::Shape, repr_int::Priority},
+    records::{
+        blittable::Point,
+        mixed::{MixedRecord, MixedRecordParameters, echo_mixed_record, make_mixed_record},
+    },
+};
 use boltffi::*;
 
 /// Adds two numbers asynchronously.
@@ -46,4 +53,20 @@ pub async fn fetch_data(id: i32) -> Result<i32, String> {
 #[demo_bench_macros::benchmark_candidate(function, uniffi)]
 pub async fn async_get_numbers(count: i32) -> Vec<i32> {
     (0..count).collect()
+}
+
+#[export]
+pub async fn async_echo_mixed_record(record: MixedRecord) -> MixedRecord {
+    echo_mixed_record(record)
+}
+
+#[export]
+pub async fn async_make_mixed_record(
+    name: String,
+    anchor: Point,
+    priority: Priority,
+    shape: Shape,
+    parameters: MixedRecordParameters,
+) -> MixedRecord {
+    make_mixed_record(name, anchor, priority, shape, parameters)
 }
