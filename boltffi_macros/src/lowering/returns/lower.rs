@@ -150,6 +150,13 @@ impl ResolvedReturn {
         }
     }
 
+    pub fn async_invalid_arg_early_return_statement(&self) -> proc_macro2::TokenStream {
+        let rust_return_type = self.async_rust_return_type();
+        quote! {
+            return ::boltffi::__private::rustfuture::rust_future_invalid_arg::<#rust_return_type>();
+        }
+    }
+
     pub fn async_complete_conversion(
         &self,
         return_lowering: &super::model::ReturnLoweringContext<'_>,
