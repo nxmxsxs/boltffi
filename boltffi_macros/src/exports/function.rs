@@ -554,8 +554,9 @@ fn generate_async_export(
         Err(error) => return error.to_compile_error().into(),
     };
     let return_lowering = ReturnLoweringContext::new(custom_types, &data_types);
+    let return_abi = return_lowering.lower_output(fn_output);
 
-    let on_wire_record_error = ExternExport::async_entry_invalid_arg_early_return_statement();
+    let on_wire_record_error = return_abi.async_invalid_arg_early_return_statement();
     let params = match transform_params_async(
         fn_inputs,
         &return_lowering,
@@ -565,7 +566,6 @@ fn generate_async_export(
         Ok(params) => params,
         Err(error) => return error.to_compile_error().into(),
     };
-    let return_abi = return_lowering.lower_output(fn_output);
 
     let ffi_return_type = return_abi.async_ffi_return_type();
     let rust_return_type = return_abi.async_rust_return_type();
@@ -596,21 +596,40 @@ fn generate_async_export(
     let wasm_complete = if return_abi.is_primitive_scalar() {
         let rust_type = return_abi.rust_type();
         AsyncWasmCompleteExport {
-            params: quote! { handle: ::boltffi::__private::RustFutureHandle },
+            params: quote! {
+                handle: ::boltffi::__private::RustFutureHandle,
+                out_status: *mut ::boltffi::__private::FfiStatus
+            },
             return_type: quote! { -> #rust_type },
             body: quote! {
                 match ::boltffi::__private::rustfuture::rust_future_complete::<#rust_return_type>(handle) {
-                    Some(result) => result,
-                    None => Default::default(),
+                    Ok(result) => {
+                        if !out_status.is_null() { *out_status = ::boltffi::__private::FfiStatus::OK; }
+                        result
+                    }
+                    Err(status) => {
+                        if !out_status.is_null() { *out_status = status; }
+                        Default::default()
+                    }
                 }
             },
         }
     } else if return_abi.is_unit() {
         AsyncWasmCompleteExport {
-            params: quote! { handle: ::boltffi::__private::RustFutureHandle },
+            params: quote! {
+                handle: ::boltffi::__private::RustFutureHandle,
+                out_status: *mut ::boltffi::__private::FfiStatus
+            },
             return_type: quote! {},
             body: quote! {
-                let _ = ::boltffi::__private::rustfuture::rust_future_complete::<#rust_return_type>(handle);
+                match ::boltffi::__private::rustfuture::rust_future_complete::<#rust_return_type>(handle) {
+                    Ok(_) => {
+                        if !out_status.is_null() { *out_status = ::boltffi::__private::FfiStatus::OK; }
+                    }
+                    Err(status) => {
+                        if !out_status.is_null() { *out_status = status; }
+                    }
+                }
             },
         }
     } else if matches!(
@@ -621,7 +640,7 @@ fn generate_async_export(
             params: quote! {
                 out: *mut ::boltffi::__private::FfiBuf,
                 handle: ::boltffi::__private::RustFutureHandle,
-                _out_status: *mut ::boltffi::__private::FfiStatus
+                out_status: *mut ::boltffi::__private::FfiStatus
             },
             return_type: quote! {},
             body: quote! {
@@ -629,8 +648,14 @@ fn generate_async_export(
                     return;
                 }
                 let buf = match ::boltffi::__private::rustfuture::rust_future_complete::<#rust_return_type>(handle) {
-                    Some(result) => ::boltffi::__private::FfiBuf::from_vec(vec![result]),
-                    None => ::boltffi::__private::FfiBuf::empty(),
+                    Ok(result) => {
+                        if !out_status.is_null() { *out_status = ::boltffi::__private::FfiStatus::OK; }
+                        ::boltffi::__private::FfiBuf::from_vec(vec![result])
+                    }
+                    Err(status) => {
+                        if !out_status.is_null() { *out_status = status; }
+                        ::boltffi::__private::FfiBuf::empty()
+                    }
                 };
                 out.write(buf);
             },
@@ -648,7 +673,7 @@ fn generate_async_export(
             params: quote! {
                 out: *mut ::boltffi::__private::FfiBuf,
                 handle: ::boltffi::__private::RustFutureHandle,
-                _out_status: *mut ::boltffi::__private::FfiStatus
+                out_status: *mut ::boltffi::__private::FfiStatus
             },
             return_type: quote! {},
             body: quote! {
@@ -656,8 +681,14 @@ fn generate_async_export(
                     return;
                 }
                 let buf = match ::boltffi::__private::rustfuture::rust_future_complete::<#rust_return_type>(handle) {
-                    Some(#result_ident) => { #encode_expression },
-                    None => ::boltffi::__private::FfiBuf::empty(),
+                    Ok(#result_ident) => {
+                        if !out_status.is_null() { *out_status = ::boltffi::__private::FfiStatus::OK; }
+                        #encode_expression
+                    }
+                    Err(status) => {
+                        if !out_status.is_null() { *out_status = status; }
+                        ::boltffi::__private::FfiBuf::empty()
+                    }
                 };
                 out.write(buf);
             },
@@ -665,12 +696,21 @@ fn generate_async_export(
     } else if return_abi.is_passable_value() {
         let rust_type = return_abi.rust_type();
         AsyncWasmCompleteExport {
-            params: quote! { handle: ::boltffi::__private::RustFutureHandle },
+            params: quote! {
+                handle: ::boltffi::__private::RustFutureHandle,
+                out_status: *mut ::boltffi::__private::FfiStatus
+            },
             return_type: quote! { -> <#rust_type as ::boltffi::__private::Passable>::Out },
             body: quote! {
                 match ::boltffi::__private::rustfuture::rust_future_complete::<#rust_return_type>(handle) {
-                    Some(result) => ::boltffi::__private::Passable::pack(result),
-                    None => Default::default(),
+                    Ok(result) => {
+                        if !out_status.is_null() { *out_status = ::boltffi::__private::FfiStatus::OK; }
+                        ::boltffi::__private::Passable::pack(result)
+                    }
+                    Err(status) => {
+                        if !out_status.is_null() { *out_status = status; }
+                        Default::default()
+                    }
                 }
             },
         }

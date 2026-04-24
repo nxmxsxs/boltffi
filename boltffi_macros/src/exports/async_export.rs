@@ -83,9 +83,11 @@ impl<'a> AsyncRuntimeExports<'a> {
                 out_status: *mut ::boltffi::__private::FfiStatus,
             ) -> #ffi_return_type {
                 match ::boltffi::__private::rustfuture::rust_future_complete::<#rust_return_type>(handle) {
-                    Some(result) => { #complete_conversion }
-                    None => {
-                        if !out_status.is_null() { *out_status = ::boltffi::__private::FfiStatus::CANCELLED; }
+                    Ok(result) => {
+                        #complete_conversion
+                    }
+                    Err(status) => {
+                        if !out_status.is_null() { *out_status = status; }
                         #default_value
                     }
                 }
