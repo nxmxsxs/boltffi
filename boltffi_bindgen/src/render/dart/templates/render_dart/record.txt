@@ -41,25 +41,32 @@ final class {{ record.name }}{% if record.is_error %} implements Exception{% end
   static const _k$structSize = {{ layout.struct_size }};
 
   void _m$blittableEncode(_$$WireWriter _p$writer) {
-    _p$writer.write(_k$structSize, (_p$bytes) {
+    final ptr = _p$writer.getTailPtr<{{ layout.struct_name }}>();
 {%- for field in layout.fields %}
-      {{ field.blittable_encode_expr("_p$bytes")|indent(6)|trim }};
+    (ptr + {{ field.offset_const_name }}).cast<{{ field.native_type.native_type() }}>().value = {{ field.name }};
 {%- endfor %}
-    });
+    _p$writer._offset += _k$structSize;
   }
 
   {{ record.name }} _m$blittableDecode(_$$WireReader _p$reader) {
-    return _p$reader.read(_k$structSize, (_p$bytes) => {{ record.name }}(
+    _p$reader.ensureCapacity(_k$structSize);
+    final ref = _p$reader.getTailPtr<{{ layout.struct_name }}>().ref;
+    _p$reader._offset += _k$structSize;
+    return {{ record.name }}(
 {%- for field in layout.fields %}
-      {{ field.name }}: {{ field.blittable_decode_expr("_p$bytes") }},
+      {{ field.name }}: ref.{{ field.name }},
 {%- endfor %}
-    ));
+    );
   }
 
-  {{ layout.struct_name }} _m$toStruct({{ record.name }} value) {
+  {{ layout.struct_name }} _m$toStruct() {
     final l$writer = _$$WireWriter(_k$structSize);
-    _m$blittableEncode(l$writer);
-    return $$ffi.Struct.create(l$writer._buf);
+    final ref = l$writer._ptr.cast<{{ layout.struct_name }}>().ref;
+{%- for field in layout.fields %}
+    ref.{{ field.name }} = {{ field.name }};
+{%- endfor %}
+    l$writer._offset += _k$structSize;
+    return ref;
   }
 {% endmatch -%}
 {%- for ctor in record.constructors %}
