@@ -122,55 +122,76 @@ final class _$$WireWriter {
   }
 
   @pragma('vm:prefer-inline')
-  void write(int size, void Function($$typed_data.ByteData) writer) {
-    final nextOffset = _offset + size;
-    final data = $$typed_data.ByteData.sublistView(_buf, _offset, nextOffset);
-    writer(data);
-    _offset = nextOffset;
+  void writeU8(int v) {
+    (_ptr + _offset).value = v;
+    _offset += 1;
   }
 
   @pragma('vm:prefer-inline')
-  void writeU8(int v) => write(1, (b) => b.setUint8(0, v));
+  void writeI8(int v) {
+    (_ptr + _offset).cast<$$ffi.Int8>().value = v;
+    _offset += 1;
+  }
+
   @pragma('vm:prefer-inline')
-  void writeI8(int v) => write(1, (b) => b.setInt8(0, v));
+  void writeU16(int v) {
+    (_ptr + _offset).cast<$$ffi.Uint16>().value = v;
+    _offset += 2;
+  }
+
   @pragma('vm:prefer-inline')
-  void writeU16(int v) =>
-      write(2, (b) => b.setUint16(0, v, $$typed_data.Endian.little));
+  void writeU32(int v) {
+    (_ptr + _offset).cast<$$ffi.Uint32>().value = v;
+    _offset += 4;
+  }
+
   @pragma('vm:prefer-inline')
-  void writeI16(int v) =>
-      write(2, (b) => b.setInt16(0, v, $$typed_data.Endian.little));
+  void writeI32(int v) {
+    (_ptr + _offset).cast<$$ffi.Int32>().value = v;
+    _offset += 4;
+  }
+
   @pragma('vm:prefer-inline')
-  void writeU32(int v) =>
-      write(4, (b) => b.setUint32(0, v, $$typed_data.Endian.little));
+  void writeU64(int v) {
+    (_ptr + _offset).cast<$$ffi.Uint64>().value = v;
+    _offset += 8;
+  }
+
   @pragma('vm:prefer-inline')
-  void writeI32(int v) =>
-      write(4, (b) => b.setInt32(0, v, $$typed_data.Endian.little));
+  void writeI64(int v) {
+    (_ptr + _offset).cast<$$ffi.Int64>().value = v;
+    _offset += 8;
+  }
+
   @pragma('vm:prefer-inline')
-  void writeU64(int v) =>
-      write(8, (b) => b.setUint64(0, v, $$typed_data.Endian.little));
+  void writeF32(double v) {
+    (_ptr + _offset).cast<$$ffi.Float>().value = v;
+    _offset += 4;
+  }
+
   @pragma('vm:prefer-inline')
-  void writeI64(int v) =>
-      write(8, (b) => b.setInt64(0, v, $$typed_data.Endian.little));
+  void writeF64(double v) {
+    (_ptr + _offset).cast<$$ffi.Double>().value = v;
+    _offset += 8;
+  }
+
   @pragma('vm:prefer-inline')
-  void writeF32(double v) =>
-      write(4, (b) => b.setFloat32(0, v, $$typed_data.Endian.little));
-  @pragma('vm:prefer-inline')
-  void writeF64(double v) =>
-      write(8, (b) => b.setFloat64(0, v, $$typed_data.Endian.little));
+  $$ffi.Pointer<T> getTailPtr<T extends $$ffi.NativeType>() {
+    return (_ptr + _offset).cast<T>();
+  }
 
   @pragma('vm:prefer-inline')
   void writeBool(bool v) => writeU8(v ? 1 : 0);
 
   @pragma('vm:prefer-inline')
   void writeTypedList($$typed_data.TypedData v) {
-    final src = v.buffer.asUint8List(v.offsetInBytes, v.lengthInBytes);
-
-    write(
-      src.length,
-      (b) => b.buffer
-          .asUint8List(b.offsetInBytes, src.length)
-          .setRange(0, src.length, src),
+    final byteLength = v.lengthInBytes;
+    _buf.setRange(
+      _offset,
+      _offset + byteLength,
+      v.buffer.asUint8List(v.offsetInBytes, byteLength),
     );
+    _offset += byteLength;
   }
 
   @pragma('vm:prefer-inline')
@@ -211,12 +232,11 @@ final class _$$WireWriter {
     T? value,
     void Function(T value, _$$WireWriter writer) onSome,
   ) {
-    final l$value = value;
-    if (l$value == null) {
+    if (value == null) {
       writeU8(0);
     } else {
       writeU8(1);
-      onSome(l$value, this);
+      onSome(value, this);
     }
   }
 
@@ -238,68 +258,98 @@ final class _$$WireWriter {
 }
 
 class _$$WireReader {
-  static final Finalizer<_$$FFIBuf> _finalizer = Finalizer(
-    (buf) => _$$Native.boltffi_free_buf(buf),
-  );
+  final $$ffi.Pointer<$$ffi.Uint8> _ptr;
+  final int _cap;
 
-  final _$$FFIBuf owned;
-  final $$typed_data.Uint8List _buf;
-  int _offset;
+  int _offset = 0;
 
-  _$$WireReader(this.owned, [this._offset = 0])
-    : _buf = owned.ptr.asTypedList(owned.len) {
-    _finalizer.attach(this, owned, detach: this);
-  }
+  _$$WireReader(this._ptr, this._cap);
 
-  void free() {
-    _finalizer.detach(this);
-    _$$Native.boltffi_free_buf(owned);
-  }
-
-  @pragma('vm:prefer-inline')
-  T withByteData<T>(int size, T Function($$typed_data.ByteData) reader) {
-    final nextOffset = _offset + size;
-    final data = $$typed_data.ByteData.sublistView(_buf, _offset, nextOffset);
-    final r = reader(data);
-    _offset = nextOffset;
-    return r;
-  }
 
   @pragma('vm:prefer-inline')
   void ensureCapacity(int additionalBytes) {
-    if (_offset + additionalBytes > _buf.lengthInBytes) {
+    if (_offset + additionalBytes > _cap) {
       throw StateError(
-        "Buffer overflow: requested ${_offset + additionalBytes} bytes, but capacity is $_buf.lengthInBytes",
+        "Buffer overflow: requested ${_offset + additionalBytes} bytes, but capacity is $_cap",
       );
     }
   }
 
   @pragma('vm:prefer-inline')
-  T read<T>(int size, T Function($$typed_data.ByteData) reader) {
-    ensureCapacity(size);
-    return withByteData(size, reader);
+  int readU8() {
+    ensureCapacity(1);
+    final value = (_ptr + _offset).value;
+    _offset += 1;
+    return value;
+  }
+  @pragma('vm:prefer-inline')
+  int readI8() {
+    ensureCapacity(1);
+    final value = (_ptr + _offset).cast<$$ffi.Int8>().value;
+    _offset += 1;
+    return value;
+  }
+  @pragma('vm:prefer-inline')
+  int readU16() {
+    ensureCapacity(2);
+    final value = (_ptr + _offset).cast<$$ffi.Uint16>().value;
+    _offset += 2;
+    return value;
+  }
+  @pragma('vm:prefer-inline')
+  int readI16() {
+    ensureCapacity(2);
+    final value = (_ptr + _offset).cast<$$ffi.Int16>().value;
+    _offset += 2;
+    return value;
+  }
+  @pragma('vm:prefer-inline')
+  int readU32() {
+    ensureCapacity(4);
+    final value = (_ptr + _offset).cast<$$ffi.Uint32>().value;
+    _offset += 4;
+    return value;
+  }
+  @pragma('vm:prefer-inline')
+  int readI32() {
+    ensureCapacity(4);
+    final value = (_ptr + _offset).cast<$$ffi.Int32>().value;
+    _offset += 4;
+    return value;
+  }
+  @pragma('vm:prefer-inline')
+  int readU64() {
+    ensureCapacity(8);
+    final value = (_ptr + _offset).cast<$$ffi.Uint64>().value;
+    _offset += 8;
+    return value;
+  }
+  @pragma('vm:prefer-inline')
+  int readI64() {
+    ensureCapacity(8);
+    final value = (_ptr + _offset).cast<$$ffi.Int64>().value;
+    _offset += 8;
+    return value;
+  }
+  @pragma('vm:prefer-inline')
+  double readF32() {
+    ensureCapacity(4);
+    final value = (_ptr + _offset).cast<$$ffi.Float>().value;
+    _offset += 4;
+    return value;
+  }
+  @pragma('vm:prefer-inline')
+  double readF64() {
+    ensureCapacity(8);
+    final value = (_ptr + _offset).cast<$$ffi.Double>().value;
+    _offset += 8;
+    return value;
   }
 
   @pragma('vm:prefer-inline')
-  int readU8() => read(1, (b) => b.getUint8(0));
-  @pragma('vm:prefer-inline')
-  int readI8() => read(1, (b) => b.getInt8(0));
-  @pragma('vm:prefer-inline')
-  int readU16() => read(2, (b) => b.getUint16(0, $$typed_data.Endian.little));
-  @pragma('vm:prefer-inline')
-  int readI16() => read(2, (b) => b.getInt16(0, $$typed_data.Endian.little));
-  @pragma('vm:prefer-inline')
-  int readU32() => read(4, (b) => b.getUint32(0, $$typed_data.Endian.little));
-  @pragma('vm:prefer-inline')
-  int readI32() => read(4, (b) => b.getInt32(0, $$typed_data.Endian.little));
-  @pragma('vm:prefer-inline')
-  int readU64() => read(8, (b) => b.getUint64(0, $$typed_data.Endian.little));
-  @pragma('vm:prefer-inline')
-  int readI64() => read(8, (b) => b.getInt64(0, $$typed_data.Endian.little));
-  @pragma('vm:prefer-inline')
-  double readF32() => read(4, (b) => b.getFloat32(0, $$typed_data.Endian.little));
-  @pragma('vm:prefer-inline')
-  double readF64() => read(8, (b) => b.getFloat64(0, $$typed_data.Endian.little));
+  $$ffi.Pointer<T> getTailPtr<T extends $$ffi.NativeType>() {
+    return (_ptr + _offset).cast<T>();
+  }
 
   @pragma('vm:prefer-inline')
   bool readBool() {
@@ -315,25 +365,23 @@ class _$$WireReader {
   @pragma('vm:prefer-inline')
   $$typed_data.Uint8List readUint8List() {
     final len = readU32();
-    final size = len;
 
-    return read(size, (b) {
-      final dst = $$typed_data.Uint8List(size);
-      dst.setRange(0, size, b.buffer.asUint8List(b.offsetInBytes, size));
-      return dst;
-    });
+    ensureCapacity(len);
+    final dst = $$typed_data.Uint8List(len);
+    dst.setRange(0, len, (_ptr + _offset).asTypedList(len));
+    _offset += len;
+    return dst;
   }
 
   @pragma('vm:prefer-inline')
   $$typed_data.Int8List readInt8List() {
     final len = readU32();
-    final size = len;
 
-    return read(size, (b) {
-      final dst = $$typed_data.Int8List(size);
-      dst.setRange(0, size, b.buffer.asUint8List(b.offsetInBytes, size));
-      return dst;
-    });
+    ensureCapacity(len);
+    final dst = $$typed_data.Int8List(len);
+    dst.setRange(0, len, (_ptr + _offset).cast<$$ffi.Int8>().asTypedList(len));
+    _offset += len;
+    return dst;
   }
 
   @pragma('vm:prefer-inline')
@@ -341,11 +389,11 @@ class _$$WireReader {
     final len = readU32();
     final size = len * 2;
 
-    return read(size, (b) {
-      final dst = $$typed_data.Uint8List(size);
-      dst.setRange(0, size, b.buffer.asUint8List(b.offsetInBytes, size));
-      return dst.buffer.asUint16List(0, len);
-    });
+    ensureCapacity(size);
+    final dst = $$typed_data.Uint16List(len);
+    dst.setRange(0, len, (_ptr + _offset).cast<$$ffi.Uint16>().asTypedList(len));
+    _offset += size;
+    return dst;
   }
 
   @pragma('vm:prefer-inline')
@@ -353,23 +401,23 @@ class _$$WireReader {
     final len = readU32();
     final size = len * 2;
 
-    return read(size, (b) {
-      final dst = $$typed_data.Uint8List(size);
-      dst.setRange(0, size, b.buffer.asUint8List(b.offsetInBytes, size));
-      return dst.buffer.asInt16List(0, len);
-    });
+    ensureCapacity(size);
+    final dst = $$typed_data.Int16List(len);
+    dst.setRange(0, len, (_ptr + _offset).cast<$$ffi.Int16>().asTypedList(len));
+    _offset += size;
+    return dst;
   }
 
   @pragma('vm:prefer-inline')
   $$typed_data.Uint32List readUint32List() {
     final len = readU32();
-    final size = len * 4;
+    final size = len * 2;
 
-    return read(size, (b) {
-      final dst = $$typed_data.Uint8List(size);
-      dst.setRange(0, size, b.buffer.asUint8List(b.offsetInBytes, size));
-      return dst.buffer.asUint32List(0, len);
-    });
+    ensureCapacity(size);
+    final dst = $$typed_data.Uint32List(len);
+    dst.setRange(0, len, (_ptr + _offset).cast<$$ffi.Uint32>().asTypedList(len));
+    _offset += size;
+    return dst;
   }
 
   @pragma('vm:prefer-inline')
@@ -377,35 +425,35 @@ class _$$WireReader {
     final len = readU32();
     final size = len * 4;
 
-    return read(size, (b) {
-      final dst = $$typed_data.Uint8List(size);
-      dst.setRange(0, size, b.buffer.asUint8List(b.offsetInBytes, size));
-      return dst.buffer.asInt32List(0, len);
-    });
+    ensureCapacity(size);
+    final dst = $$typed_data.Int32List(len);
+    dst.setRange(0, len, (_ptr + _offset).cast<$$ffi.Int32>().asTypedList(len));
+    _offset += size;
+    return dst;
   }
 
   @pragma('vm:prefer-inline')
   $$typed_data.Uint64List readUint64List() {
-    final len = readU32();
-    final size = len * 8;
+    final len = readU64();
+    final size = len * 2;
 
-    return read(size, (b) {
-      final dst = $$typed_data.Uint8List(size);
-      dst.setRange(0, size, b.buffer.asUint8List(b.offsetInBytes, size));
-      return dst.buffer.asUint64List(0, len);
-    });
+    ensureCapacity(size);
+    final dst = $$typed_data.Uint64List(len);
+    dst.setRange(0, len, (_ptr + _offset).cast<$$ffi.Uint64>().asTypedList(len));
+    _offset += size;
+    return dst;
   }
 
   @pragma('vm:prefer-inline')
   $$typed_data.Int64List readInt64List() {
-    final len = readU32();
-    final size = len * 8;
+    final len = readU64();
+    final size = len * 4;
 
-    return read(size, (b) {
-      final dst = $$typed_data.Uint8List(size);
-      dst.setRange(0, size, b.buffer.asUint8List(b.offsetInBytes, size));
-      return dst.buffer.asInt64List(0, len);
-    });
+    ensureCapacity(size);
+    final dst = $$typed_data.Int64List(len);
+    dst.setRange(0, len, (_ptr + _offset).cast<$$ffi.Int64>().asTypedList(len));
+    _offset += size;
+    return dst;
   }
 
   @pragma('vm:prefer-inline')
@@ -413,11 +461,11 @@ class _$$WireReader {
     final len = readU32();
     final size = len * 4;
 
-    return read(size, (b) {
-      final dst = $$typed_data.Uint8List(size);
-      dst.setRange(0, size, b.buffer.asUint8List(b.offsetInBytes, size));
-      return dst.buffer.asFloat32List(0, len);
-    });
+    ensureCapacity(size);
+    final dst = $$typed_data.Float32List(len);
+    dst.setRange(0, len, (_ptr + _offset).cast<$$ffi.Float>().asTypedList(len));
+    _offset += size;
+    return dst;
   }
 
   @pragma('vm:prefer-inline')
@@ -425,11 +473,11 @@ class _$$WireReader {
     final len = readU32();
     final size = len * 8;
 
-    return read(size, (b) {
-      final dst = $$typed_data.Uint8List(size);
-      dst.setRange(0, size, b.buffer.asUint8List(b.offsetInBytes, size));
-      return dst.buffer.asFloat64List(0, len);
-    });
+    ensureCapacity(size);
+    final dst = $$typed_data.Float64List(len);
+    dst.setRange(0, size, (_ptr + _offset).cast<$$ffi.Double>().asTypedList(len));
+    _offset += size;
+    return dst;
   }
 
   @pragma('vm:prefer-inline')
