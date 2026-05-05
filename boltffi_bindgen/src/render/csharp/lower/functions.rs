@@ -65,6 +65,9 @@ impl<'a> CSharpLowerer<'a> {
         decode_ops: Option<&ReadSeq>,
         shadowed: Option<&HashSet<CSharpClassName>>,
     ) -> CSharpReturnKind {
+        if let ReturnDef::Result { .. } = return_def {
+            return self.result_return_kind(return_def, decode_ops, shadowed);
+        }
         if return_type.is_void() {
             return CSharpReturnKind::Void;
         }
